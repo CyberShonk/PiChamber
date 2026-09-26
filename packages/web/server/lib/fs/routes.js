@@ -410,40 +410,6 @@ const deriveCloneDirectoryName = (remoteUrl) => {
   return match?.[1]?.trim() || '';
 };
 
-const resolveCloneGitIdentity = async (gitIdentityId) => {
-  const id = typeof gitIdentityId === 'string' ? gitIdentityId.trim() : '';
-  if (!id) return null;
-  const { getProfile, getGlobalIdentity } = await import('../git/index.js');
-  if (id === 'global') {
-    const globalIdentity = await getGlobalIdentity();
-    if (!globalIdentity?.userName || !globalIdentity?.userEmail) return null;
-    return {
-      id: 'global',
-      name: 'Global Identity',
-      userName: globalIdentity.userName,
-      userEmail: globalIdentity.userEmail,
-      sshKey: globalIdentity.sshCommand ? globalIdentity.sshCommand.replace('ssh -i ', '') : null,
-    };
-  }
-  return getProfile(id) || null;
-};
-
-const escapeCloneSshKeyPath = (sshKeyPath) => {
-  const raw = String(sshKeyPath || '').trim();
-  if (!raw) return '';
-  const normalized = process.platform === 'win32' ? raw.replace(/\\/g, '/') : raw;
-  const dangerousChars = /[`$!"';&|<>(){}[\]*?#~]/;
-  if (dangerousChars.test(normalized)) {
-    throw new Error(`SSH key path contains invalid characters: ${raw}`);
-  }
-  if (process.platform === 'win32') {
-    const driveMatch = normalized.match(/^([A-Za-z]):\//);
-    const unixPath = driveMatch ? `/${driveMatch[1].toLowerCase()}${normalized.slice(2)}` : normalized;
-    return `'${unixPath}'`;
-  }
-  return `'${normalized.replace(/'/g, "'\\''")}'`;
-};
-
 const resolveReadPathFromContext = async ({ req, targetPath, scope, resolveProjectDirectory, path, os, fsPromises, normalizeDirectoryPath, pichamberUserConfigRoot }) => {
   if (req.query?.allowOutsideWorkspace === 'true') {
     const normalized = normalizeDirectoryPath(targetPath);
@@ -789,7 +755,7 @@ export const registerFsRoutes = (app, dependencies) => {
 
   app.post('/api/fs/clone', async (req, res) => {
     try {
-      const { remoteUrl, destinationPath, gitIdentityId } = req.body ?? {};
+      const { remoteUrl, destinationPath } = req.body ?? {};
       const remote = typeof remoteUrl === 'string' ? remoteUrl.trim() : '';
       const destination = typeof destinationPath === 'string' ? destinationPath.trim() : '';
       if (!remote) {
@@ -834,13 +800,7 @@ export const registerFsRoutes = (app, dependencies) => {
         return res.status(400).json({ error: 'Destination path must include a directory name' });
       }
 
-      const identity = await resolveCloneGitIdentity(gitIdentityId);
       const gitArgs = ['clone', '--', remote, directoryName];
-      const sshKeyPath = typeof identity?.sshKey === 'string' ? identity.sshKey.trim() : '';
-      if (sshKeyPath) {
-        gitArgs.unshift(`core.sshCommand=ssh -i ${escapeCloneSshKeyPath(sshKeyPath)} -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=accept-new`);
-        gitArgs.unshift('-c');
-      }
 
       await fsPromises.mkdir(parentPath, { recursive: true });
       try {
@@ -879,15 +839,6 @@ export const registerFsRoutes = (app, dependencies) => {
           reject(new Error(message));
         });
       });
-
-      if (identity?.userName && identity?.userEmail) {
-        try {
-          const { setLocalIdentity } = await import('../git/index.js');
-          await setLocalIdentity(resolvedDestination, identity);
-        } catch (error) {
-          console.warn('Failed to apply git identity after clone:', error);
-        }
-      }
 
       return res.json({ success: true, path: resolvedDestination, output });
     } catch (error) {

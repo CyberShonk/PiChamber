@@ -62,18 +62,7 @@ export {
   getCommitFileDiff,
   stash,
   stashPop,
-} from './git/gitHistoryHttp';
-
-export {
-  getGitIdentities,
-  createGitIdentity,
-  updateGitIdentity,
-  deleteGitIdentity,
-  getCurrentGitIdentity,
-  hasLocalIdentity,
-  getGlobalGitIdentity,
-  setGitIdentity,
-  discoverGitCredentials,
+  getCurrentGitAuthor,
   getRemoteUrl,
   getRemotes,
   rebase,
@@ -87,4 +76,4 @@ export {
   continueRebase,
   continueMerge,
   getConflictDetails,
-} from './git/gitIdentitiesHttp';
+} from './git/gitHistoryHttp';

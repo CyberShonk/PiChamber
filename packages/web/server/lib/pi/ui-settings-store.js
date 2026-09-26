@@ -53,7 +53,7 @@ const PORTABLE_FIELDS = new Set([
 // portable file.
 const LOCAL_FIELDS = new Set([
   'lastDirectory', 'homeDirectory', 'projects', 'activeProjectId',
-  'securityScopedBookmarks', 'pinnedDirectories', 'defaultGitIdentityId', 'openInAppId',
+  'securityScopedBookmarks', 'pinnedDirectories', 'openInAppId',
   'terminalShell', 'terminalLoginShells', 'desktopLanAccessEnabled',
   'desktopKeepAwakeEnabled', 'desktopProcessPerformanceRecordingEnabled',
   'desktopMinimizeToTrayEnabled', 'desktopCloseToTrayEnabled', 'desktopMacMenuBarEnabled',

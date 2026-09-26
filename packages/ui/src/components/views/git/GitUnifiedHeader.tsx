@@ -11,13 +11,13 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { Icon } from "@/components/icon/Icon";
 import { BranchSelector } from './BranchSelector';
 import { WorktreeBranchDisplay } from './WorktreeBranchDisplay';
-import { IdentityDropdown } from './IdentityDropdown';
+import { GitAuthorLine } from './GitAuthorLine';
 import { SyncActions } from './SyncActions';
 import { ChangeScopeSelector } from '../diff/ChangeScopeSelector';
 import type { DiffHeaderControlsState, DiffHeaderScope } from '../DiffView';
 import type {
   GitStatus,
-  GitIdentityProfile,
+  GitAuthorSummary,
   GitRemote,
 } from '@/lib/api/types';
 
@@ -37,10 +37,7 @@ interface GitUnifiedHeaderProps {
   onCheckoutBranch: (branch: string) => void;
   onCreateBranch: (name: string, remote?: GitRemote) => Promise<void>;
   onRenameBranch?: (oldName: string, newName: string) => Promise<void>;
-  activeIdentityProfile: GitIdentityProfile | null;
-  availableIdentities: GitIdentityProfile[];
-  onSelectIdentity: (profile: GitIdentityProfile) => void;
-  isApplyingIdentity: boolean;
+  currentAuthor: GitAuthorSummary | null;
   isWorktreeMode: boolean;
   upstreamTarget: string | null;
   onOpenHistory?: () => void;
@@ -58,8 +55,8 @@ interface GitUnifiedHeaderProps {
 }
 
 /**
- * The single git header row. Branch switching, identity, change-scope
- * filtering, sync, and every repository/diff view action live here; hosts
+ * The single git header row. Branch switching, the read-only commit-author
+ * line, change-scope filtering, sync, and every repository/diff view action live here; hosts
  * portal it into their own header (ContextPanel slot) so the panel keeps
  * exactly one header row, or render it inline with a local border when they
  * have no panel chrome (full-view git).
@@ -78,10 +75,7 @@ export const GitUnifiedHeader: React.FC<GitUnifiedHeaderProps> = ({
   onCheckoutBranch,
   onCreateBranch,
   onRenameBranch,
-  activeIdentityProfile,
-  availableIdentities,
-  onSelectIdentity,
-  isApplyingIdentity,
+  currentAuthor,
   isWorktreeMode,
   upstreamTarget,
   onOpenHistory,
@@ -108,7 +102,7 @@ export const GitUnifiedHeader: React.FC<GitUnifiedHeaderProps> = ({
   const showViewOptions = hasViewsMenu || diffHeaderState !== null;
 
   return (
-    <div className="flex min-w-0 flex-1 items-center gap-1">
+    <div className="@container/git-header flex min-w-0 flex-1 items-center gap-1">
       <div className="min-w-0 flex-shrink">
         {isWorktreeMode ? (
           <WorktreeBranchDisplay
@@ -128,13 +122,7 @@ export const GitUnifiedHeader: React.FC<GitUnifiedHeaderProps> = ({
         )}
       </div>
       <div className="shrink-0">
-        <IdentityDropdown
-          activeProfile={activeIdentityProfile}
-          identities={availableIdentities}
-          onSelect={onSelectIdentity}
-          isApplying={isApplyingIdentity}
-          iconOnly={true}
-        />
+        <GitAuthorLine author={currentAuthor} />
       </div>
       <div className="min-w-0 shrink-0">
         <ChangeScopeSelector

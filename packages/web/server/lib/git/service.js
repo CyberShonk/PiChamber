@@ -239,54 +239,6 @@ const resolveGitBinary = () => {
 
 const getGitBinary = () => resolveGitBinary();
 
-/**
- * Escape an SSH key path for use in core.sshCommand.
- * Handles Windows/Unix differences and prevents command injection.
- */
-function escapeSshKeyPath(sshKeyPath) {
-  const isWindows = process.platform === 'win32';
-  
-  // Normalize path first on Windows (convert backslashes to forward slashes)
-  let normalizedPath = sshKeyPath;
-  if (isWindows) {
-    normalizedPath = sshKeyPath.replace(/\\/g, '/');
-  }
-  
-  // Validate: reject paths with characters that could enable injection
-  // Allow only alphanumeric, path separators, dots, dashes, underscores, spaces, and colons (for Windows drives)
-  // Note: backslash is not in this list since we've already normalized Windows paths
-  const dangerousChars = /[`$!"';&|<>(){}[\]*?#~]/;
-  if (dangerousChars.test(normalizedPath)) {
-    throw new Error(`SSH key path contains invalid characters: ${sshKeyPath}`);
-  }
-
-  if (isWindows) {
-    // On Windows, Git (via MSYS/MinGW) expects Unix-style paths
-    // Convert "C:/path" to "/c/path" for MSYS compatibility
-    let unixPath = normalizedPath;
-    const driveMatch = unixPath.match(/^([A-Za-z]):\//);
-    if (driveMatch) {
-      unixPath = `/${driveMatch[1].toLowerCase()}${unixPath.slice(2)}`;
-    }
-    
-    // Use single quotes for the path (prevents shell interpretation)
-    return `'${unixPath}'`;
-  } else {
-    // On Unix, use single quotes and escape any single quotes in the path
-    // Single quotes prevent all shell interpretation except for single quotes themselves
-    const escaped = normalizedPath.replace(/'/g, "'\\''");
-    return `'${escaped}'`;
-  }
-}
-
-/**
- * Build the SSH command string for git config
- */
-function buildSshCommand(sshKeyPath) {
-  const escapedPath = escapeSshKeyPath(sshKeyPath);
-  return `ssh -i ${escapedPath} -o IdentitiesOnly=yes`;
-}
-
 const isSocketPath = async (candidate) => {
   if (!candidate || typeof candidate !== 'string') {
     return false;
@@ -353,16 +305,13 @@ const buildGitEnv = async () => {
   return env;
 };
 
-const createGit = async (directory, { allowUnsafeSshCommand = false } = {}) => {
+const createGit = async (directory) => {
   const env = await buildGitEnv();
   const spawnOptions = { windowsHide: true };
   const binary = getGitBinary();
   const hasCustomBinary = typeof binary === 'string' && binary.trim() && binary !== 'git' && binary !== 'git.exe';
-  const unsafe = hasCustomBinary || allowUnsafeSshCommand
-    ? {
-      ...(hasCustomBinary && { allowUnsafeCustomBinary: true }),
-      ...(allowUnsafeSshCommand && { allowUnsafeSshCommand: true }),
-    }
+  const unsafe = hasCustomBinary
+    ? { allowUnsafeCustomBinary: true }
     : undefined;
   // Always pin simple-git to an explicit working directory. Omitting baseDir
   // makes simple-git use process.cwd(), which breaks when the PiChamber
@@ -381,10 +330,6 @@ const createGit = async (directory, { allowUnsafeSshCommand = false } = {}) => {
     unsafe,
   });
 };
-
-// Global config reads do not need a repository; use the home directory as a
-// stable baseDir so we never accidentally inherit process.cwd().
-const createGitForGlobalConfig = async () => createGit(os.homedir());
 
 const normalizeDirectoryPath = (value) => {
   if (typeof value !== 'string') {
@@ -1958,29 +1903,6 @@ export async function isGitRepository(directory) {
   return result.success;
 }
 
-export async function getGlobalIdentity() {
-  const git = await createGitForGlobalConfig();
-
-  try {
-    const userName = await git.getConfig('user.name', 'global').catch(() => null);
-    const userEmail = await git.getConfig('user.email', 'global').catch(() => null);
-    const sshCommand = await git.getConfig('core.sshCommand', 'global').catch(() => null);
-
-    return {
-      userName: userName?.value || null,
-      userEmail: userEmail?.value || null,
-      sshCommand: sshCommand?.value || null
-    };
-  } catch (error) {
-    console.error('Failed to get global Git identity:', error);
-    return {
-      userName: null,
-      userEmail: null,
-      sshCommand: null
-    };
-  }
-}
-
 export async function getRemoteUrl(directory, remoteName = 'origin') {
   const git = await createGit(directory);
 
@@ -1996,87 +1918,24 @@ export async function getCurrentIdentity(directory) {
   const git = await createGit(directory);
 
   try {
-
-    const userName = await git.getConfig('user.name', 'local').catch(() =>
-      git.getConfig('user.name', 'global')
-    );
-
-    const userEmail = await git.getConfig('user.email', 'local').catch(() =>
-      git.getConfig('user.email', 'global')
-    );
-
-    const sshCommand = await git.getConfig('core.sshCommand', 'local').catch(() =>
-      git.getConfig('core.sshCommand', 'global')
-    );
+    // Effective config (local > global > system, honoring includeIf) is what
+    // `git commit` uses. A scoped read returns `value: null` for an unset key
+    // instead of throwing, so a local-then-global fallback never falls back.
+    const userName = await git.getConfig('user.name');
+    const userEmail = await git.getConfig('user.email');
 
     return {
       userName: userName?.value || null,
-      userEmail: userEmail?.value || null,
-      sshCommand: sshCommand?.value || null
+      userEmail: userEmail?.value || null
     };
   } catch (error) {
     console.error('Failed to get current Git identity:', error);
     return {
       userName: null,
-      userEmail: null,
-      sshCommand: null
+      userEmail: null
     };
   }
 }
-
-export async function hasLocalIdentity(directory) {
-  const git = await createGit(directory);
-
-  try {
-    const localName = await git.getConfig('user.name', 'local').catch(() => null);
-    const localEmail = await git.getConfig('user.email', 'local').catch(() => null);
-    return Boolean(localName?.value || localEmail?.value);
-  } catch {
-    return false;
-  }
-}
-
-export async function setLocalIdentity(directory, profile) {
-  const git = await createGit(directory, { allowUnsafeSshCommand: true });
-
-  try {
-
-    await git.addConfig('user.name', profile.userName, false, 'local');
-    await git.addConfig('user.email', profile.userEmail, false, 'local');
-
-    const authType = profile.authType || 'ssh';
-
-    if (authType === 'ssh' && profile.sshKey) {
-      await git.raw([
-        'config',
-        '--local',
-        'core.sshCommand',
-        buildSshCommand(profile.sshKey)
-      ]);
-      await git.raw(['config', '--local', '--unset', 'credential.helper']).catch(() => {});
-    } else if (authType === 'token' && profile.host) {
-      await git.addConfig(
-        'credential.helper',
-        'store',
-        false,
-        'local'
-      );
-      await git.raw(['config', '--local', '--unset', 'core.sshCommand']).catch(() => {});
-    }
-
-    if (profile.signCommits === true && typeof profile.signingKey === 'string' && profile.signingKey.trim()) {
-      await git.addConfig('gpg.format', 'ssh', false, 'local');
-      await git.addConfig('user.signingkey', profile.signingKey.trim(), false, 'local');
-      await git.addConfig('commit.gpgsign', 'true', false, 'local');
-    }
-
-    return true;
-  } catch (error) {
-    console.error('Failed to set Git identity:', error);
-    throw error;
-  }
-}
-
 export async function getStatus(directory, options = {}) {
   const lightMode = options.mode === 'light';
   const normalizedDirectory = normalizeDirectoryPath(directory);

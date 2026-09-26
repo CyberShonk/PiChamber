@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- **Git identity profiles removed.** PiChamber no longer manages commit-author profiles: the profiles settings UI, the clone-time identity picker, and the silent default auto-apply are gone, along with the server profile storage, credential discovery, and the config-writing routes. Commits, pushes, and clones now use solely the user's own git configuration and credentials. The Git header shows a read-only `Committing as Name <email>` line resolved from git config, which PiChamber never writes. Any previously saved profiles file and any git config previously written into repositories are left untouched; set authorship with plain git (`git config user.email …`).
+
 ## [1.0.3] - 2026-09-21
 
 Manual provider models, mobile composer hardening, and worktree recovery since 1.0.2.
