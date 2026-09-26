@@ -6,6 +6,7 @@ import path from 'node:path';
 import { createProxyMiddleware, responseInterceptor } from 'http-proxy-middleware';
 import { registerFsRoutes } from '../fs/routes.js';
 import { registerGitRoutes } from '../git/routes.js';
+import { registerGitHubRoutes } from '../github/index.js';
 import { createPreviewProxyRuntime } from '../preview/proxy-runtime.js';
 import { createRequestSecurityRuntime } from '../security/request-security.js';
 import { mergePathValues } from '../server/path-utils.js';
@@ -56,6 +57,7 @@ const resolveProjectDirectory = async (req) => {
 export const registerWorkspaceIntegrations = ({ app, server, express, uiAuthController, dataDir, liveRevocation = null }) => {
   const security = createRequestSecurityRuntime({ readSettingsFromDiskMigrated: async () => ({}) });
   registerGitRoutes(app);
+  registerGitHubRoutes(app);
   registerFsRoutes(app, {
     os,
     path,
