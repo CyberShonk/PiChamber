@@ -1,14 +1,16 @@
-/* eslint-disable */
 import React, { useMemo, useRef, useCallback, useEffect } from 'react';
+import { createRoot, type Root } from 'react-dom/client';
 import {
   areFilesEqual,
   areOptionsEqual,
   FileDiff as PierreFileDiff,
   VirtualizedFileDiff,
   Virtualizer,
+  type DiffLineAnnotation,
   type FileContents,
   type FileDiffMetadata,
   type FileDiffOptions,
+  type SelectedLineRange,
   type VirtualFileMetrics,
 } from '@pierre/diffs';
 
@@ -33,6 +35,32 @@ interface PierreDiffViewerProps {
   renderSideBySide: boolean;
   wrapLines?: boolean;
   layout?: 'fill' | 'inline';
+  /**
+   * Opt-in line interaction for review surfaces (default off so every other
+   * call site is unaffected). When enabled, hovering a line shows Pierre's
+   * gutter utility and lines become selectable; callbacks must be stable
+   * (`useCallback`) so the diff instance is not rebuilt per render.
+   */
+  enableGutterUtility?: boolean;
+  enableLineSelection?: boolean;
+  onGutterUtilityClick?: (range: SelectedLineRange) => void;
+  onLineSelectionEnd?: (range: SelectedLineRange | null) => void;
+  /**
+   * Line annotations rendered under their diff line. React content is
+   * bridged into Pierre's imperative `renderAnnotation` (which returns an
+   * `HTMLElement`) via one `createRoot` per `side:lineNumber` key; roots
+   * unmount with the viewer and evict keys absent from `lineAnnotations`.
+   * Annotation components must own their interactive state (draft text,
+   * reply text, collapsed) so typing never re-renders the parent diff.
+   *
+   * Separate roots (not portals) are deliberate: the diff lives in Pierre's
+   * shadow DOM, and a portal from the app root would receive events
+   * retargeted to the shadow host. The cost is that annotation content has
+   * no React context — pass context-derived values/callbacks in as props
+   * (no `useRuntimeAPIs`, Tooltip, or other provider-backed hooks inside).
+   */
+  lineAnnotations?: DiffLineAnnotation<React.ReactNode>[];
+  renderAnnotation?: (annotation: DiffLineAnnotation<React.ReactNode>) => React.ReactNode;
 }
 
 /**
@@ -428,6 +456,12 @@ export const PierreDiffViewer: React.FC<PierreDiffViewerProps> = ({
   renderSideBySide,
   wrapLines,
   layout = 'fill',
+  enableGutterUtility = false,
+  enableLineSelection = false,
+  onGutterUtilityClick,
+  onLineSelectionEnd,
+  lineAnnotations,
+  renderAnnotation,
 }) => {
   const themeContext = useOptionalThemeSystem();
 
@@ -462,6 +496,63 @@ export const PierreDiffViewer: React.FC<PierreDiffViewerProps> = ({
   const instanceNewFileRef = useRef<FileContents | undefined>(undefined);
   const [, forceUpdate] = React.useReducer((x) => x + 1, 0);
   const workerPool = useWorkerPool(isLargeContent ? 'unified' : (renderSideBySide ? 'split' : 'unified'));
+
+  // Bridge React annotation content into Pierre's imperative renderAnnotation.
+  // The bridged callback is stable so `areOptionsEqual` does not see a new
+  // option per render; latest content flows through the ref. One root per
+  // `side:lineNumber` key preserves annotation-local state (draft/reply text,
+  // collapsed) across parent re-renders.
+  const annotationRootsRef = useRef(new Map<string, { root: Root; element: HTMLElement }>());
+  const renderAnnotationRef = useRef(renderAnnotation);
+  renderAnnotationRef.current = renderAnnotation;
+  const annotationKeyOf = (annotation: DiffLineAnnotation<React.ReactNode>): string =>
+    `${annotation.side}:${annotation.lineNumber}`;
+  const bridgedRenderAnnotation = useCallback((annotation: DiffLineAnnotation<unknown>): HTMLElement | undefined => {
+    if (typeof document === 'undefined') return undefined;
+    const key = `${(annotation as DiffLineAnnotation<React.ReactNode>).side}:${(annotation as DiffLineAnnotation<React.ReactNode>).lineNumber}`;
+    let entry = annotationRootsRef.current.get(key);
+    if (!entry) {
+      const element = document.createElement('div');
+      element.setAttribute('data-pichamber-line-annotation', key);
+      const root = createRoot(element);
+      entry = { root, element };
+      annotationRootsRef.current.set(key, entry);
+    }
+    entry.root.render(
+      (renderAnnotationRef.current?.(annotation as DiffLineAnnotation<React.ReactNode>) ?? null) as React.ReactNode,
+    );
+    return entry.element;
+  }, []);
+
+  // Pierre may reuse a cached annotation element without re-invoking
+  // renderAnnotation; re-render known roots when the annotation list changes
+  // so updated content (new pending comment, resolved thread) always lands.
+  // Roots whose line no longer carries an annotation are unmounted so
+  // discarded cards do not leak React trees.
+  useEffect(() => {
+    if (!lineAnnotations) return;
+    const live = new Set(lineAnnotations.map(annotationKeyOf));
+    for (const [key, entry] of annotationRootsRef.current) {
+      if (!live.has(key)) {
+        entry.root.unmount();
+        annotationRootsRef.current.delete(key);
+      }
+    }
+    const render = renderAnnotationRef.current;
+    if (!render) return;
+    for (const annotation of lineAnnotations) {
+      const entry = annotationRootsRef.current.get(annotationKeyOf(annotation));
+      if (entry) entry.root.render(render(annotation));
+    }
+  }, [lineAnnotations]);
+
+  useEffect(() => {
+    const roots = annotationRootsRef.current;
+    return () => {
+      for (const entry of roots.values()) entry.root.unmount();
+      roots.clear();
+    };
+  }, []);
 
   const lightResolvedTheme = useMemo(() => getResolvedShikiTheme(lightTheme), [lightTheme]);
   const darkResolvedTheme = useMemo(() => getResolvedShikiTheme(darkTheme), [darkTheme]);
@@ -560,10 +651,14 @@ export const PierreDiffViewer: React.FC<PierreDiffViewerProps> = ({
     expansionLineCount: 20,
     overflow: wrapLines ? ('wrap' as const) : ('scroll' as const),
     disableFileHeader: true,
-    enableLineSelection: false,
+    enableLineSelection,
+    enableGutterUtility,
     enableHoverUtility: false,
+    ...(onGutterUtilityClick ? { onGutterUtilityClick } : {}),
+    ...(onLineSelectionEnd ? { onLineSelectionEnd } : {}),
+    renderAnnotation: bridgedRenderAnnotation,
     unsafeCSS: WEBKIT_SCROLL_FIX_CSS,
-  }), [darkTheme.metadata.id, isDark, isLargeContent, lightTheme.metadata.id, renderSideBySide, wrapLines]);
+  }), [bridgedRenderAnnotation, darkTheme.metadata.id, enableGutterUtility, enableLineSelection, isDark, isLargeContent, lightTheme.metadata.id, onGutterUtilityClick, onLineSelectionEnd, renderSideBySide, wrapLines]);
 
   useEffect(() => {
     const container = diffContainerRef.current;
@@ -670,6 +765,7 @@ export const PierreDiffViewer: React.FC<PierreDiffViewerProps> = ({
         fileDiff,
         forceRender,
         containerWrapper: container,
+        ...(lineAnnotations ? { lineAnnotations: lineAnnotations as DiffLineAnnotation<unknown>[] } : {}),
       });
     } else {
       if (!oldFile || !newFile) return;
@@ -679,6 +775,7 @@ export const PierreDiffViewer: React.FC<PierreDiffViewerProps> = ({
         newFile,
         forceRender,
         containerWrapper: container,
+        ...(lineAnnotations ? { lineAnnotations: lineAnnotations as DiffLineAnnotation<unknown>[] } : {}),
       });
     }
 
@@ -691,7 +788,7 @@ export const PierreDiffViewer: React.FC<PierreDiffViewerProps> = ({
       cancelReady();
       preserveDone();
     };
-  }, [diffThemeKey, fileDiff, fileName, language, modified, options, original, workerPool]);
+  }, [diffThemeKey, fileDiff, fileName, language, lineAnnotations, modified, options, original, workerPool]);
 
   // MutationObserver keeps the wrapper in sync with Pierre DOM updates
   useEffect(() => {
