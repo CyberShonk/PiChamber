@@ -290,31 +290,14 @@ export interface MergeConflictDetails {
   operation: 'merge' | 'rebase';
 }
 
-export type GitIdentityAuthType = 'ssh' | 'token';
-
-export interface GitIdentityProfile {
-  id: string;
-  name: string;
-  userName: string;
-  userEmail: string;
-  authType?: GitIdentityAuthType;
-  sshKey?: string | null;
-  signCommits?: boolean;
-  signingKey?: string | null;
-  host?: string | null;
-  color?: string | null;
-  icon?: string | null;
-}
-
-export interface DiscoveredGitCredential {
-  host: string;
-  username: string;
-}
-
-export interface GitIdentitySummary {
+/**
+ * Read-only commit author resolved from the user's own git config
+ * (local user.name/user.email, falling back to global). PiChamber never
+ * writes git config. Served by GET /api/git/current-identity.
+ */
+export interface GitAuthorSummary {
   userName: string | null;
   userEmail: string | null;
-  sshCommand: string | null;
 }
 
 export interface GitLogEntry {
@@ -394,13 +377,9 @@ export interface GitWorktree {
   prunable: boolean;
 }
 
-export interface GitWorktreeCreateInput {
-  mode: 'new';
-  startRef: string;
-  worktreeName?: string;
-  branchName?: string;
-  returnAfterDirectoryCreated?: boolean;
-}
+export type GitWorktreeCreateInput =
+  | { mode: 'new'; startRef: string; worktreeName?: string; branchName?: string; returnAfterDirectoryCreated?: boolean }
+  | { mode: 'existing'; existingBranch: string; worktreeName?: string; branchName?: string; returnAfterDirectoryCreated?: boolean };
 
 export interface GitWorktreeBootstrapStatus {
   status: 'pending' | 'ready' | 'failed';
@@ -469,15 +448,7 @@ export interface GitAPI {
   getGitLog(directory: string, options?: GitLogOptions): Promise<GitLogResponse>;
   getCommitFiles(directory: string, hash: string): Promise<GitCommitFilesResponse>;
   getCommitFileDiff?(directory: string, hash: string, filePath: string, isBinary: boolean): Promise<CommitFileDiffResponse>;
-  getCurrentGitIdentity(directory: string): Promise<GitIdentitySummary | null>;
-  hasLocalIdentity?(directory: string): Promise<boolean>;
-  setGitIdentity(directory: string, profileId: string): Promise<{ success: boolean; profile: GitIdentityProfile }>;
-  getGitIdentities(): Promise<GitIdentityProfile[]>;
-  createGitIdentity(profile: GitIdentityProfile): Promise<GitIdentityProfile>;
-  updateGitIdentity(id: string, updates: GitIdentityProfile): Promise<GitIdentityProfile>;
-  deleteGitIdentity(id: string): Promise<void>;
-  discoverGitCredentials?(): Promise<DiscoveredGitCredential[]>;
-  getGlobalGitIdentity?(): Promise<GitIdentitySummary | null>;
+  getCurrentGitAuthor(directory: string): Promise<GitAuthorSummary | null>;
   getRemoteUrl?(directory: string, remote?: string): Promise<string | null>;
   getRemotes(directory: string): Promise<GitRemote[]>;
   rebase(directory: string, options: { onto: string }): Promise<GitRebaseResult>;
@@ -777,6 +748,17 @@ export interface PushAPI {
   unregisterApnsToken(payload: ApnsTokenPayload): Promise<{ ok: true } | null>;
 }
 
+/**
+ * GitHub integration contract (native gh-CLI plan, §6.1).
+ *
+ * One account owned by the server's GitHub CLI — no device flow, no account
+ * switching. Every method mirrors a `/api/github/*` route (see
+ * `packages/web/server/lib/github/DOCUMENTATION.md`); failures throw
+ * `GitHubAPIError` carrying the server's `{ error }` taxonomy body, never
+ * an empty list. `repo` is always `host/owner/name` allow-listed by the
+ * server against the given `directory`.
+ */
+
 export type GitHubUserSummary = {
   login: string;
   id?: number;
@@ -785,10 +767,77 @@ export type GitHubUserSummary = {
   email?: string;
 };
 
-type GitHubRepoRef = {
+/** Canonical repository reference: `host/owner/name`, server allow-listed. */
+export type GitHubRepoRef = {
+  host: string;
   owner: string;
   repo: string;
-  url: string;
+};
+
+export type GitHubUnavailableReason =
+  | 'gh-missing'
+  | 'gh-outdated'
+  | 'gh-unauthenticated'
+  | 'not-github'
+  | 'no-repository'
+  | 'no-access'
+  | 'scope-missing';
+
+export type GitHubErrorBody =
+  | { kind: 'unavailable'; reason: GitHubUnavailableReason; scopes?: string[]; host?: string }
+  | { kind: 'rate-limited'; retryAt: number }
+  | { kind: 'failed'; message: string };
+
+export class GitHubAPIError extends Error {
+  readonly body: GitHubErrorBody;
+  readonly status: number;
+
+  constructor(body: GitHubErrorBody, status: number) {
+    super(body.kind === 'failed' ? body.message : body.kind);
+    this.name = 'GitHubAPIError';
+    this.body = body;
+    this.status = status;
+  }
+}
+
+export type GitHubHostStatus = {
+  host: string;
+  authenticated: boolean;
+  login: string | null;
+  scopes: string[];
+};
+
+export type GitHubStatus = {
+  installed: boolean;
+  version: string | null;
+  hosts: GitHubHostStatus[];
+  fetchedAt: number;
+};
+
+export type GitHubScopedRepository = {
+  kind: 'containing' | 'enclosing' | 'nested';
+  path: string;
+  relativePath: string;
+  host: string | null;
+  owner: string | null;
+  repo: string | null;
+  remote: string | null;
+  remotes?: string[];
+  submodule: boolean;
+  /** Null when fork state is unknown (e.g. unauthenticated). */
+  fork: boolean | null;
+  parent?: { owner: string; repo: string } | null;
+  defaultBranch?: string | null;
+  disabledReason?: string | null;
+};
+
+export type GitHubScope = {
+  directory: string;
+  topLevel: string | null;
+  branch: string | null;
+  repositories: GitHubScopedRepository[];
+  defaultSelection: string | null;
+  fetchedAt: number;
 };
 
 export type GitHubChecksSummary = {
@@ -798,54 +847,58 @@ export type GitHubChecksSummary = {
   failure: number;
   /** queued + in_progress + unconcluded runs. */
   pending: number;
-  inProgress?: number;
-  queued?: number;
-  /** Earliest started_at among in-progress runs (ISO), for elapsed display. */
-  startedAt?: string;
+  /** Earliest started_at among runs (ISO), for elapsed display. */
+  startedAt?: string | null;
+};
+
+export type GitHubCheckRunStep = {
+  name: string;
+  status?: string | null;
+  conclusion?: string | null;
+  number?: number | null;
+  startedAt?: string | null;
+  completedAt?: string | null;
 };
 
 export type GitHubCheckRun = {
   id?: number;
   name: string;
-  startedAt?: string;
-  completedAt?: string;
-  app?: {
-    name?: string;
-    slug?: string;
-  };
-  status?: string;
+  state?: string | null;
+  status?: string | null;
   conclusion?: string | null;
-  detailsUrl?: string;
-  output?: {
-    title?: string;
-    summary?: string;
-    text?: string;
+  startedAt?: string | null;
+  completedAt?: string | null;
+  detailsUrl?: string | null;
+  app?: {
+    name?: string | null;
+    slug?: string | null;
+  } | null;
+  /** Workflow run id for GitHub Actions runs (re-run target); null otherwise. */
+  runId?: number | null;
+};
+
+export type GitHubCheckStatus = {
+  id?: number | null;
+  context: string;
+  state?: string | null;
+  description?: string | null;
+  targetUrl?: string | null;
+};
+
+export type GitHubChecksResult = {
+  repo: GitHubRepoRef;
+  ref: string;
+  summary: GitHubChecksSummary;
+  runs: GitHubCheckRun[];
+  statuses: GitHubCheckStatus[];
+  /** Per-source fetch failures. A failed source keeps its array as `[]`
+   * but is never an authoritative empty result. */
+  sectionErrors?: {
+    runs?: GitHubErrorBody;
+    statuses?: GitHubErrorBody;
   };
-  job?: {
-    runId?: number;
-    jobId?: number;
-    url?: string;
-    name?: string;
-    workflowName?: string;
-    conclusion?: string | null;
-    steps?: Array<{
-      name: string;
-      status?: string;
-      conclusion?: string | null;
-      number?: number;
-      startedAt?: string;
-      completedAt?: string;
-    }>;
-  };
-  annotations?: Array<{
-    path?: string;
-    startLine?: number;
-    endLine?: number;
-    level?: string;
-    message: string;
-    title?: string;
-    rawDetails?: string;
-  }>;
+  fetchedAt: number;
+  stale?: boolean;
 };
 
 export type GitHubPullRequest = {
@@ -857,135 +910,205 @@ export type GitHubPullRequest = {
   draft: boolean;
   base: string;
   head: string;
-  headSha?: string;
+  headSha?: string | null;
   mergeable?: boolean | null;
   mergeableState?: string | null;
 };
 
-type GitHubPullRequestHeadRepo = {
-  owner: string;
-  repo: string;
-  url: string;
-  cloneUrl?: string;
-  sshUrl?: string;
-};
-
 export type GitHubPullRequestSummary = GitHubPullRequest & {
   author?: GitHubUserSummary | null;
-  body?: string;
-  createdAt?: string;
-  updatedAt?: string;
-  headLabel?: string;
-  headRepo?: GitHubPullRequestHeadRepo | null;
-  sourceRepo?: (GitHubRepoSelector & { source: string }) | null;
+  labels?: GitHubIssueLabel[];
+  assignees?: GitHubUserSummary[];
+  requestedReviewers?: GitHubUserSummary[];
+  createdAt?: string | null;
+  updatedAt?: string | null;
+  mergedAt?: string | null;
+  additions?: number;
+  deletions?: number;
+  changedFiles?: number;
+  comments?: number;
 };
 
-type GitHubPullRequestFile = {
+export type GitHubPullRequestDetail = GitHubPullRequestSummary & {
+  /** GitHub-rendered `body_html` for the description (signed image URLs); null when unread. */
+  bodyHtml?: string | null;
+  labels: GitHubIssueLabel[];
+  assignees: GitHubUserSummary[];
+  requestedReviewers: GitHubUserSummary[];
+  milestone?: { title: string; number: number } | null;
+  reviewSummary: {
+    approvals: number;
+    changesRequested: number;
+    commented: number;
+    decision: 'approved' | 'changes-requested' | 'pending';
+  };
+};
+
+export type GitHubReview = {
+  id: number;
+  state?: string | null;
+  body: string;
+  /** GitHub-rendered `bodyHTML` (signed image URLs); null when unread (list seeds, older caches). */
+  bodyHtml?: string | null;
+  author?: GitHubUserSummary | null;
+  submittedAt?: string | null;
+};
+
+export type GitHubReviewThreadComment = {
+  id?: number | null;
+  body: string;
+  /** GitHub-rendered `bodyHTML`; null when unread. */
+  bodyHtml?: string | null;
+  author?: GitHubUserSummary | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+  url?: string;
+  path?: string | null;
+  line?: number | null;
+};
+
+export type GitHubReviewThread = {
+  id: string;
+  resolved: boolean;
+  path?: string | null;
+  line?: number | null;
+  originalLine?: number | null;
+  diffSide?: string | null;
+  comments: GitHubReviewThreadComment[];
+};
+
+export type GitHubPullRequestFile = {
   filename: string;
-  status?: string;
+  status?: string | null;
   additions?: number;
   deletions?: number;
   changes?: number;
-  patch?: string;
-};
-
-type GitHubPullRequestReviewComment = {
-  id: number;
-  url: string;
-  body: string;
-  author?: GitHubUserSummary | null;
-  path?: string;
-  line?: number | null;
-  position?: number | null;
-  createdAt?: string;
-  updatedAt?: string;
+  patch?: string | null;
 };
 
 export type GitHubPullRequestsListResult = {
-  connected: boolean;
-  repo?: GitHubRepoRef | null;
-  prs?: GitHubPullRequestSummary[];
-  page?: number;
-  hasMore?: boolean;
+  repo: GitHubRepoRef;
+  items: GitHubPullRequestSummary[];
+  nextCursor: string | null;
+  fetchedAt: number;
+  stale?: boolean;
 };
 
-export type GitHubPullRequestContextResult = {
-  connected: boolean;
-  /** Server-side stamp of when the data was fetched from GitHub (ms epoch); survives server cache serves. */
-  fetchedAt?: number;
-  repo?: GitHubRepoRef | null;
-  pr?: GitHubPullRequestSummary | null;
-  issueComments?: GitHubIssueComment[];
-  reviewComments?: GitHubPullRequestReviewComment[];
-  files?: GitHubPullRequestFile[];
-  diff?: string;
-  checks?: GitHubChecksSummary | null;
-  checkRuns?: GitHubCheckRun[];
+/** Viewer repository permission for the authenticated (`gh`) user. */
+export type GitHubPermissionLevel = 'admin' | 'maintain' | 'push' | 'triage' | 'pull';
+
+export type GitHubViewerPermission = {
+  /** Highest granted level, or null when unknown. */
+  level: GitHubPermissionLevel | null;
+  /**
+   * True when permission resolution failed. Capabilities are permissive so
+   * controls stay enabled and the single attempt reports the server error —
+   * never hide controls silently.
+   */
+  fallback: boolean;
+};
+
+export type GitHubCapabilities = {
+  canPush: boolean;
+  canTriage: boolean;
+  canPull: boolean;
+  canComment: boolean;
+};
+
+export type GitHubLinkedPullRequest = {
+  number: number;
+  title: string;
+  state: 'open' | 'closed' | 'merged';
+  draft: boolean;
+  url: string;
+  repo: GitHubRepoRef;
+  /** Canonical `host/owner/repo` for scope matching. */
+  repoRef: string;
+};
+
+export type GitHubPullRequestDetailResult = {
+  repo: GitHubRepoRef;
+  pr: GitHubPullRequestDetail | null;
+  reviews: GitHubReview[];
+  threads: GitHubReviewThread[];
+  viewerPermission?: GitHubViewerPermission | null;
+  capabilities?: GitHubCapabilities | null;
+  /** Login of the authenticated user, for author-exception gating. */
+  viewerLogin?: string | null;
+  /** Per-section fetch failures. A failed section keeps `reviews`/`threads`
+   * as `[]` but is never an authoritative empty result — callers must
+   * render `sectionErrors` instead of an empty list. */
+  sectionErrors?: {
+    reviews?: GitHubErrorBody;
+    threads?: GitHubErrorBody;
+  };
+  fetchedAt: number;
+  stale?: boolean;
+};
+
+export type GitHubPullRequestFilesResult = {
+  repo: GitHubRepoRef;
+  number: number;
+  files: GitHubPullRequestFile[];
+  nextCursor: string | null;
+  fetchedAt: number;
 };
 
 export type GitHubPullRequestStatus = {
-  connected: boolean;
-  /** Server-side stamp of when the data was fetched from GitHub (ms epoch); survives server cache serves. */
-  fetchedAt?: number;
   repo?: GitHubRepoRef | null;
-  branch?: string;
-  pr?: GitHubPullRequest | null;
+  branch?: string | null;
+  pr?: GitHubPullRequestSummary | null;
   checks?: GitHubChecksSummary | null;
-  canMerge?: boolean;
+  checksStale?: boolean;
   defaultBranch?: string | null;
-  resolvedRemoteName?: string | null;
+  skippedDefaultBranch?: boolean;
+  fetchedAt: number;
 };
 
 export type GitHubPullRequestCreateInput = {
   directory: string;
+  repo: string;
   title: string;
   head: string;
   base: string;
   body?: string;
   draft?: boolean;
-  /** Remote to create the PR against (target repo, e.g., 'upstream' for forks) */
-  remote?: string;
-  /** Remote where the head branch lives (source repo, e.g., 'origin' for forks) */
-  headRemote?: string;
-  /** Explicit target repo (alternative to remote, for auto-detected upstream) */
-  targetRepo?: { owner: string; repo: string };
 };
 
-export type GitHubPullRequestUpdateInput = {
-  directory: string;
-  number: number;
-  title: string;
-  body?: string;
+export type GitHubPullRequestAction =
+  | 'merge'
+  | 'squash'
+  | 'rebase'
+  | 'ready'
+  | 'draft'
+  | 'close'
+  | 'reopen'
+  | 'update-branch';
+
+export type GitHubPullRequestActionResult = {
+  ok: boolean;
+  action: GitHubPullRequestAction;
+  message?: string | null;
+  pr?: GitHubPullRequestDetail | null;
+  fetchedAt: number;
 };
 
-export type GitHubPullRequestMergeInput = {
-  directory: string;
-  number: number;
-  method: 'merge' | 'squash' | 'rebase';
+export type GitHubReviewEvent = 'approve' | 'request-changes' | 'comment';
+
+export type GitHubReviewInlineComment = {
+  path: string;
+  body: string;
+  line?: number;
+  position?: number;
+  side?: 'LEFT' | 'RIGHT';
+  startLine?: number;
+  startSide?: 'LEFT' | 'RIGHT';
 };
 
-export type GitHubPullRequestReadyInput = {
-  directory: string;
-  number: number;
-};
-
-export type GitHubPullRequestReadyResult = {
-  ready: boolean;
-};
-
-export type GitHubPullRequestMergeResult = {
-  merged: boolean;
-  message?: string;
-};
-
-type GitHubIssueLabel = {
+export type GitHubIssueLabel = {
   name: string;
-  color?: string;
-};
-
-export type GitHubRepoSelector = {
-  owner: string;
-  repo: string;
+  color?: string | null;
+  description?: string | null;
 };
 
 export type GitHubIssueSummary = {
@@ -995,113 +1118,158 @@ export type GitHubIssueSummary = {
   state: 'open' | 'closed';
   author?: GitHubUserSummary | null;
   labels?: GitHubIssueLabel[];
-  sourceRepo?: (GitHubRepoSelector & { source: string }) | null;
+  assignees?: GitHubUserSummary[];
+  comments?: number;
+  createdAt?: string | null;
+  updatedAt?: string | null;
 };
 
 export type GitHubIssue = GitHubIssueSummary & {
   body?: string;
-  assignees?: GitHubUserSummary[];
-  createdAt?: string;
-  updatedAt?: string;
+  /** GitHub-rendered `body_html` (signed image URLs); null when unread. */
+  bodyHtml?: string | null;
+  milestone?: { title: string; number: number } | null;
+  stateReason?: string | null;
 };
 
 export type GitHubIssueComment = {
   id: number;
   url: string;
   body: string;
+  /** GitHub-rendered `body_html` (signed image URLs); null when unread (older cache, optimistic post). */
+  bodyHtml?: string | null;
   author?: GitHubUserSummary | null;
-  createdAt?: string;
-  updatedAt?: string;
+  createdAt?: string | null;
+  updatedAt?: string | null;
 };
 
 export type GitHubIssuesListResult = {
-  connected: boolean;
-  repo?: GitHubRepoRef | null;
-  issues?: GitHubIssueSummary[];
-  page?: number;
-  hasMore?: boolean;
-};
-
-export type GitHubRepoUpstreamResult = {
-  connected: boolean;
-  isFork: boolean;
-  upstream: { owner: string; repo: string; url: string; defaultBranch: string; defaultBranchSha: string | null; remoteName: string | null } | null;
+  repo: GitHubRepoRef;
+  items: GitHubIssueSummary[];
+  nextCursor: string | null;
+  fetchedAt: number;
+  stale?: boolean;
 };
 
 export type GitHubIssueGetResult = {
-  connected: boolean;
-  repo?: GitHubRepoRef | null;
-  issue?: GitHubIssue | null;
+  repo: GitHubRepoRef;
+  issue: GitHubIssue | null;
+  linkedPullRequests?: GitHubLinkedPullRequest[];
+  viewerPermission?: GitHubViewerPermission | null;
+  capabilities?: GitHubCapabilities | null;
+  /** Login of the authenticated user, for author-exception gating. */
+  viewerLogin?: string | null;
+  /**
+   * Per-section fetch failures. A failed section keeps
+   * `linkedPullRequests` as `[]` but is never an authoritative empty
+   * result — callers must render `sectionErrors` instead of an empty list.
+   */
+  sectionErrors?: {
+    linkedPullRequests?: GitHubErrorBody;
+  };
+  fetchedAt: number;
+  stale?: boolean;
 };
 
 export type GitHubIssueCommentsResult = {
-  connected: boolean;
-  repo?: GitHubRepoRef | null;
-  comments?: GitHubIssueComment[];
+  repo: GitHubRepoRef;
+  number: number;
+  comments: GitHubIssueComment[];
+  nextCursor: string | null;
+  fetchedAt: number;
 };
 
-export type GitHubAuthStatus = {
-  connected: boolean;
-  user?: GitHubUserSummary | null;
-  scope?: string;
-  accounts?: GitHubAuthAccount[];
-  ghCli?: {
-    available: boolean;
-    disabled: boolean;
-    active: boolean;
-    user?: GitHubUserSummary | null;
-  } | null;
+export type GitHubIssueTemplate = {
+  filename: string;
+  name: string;
+  body: string;
 };
 
-type GitHubAuthAccount = {
-  id: string;
-  user: GitHubUserSummary;
-  scope?: string;
-  current?: boolean;
-  source?: 'oauth' | 'gh-cli';
+export type GitHubIssueTemplatesResult = {
+  repo: GitHubRepoRef;
+  templates: GitHubIssueTemplate[];
+  fetchedAt: number;
+  stale?: boolean;
 };
 
-export type GitHubDeviceFlowStart = {
-  deviceCode: string;
-  userCode: string;
-  verificationUri: string;
-  verificationUriComplete?: string;
-  expiresIn: number;
-  interval: number;
-  scope?: string;
+export type GitHubPullsQuery = {
+  state?: 'open' | 'closed' | 'merged' | 'all';
+  filter?: 'all' | 'mine' | 'review' | 'assigned';
+  q?: string;
+  cursor?: string | null;
+  sort?: 'updated' | 'created';
+  /** Page size 1..100, default 30. Lets the UI fetch one wide list and filter locally. */
+  perPage?: number;
 };
 
-export type GitHubDeviceFlowComplete =
-  | { connected: true; user: GitHubUserSummary; scope?: string }
-  | { connected: false; status?: string; error?: string };
+export type GitHubIssuesQuery = Omit<GitHubPullsQuery, 'filter' | 'sort'> & {
+  filter?: 'all' | 'mine' | 'assigned' | 'mentioned';
+  labels?: string;
+  sort?: 'updated' | 'created';
+};
+
+export type GitHubContextType = 'issue' | 'pr' | 'checks' | 'threads';
+
+export type GitHubContextResult = {
+  kind: string;
+  text: string;
+  repo: GitHubRepoRef;
+  number: number;
+  fetchedAt: number;
+};
 
 export interface GitHubAPI {
-  authStatus(): Promise<GitHubAuthStatus>;
-  authStart(): Promise<GitHubDeviceFlowStart>;
-  authComplete(deviceCode: string): Promise<GitHubDeviceFlowComplete>;
-  authDisconnect(): Promise<{ removed: boolean }>;
-  authActivate(accountId: string): Promise<GitHubAuthStatus>;
-  authSetGhCliDisabled(disabled: boolean): Promise<{ disabled: boolean }>;
-  me?(): Promise<GitHubUserSummary>;
+  status(): Promise<GitHubStatus>;
+  scope(directory: string): Promise<GitHubScope>;
 
-  prStatus(directory: string, branch: string, remote?: string, options?: { force?: boolean }): Promise<GitHubPullRequestStatus>;
-  prCreate(payload: GitHubPullRequestCreateInput): Promise<GitHubPullRequest>;
-  prUpdate(payload: GitHubPullRequestUpdateInput): Promise<GitHubPullRequest>;
-  prMerge(payload: GitHubPullRequestMergeInput): Promise<GitHubPullRequestMergeResult>;
-  prReady(payload: GitHubPullRequestReadyInput): Promise<GitHubPullRequestReadyResult>;
-
-  prsList(directory: string, options?: { page?: number; query?: string }): Promise<GitHubPullRequestsListResult>;
-  prContext(
+  pullsList(directory: string, repo: string, query?: GitHubPullsQuery): Promise<GitHubPullRequestsListResult>;
+  pullGet(directory: string, repo: string, number: number): Promise<GitHubPullRequestDetailResult>;
+  pullFiles(directory: string, repo: string, number: number, cursor?: string | null): Promise<GitHubPullRequestFilesResult>;
+  pullChecks(directory: string, repo: string, number: number, details?: boolean): Promise<GitHubChecksResult>;
+  prStatus(directory: string, branch?: string | null): Promise<GitHubPullRequestStatus>;
+  pullCreate(input: GitHubPullRequestCreateInput): Promise<{ repo: GitHubRepoRef; pr: GitHubPullRequestSummary; fetchedAt: number }>;
+  pullAction(directory: string, repo: string, number: number, action: GitHubPullRequestAction): Promise<GitHubPullRequestActionResult>;
+  pullUpdate(directory: string, repo: string, number: number, patch: { title?: string; body?: string }): Promise<{ ok: boolean; pr: GitHubPullRequestDetail | null; fetchedAt: number }>;
+  pullComment(directory: string, repo: string, number: number, body: string): Promise<{ ok: boolean; comment: GitHubIssueComment; fetchedAt: number }>;
+  pullComments(directory: string, repo: string, number: number, cursor?: string | null): Promise<GitHubIssueCommentsResult>;
+  pullReview(
     directory: string,
+    repo: string,
     number: number,
-    options?: { includeDiff?: boolean; includeCheckDetails?: boolean; sourceRepo?: GitHubRepoSelector | null }
-  ): Promise<GitHubPullRequestContextResult>;
+    review: { event: GitHubReviewEvent; body?: string; comments?: GitHubReviewInlineComment[] }
+  ): Promise<{ ok: boolean; review: GitHubReview; fetchedAt: number }>;
+  pullThread(
+    directory: string,
+    repo: string,
+    number: number,
+    threadId: string,
+    action: { action: 'reply'; body: string; commentId: number } | { action: 'resolve' | 'unresolve' }
+  ): Promise<{ ok: boolean; fetchedAt: number }>;
+  pullCheckout(directory: string, repo: string, number: number, mode?: 'worktree' | 'current'): Promise<{ ok: boolean; mode: string; branch: string; headSha: string; path: string | null; fetchedAt: number }>;
 
-  issuesList(directory: string, options?: { page?: number; query?: string }): Promise<GitHubIssuesListResult>;
-  issueGet(directory: string, number: number, options?: { sourceRepo?: GitHubRepoSelector | null }): Promise<GitHubIssueGetResult>;
-  issueComments(directory: string, number: number, options?: { sourceRepo?: GitHubRepoSelector | null }): Promise<GitHubIssueCommentsResult>;
-  repoUpstream(directory: string): Promise<GitHubRepoUpstreamResult>;
-  repoBranches(owner: string, repo: string): Promise<string[]>;
+  issuesList(directory: string, repo: string, query?: GitHubIssuesQuery): Promise<GitHubIssuesListResult>;
+  issueGet(directory: string, repo: string, number: number): Promise<GitHubIssueGetResult>;
+  issueComments(directory: string, repo: string, number: number, cursor?: string | null): Promise<GitHubIssueCommentsResult>;
+  issueCreate(
+    directory: string,
+    repo: string,
+    input: { title: string; body?: string; labels?: string[]; assignees?: string[]; milestone?: number | null }
+  ): Promise<{ repo: GitHubRepoRef; issue: GitHubIssue; fetchedAt: number }>;
+  issueUpdate(
+    directory: string,
+    repo: string,
+    number: number,
+    patch: { title?: string; body?: string; state?: 'open' | 'closed'; stateReason?: 'completed' | 'not_planned'; labels?: string[]; assignees?: string[]; milestone?: number | null }
+  ): Promise<{ ok: boolean; issue: GitHubIssue | null; fetchedAt: number }>;
+  issueComment(directory: string, repo: string, number: number, body: string): Promise<{ ok: boolean; comment: GitHubIssueComment; fetchedAt: number }>;
+
+  repoMeta(directory: string, repo: string, kinds?: Array<'labels' | 'assignees'>): Promise<{ repo: GitHubRepoRef; labels?: GitHubIssueLabel[]; assignees?: GitHubUserSummary[]; fetchedAt: number }>;
+  issueTemplates(directory: string, repo: string): Promise<GitHubIssueTemplatesResult>;
+  checkJobs(directory: string, repo: string, runId: number | null, jobId?: number | null): Promise<{ repo: GitHubRepoRef; runId: number | null; jobs: Array<{ id: number; name: string; status?: string | null; conclusion?: string | null; startedAt?: string | null; completedAt?: string | null; detailsUrl?: string | null; steps: GitHubCheckRunStep[] }>; fetchedAt: number }>;
+  checkAnnotations(directory: string, repo: string, checkRunId: number): Promise<{ repo: GitHubRepoRef; checkRunId: number; annotations: Array<{ path?: string | null; startLine?: number | null; endLine?: number | null; level?: string | null; message: string; title?: string | null }>; fetchedAt: number }>;
+  checksRerun(directory: string, repo: string, runId: number): Promise<{ ok: boolean; runId: number; fetchedAt: number }>;
+  agentContext(directory: string, repo: string, type: GitHubContextType, number: number, options?: { ref?: string; includeDiff?: boolean }): Promise<GitHubContextResult>;
+  invalidate(input?: { directory?: string; repo?: string; kind?: 'pulls' | 'issues' | 'checks' | 'repo' | 'all'; number?: number }): Promise<{ ok: boolean; fetchedAt: number }>;
 }
 
 export interface RemoteClientRecord {

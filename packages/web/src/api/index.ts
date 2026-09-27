@@ -8,6 +8,7 @@ import {
 import { useDirectoryStore } from '@pichamber/ui/stores/useDirectoryStore';
 import { createWebTerminalAPI } from './terminal';
 import { createWebGitAPI } from './git';
+import { createWebGitHubAPI } from './github';
 import { createWebFilesAPI } from './files';
 import { createWebSettingsAPI } from './settings';
 import { createWebPermissionsAPI } from './permissions';
@@ -39,6 +40,7 @@ export const createWebAPIs = (options: WebAPIsOptions = {}): RuntimeAPIs => {
     runtime: { platform: 'web', isDesktop: false, label: 'web' },
     terminal: createWebTerminalAPI(),
     git: createWebGitAPI(),
+    github: createWebGitHubAPI(),
     files: createWebFilesAPI({ urls: activeUrls, getDirectory: () => useDirectoryStore.getState().currentDirectory }),
     settings: createWebSettingsAPI(),
     permissions: createWebPermissionsAPI(),
