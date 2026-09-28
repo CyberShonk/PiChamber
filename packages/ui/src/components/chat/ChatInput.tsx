@@ -158,6 +158,7 @@ import {
 import { DraftBranchCheckoutDialog } from "./composer/ui/DraftBranchCheckoutDialog";
 import { ComposerAutocompletePopups } from "./composer/ui/ComposerAutocompletePopups";
 import { ComposerFooter } from "./composer/ui/ComposerFooter";
+import { GitHubLinkPicker } from "../views/github/agent/GitHubLinkPicker";
 import { RevertedMessageDock } from "./composer/ui/RevertedMessageDock";
 import { ComposerDragOverlay } from "./composer/ui/ComposerDragOverlay";
 import { ComposerAttachmentPickerInput } from "./composer/ui/ComposerAttachmentPickerInput";
@@ -2227,6 +2228,16 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     fileInputRef.current?.click();
   }, [isAttachmentDisabled]);
 
+  // Composer "Link issue / pull request" (desktop attach menu). Same gate:
+  // linking inserts composer text, so it needs an accepting composer.
+  const [githubLinkOpen, setGithubLinkOpen] = React.useState(false);
+  const handleLinkGitHub = React.useCallback(() => {
+    if (isAttachmentDisabled) {
+      return;
+    }
+    setGithubLinkOpen(true);
+  }, [isAttachmentDisabled]);
+
   const handleLocalFileSelect = React.useCallback(
     async (event: React.ChangeEvent<HTMLInputElement>) => {
       const files = event.target.files;
@@ -2591,6 +2602,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                   // keeps the OS file/photo picker inside the user gesture on
                   // every runtime.
                   onPickLocalFiles={handlePickLocalFiles}
+                  onLinkGitHub={handleLinkGitHub}
                   onPrimaryAction={handlePrimaryAction}
                   onQueueMessage={handleQueueMessage}
                   onAbort={handleAbort}
@@ -2768,6 +2780,14 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
           void draftBranchCheckout.confirm();
         }}
       />
+
+      {githubLinkOpen && (currentSessionDirectoryForSync ?? currentDirectory) ? (
+        <GitHubLinkPicker
+          directory={(currentSessionDirectoryForSync ?? currentDirectory) as string}
+          open={githubLinkOpen}
+          onClose={() => setGithubLinkOpen(false)}
+        />
+      ) : null}
 
       {/* Mobile draft target pickers: bottom sheets replacing the inline
             project/branch Selects (which desktop keeps). */}

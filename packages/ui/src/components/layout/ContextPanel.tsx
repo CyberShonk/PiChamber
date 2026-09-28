@@ -23,6 +23,8 @@ import { useUIStore, type ContextPanelMode, type PendingDiffScope } from '@/stor
 import { getGitRailPresentation } from '@/lib/surfaces/registry';
 import { useIsGitRepo } from '@/stores/useGitStore';
 import { ContextPanelContent } from './ContextSidebarTab';
+import { PullRequestsSurface } from '@/components/views/github/PullRequestsSurface';
+import { IssuesSurface } from '@/components/views/github/IssuesSurface';
 import { Icon } from "@/components/icon/Icon";
 import { CONTEXT_SURFACE_DEFAULT_WIDTH_FRACTION } from '@/lib/surfaces/registry';
 import { isTerminalEventTarget } from '@/lib/terminalFocus';
@@ -70,6 +72,8 @@ const getModeLabel = (mode: ContextPanelMode, isGitRepo: boolean | null = null):
   if (mode === 'browser') return "Browser";
   if (mode === 'git') return getGitRailPresentation(isGitRepo).label;
   if (mode === 'terminal') return "Terminal";
+  if (mode === 'pull-requests') return "Pull requests";
+  if (mode === 'issues') return "Issues";
   return "Context";
 };
 
@@ -154,6 +158,14 @@ const getTabIcon = (tab: { mode: ContextPanelMode; targetPath: string | null }, 
 
   if (tab.mode === 'browser') {
     return <Icon name="global" className="h-3.5 w-3.5" />;
+  }
+
+  if (tab.mode === 'pull-requests') {
+    return <Icon name="git-pull-request" className="h-3.5 w-3.5" />;
+  }
+
+  if (tab.mode === 'issues') {
+    return <Icon name="task" className="h-3.5 w-3.5" />;
   }
 
   return undefined;
@@ -448,7 +460,11 @@ export const ContextPanel: React.FC = () => {
         ? <ContextPanelContent />
         : activeTab?.mode === 'git'
             ? <React.Suspense fallback={null}><GitView isActive={isOpen} gitHeaderSlot={activeTab?.mode === 'git' ? gitHeaderSlot : null} /></React.Suspense>
-            : activeTab?.mode === 'preview'
+            : activeTab?.mode === 'pull-requests'
+                ? <PullRequestsSurface key={`pull-requests:${directoryKey}`} />
+                : activeTab?.mode === 'issues'
+                    ? <IssuesSurface key={`issues:${directoryKey}`} />
+                    : activeTab?.mode === 'preview'
                 ? <PreviewPane rawUrl={activeTab.targetPath ?? ''} onNavigate={(url) => openContextPreview(effectiveDirectory, url)} />
                 : (
                   <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center">

@@ -30,6 +30,12 @@ type ComposerAttachmentControlsProps = {
     isAttachmentDisabled: boolean;
     /** Disable the settings control while a send is in flight. */
     disabled?: boolean;
+    /**
+     * Open the GitHub link picker. When present, the desktop attach menu
+     * gains a "Link issue / pull request" entry; mobile keeps its direct
+     * native picker and does not offer linking (documented gap).
+     */
+    onLinkGitHub?: () => void;
 };
 
 /**
@@ -47,6 +53,7 @@ export const ComposerAttachmentControls = React.memo(function ComposerAttachment
         onOpenSettings,
         isAttachmentDisabled,
         disabled = false,
+        onLinkGitHub,
     } = props;
 
     return (
@@ -94,6 +101,16 @@ export const ComposerAttachmentControls = React.memo(function ComposerAttachment
                                 <Icon name="attachment-2"/>
                                 {"Attach files"}
                             </DropdownMenuItem>
+                            {onLinkGitHub ? (
+                                <DropdownMenuItem
+                                    onSelect={() => {
+                                        requestAnimationFrame(onLinkGitHub);
+                                    }}
+                                >
+                                    <Icon name="github"/>
+                                    {"Link issue / pull request"}
+                                </DropdownMenuItem>
+                            ) : null}
                         </DropdownMenuContent>
                     </DropdownMenu>
                 )}
@@ -122,4 +139,5 @@ export const ComposerAttachmentControls = React.memo(function ComposerAttachment
     && prev.onOpenMobileSheet === next.onOpenMobileSheet
     && prev.isAttachmentDisabled === next.isAttachmentDisabled
     && prev.disabled === next.disabled
+    && prev.onLinkGitHub === next.onLinkGitHub
 ));

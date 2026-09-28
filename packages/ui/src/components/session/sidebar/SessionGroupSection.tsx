@@ -13,7 +13,7 @@ import {
   resolveMenuOpenSessionId,
 } from './sessionNodeItemUtils';
 import { useSessionFoldersStore } from '@/stores/useSessionFoldersStore';
-import { getGitHubPrStatusKey, usePrVisualSummary } from '@/stores/useGitHubPrStatusStore';
+import { getGitHubPrStatusKey, useEnsureGitHubPrStatus, usePrVisualSummary } from '@/stores/useGitHubPrStatusStore';
 import { CollapsedActivityIndicator } from './collapsedActivityIndicator';
 import { getSessionNodesActivityState } from './collapsedActivityState';
 import {
@@ -91,13 +91,17 @@ function SessionGroupSectionBase(props: SessionGroupSectionProps): React.ReactNo
   const searchData = hasSessionSearchQuery ? groupSearchDataByGroup.get(group) : null;
   const isCollapsed = hasSessionSearchQuery ? false : collapsedGroups.has(groupKey);
 
+  const groupPrDirectory = !group.isMain && !group.isArchivedBucket && !hideGroupLabel
+    ? normalizePath(group.directory ?? null)
+    : null;
+  const groupPrBranch = !group.isMain && !group.isArchivedBucket && !hideGroupLabel
+    ? group.branch?.trim() || null
+    : null;
   const groupPrKey = React.useMemo(() => {
-    if (group.isMain || group.isArchivedBucket || hideGroupLabel) return null;
-    const directory = normalizePath(group.directory ?? null);
-    const branch = group.branch?.trim();
-    return directory && branch ? getGitHubPrStatusKey() : null;
-  }, [group.branch, group.directory, group.isArchivedBucket, group.isMain, hideGroupLabel]);
+    return groupPrDirectory && groupPrBranch ? getGitHubPrStatusKey(groupPrDirectory, groupPrBranch) : null;
+  }, [groupPrDirectory, groupPrBranch]);
   const groupPrSummary = usePrVisualSummary(groupPrKey);
+  useEnsureGitHubPrStatus(groupPrDirectory, groupPrBranch);
   const groupPrColor = groupPrSummary ? `var(--pr-${groupPrSummary.visualState})` : undefined;
 
   const maxVisible = hideDirectoryControls ? 10 : 5;

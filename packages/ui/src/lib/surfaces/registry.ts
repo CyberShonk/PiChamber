@@ -7,7 +7,9 @@ export type ContextSurfaceId =
   | 'terminal'
   | 'context'
   | 'browser'
-  | 'preview';
+  | 'preview'
+  | 'pull-requests'
+  | 'issues';
 
 export type ContextSurfaceDescriptor = {
   id: ContextSurfaceId;
@@ -20,8 +22,11 @@ export type ContextSurfaceDescriptor = {
    * 'has-content' surfaces are content-driven: they need an existing tab of
    * their mode (a preview URL emitted, a split session) and stay hidden on
    * the rail until one exists.
+   * 'github-repo' surfaces need a GitHub repository in scope for the current
+   * directory: visible when scope has >=1 GitHub repo, hidden while scope is
+   * loading, visible when scope resolution FAILED so the failure renders.
    */
-  availability: 'always' | 'has-content';
+  availability: 'always' | 'has-content' | 'github-repo';
   /** Short tooltip explanation shown on the rail. */
   description: string;
 };
@@ -79,6 +84,22 @@ export const CONTEXT_SURFACES: readonly ContextSurfaceDescriptor[] = [
     label: "Preview",
     availability: 'has-content',
   },
+  {
+    id: 'pull-requests',
+    description: "Browse pull requests for this repository",
+    mode: 'pull-requests',
+    icon: 'git-pull-request',
+    label: "Pull requests",
+    availability: 'github-repo',
+  },
+  {
+    id: 'issues',
+    description: "Browse issues for this repository",
+    mode: 'issues',
+    icon: 'task',
+    label: "Issues",
+    availability: 'github-repo',
+  },
 ];
 
 const SURFACE_BY_ID = new Map(CONTEXT_SURFACES.map((surface) => [surface.id, surface]));
@@ -133,10 +154,59 @@ export const sortContextSurfaces = (railOrder: readonly string[]): ContextSurfac
   return ordered;
 };
 
+export type GitHubRailScopeState = {
+  /** True while scope resolution is in flight and no result exists yet. */
+  isLoading: boolean;
+  /** True when scope resolved (even to zero repos) or failed. */
+  hasResult: boolean;
+  /** True when scope holds >=1 selectable GitHub repository. */
+  hasGitHubRepo: boolean;
+  /** True when scope resolution failed (surface stays visible to render it). */
+  hasError: boolean;
+};
+
+/** Minimal scope-entry shape for deriving rail/mobile visibility. Structural
+ * (not the store type) so lib stays free of store imports. */
+export type GitHubScopeEntryLike = {
+  scope: { repositories: ReadonlyArray<{ host: string | null; owner: string | null; repo: string | null; disabledReason?: string | null }> } | null;
+  isLoading: boolean;
+  error: unknown;
+} | null | undefined;
+
+/** Derive the `github-repo` scope state from a scope-store entry.
+ * Shared by the desktop rail and the Capacitor mobile workspace tabs so both
+ * apply the same rule without duplicating it. */
+export const toGitHubRailScopeState = (entry: GitHubScopeEntryLike): GitHubRailScopeState => {
+  if (!entry) return { isLoading: true, hasResult: false, hasGitHubRepo: false, hasError: false };
+  const repos = entry.scope?.repositories ?? [];
+  return {
+    isLoading: entry.isLoading,
+    hasResult: Boolean(entry.scope || entry.error),
+    hasGitHubRepo: repos.some((repoEntry) => Boolean(repoEntry.host && repoEntry.owner && repoEntry.repo && !repoEntry.disabledReason)),
+    hasError: Boolean(entry.error && !entry.scope),
+  };
+};
+
+/** The `github-repo` availability rule without the rail's open-tab exception:
+ * hidden while scope loads with no result yet, visible when scope holds >=1
+ * GitHub repo, visible when scope resolution FAILED so the failure renders.
+ * The rail adds "an open tab keeps its surface visible" on top of this;
+ * mobile uses this directly and falls back to Changes instead. */
+export const isGitHubRepoAvailable = (scope: GitHubRailScopeState | undefined): boolean => {
+  if (!scope) return false;
+  if (scope.isLoading && !scope.hasResult) return false;
+  if (scope.hasError) return true;
+  return scope.hasGitHubRepo;
+};
+
 type VisibleRailSurfacesOptions = {
   railOrder: readonly string[];
   screenWidth: number;
   tabs: readonly { mode: ContextPanelMode }[];
+  /** GitHub scope state for the current directory. Omitted callers keep the
+   * previous behavior for non-github surfaces; github-repo surfaces hide
+   * until scope state is supplied (loading). */
+  githubScope?: GitHubRailScopeState;
 };
 
 /**
@@ -151,6 +221,11 @@ export const getVisibleContextRailSurfaces = (options: VisibleRailSurfacesOption
   return sortContextSurfaces(options.railOrder).filter((surface) => {
     if (surface.availability === 'has-content') {
       return options.tabs.some((tab) => tab.mode === surface.mode);
+    }
+    if (surface.availability === 'github-repo') {
+      // An open tab keeps the surface visible even if scope went away.
+      if (options.tabs.some((tab) => tab.mode === surface.mode)) return true;
+      return isGitHubRepoAvailable(options.githubScope);
     }
     return true;
   });

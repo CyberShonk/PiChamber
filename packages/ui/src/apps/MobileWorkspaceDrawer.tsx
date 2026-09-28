@@ -6,6 +6,8 @@ import { ErrorBoundary } from '@/components/ui/ErrorBoundary';
 import { TerminalView } from '@/components/views/TerminalView';
 import { cn } from '@/lib/utils';
 import { MOBILE_DRAWER_DURATION_MS, MOBILE_DRAWER_EASING, useDrawerSwipe } from './useDrawerSwipe';
+import { getVisibleMobileWorkspaceTabs } from './mobileWorkspaceTabs';
+import type { MobileWorkspaceTab } from './mobileWorkspaceTabs';
 
 const LazyFilesView = React.lazy(() =>
   import('@/components/views/FilesView').then((module) => ({ default: module.FilesView })),
@@ -13,23 +15,17 @@ const LazyFilesView = React.lazy(() =>
 const LazyGitView = React.lazy(() =>
   import('@/components/views/GitView').then((module) => ({ default: module.GitView })),
 );
+const LazyPullRequestsSurface = React.lazy(() =>
+  import('@/components/views/github/PullRequestsSurface').then((module) => ({ default: module.PullRequestsSurface })),
+);
+const LazyIssuesSurface = React.lazy(() =>
+  import('@/components/views/github/IssuesSurface').then((module) => ({ default: module.IssuesSurface })),
+);
 
 const DRAWER_ROOT_ID = 'mobile-surface-root';
 const ENTER_DELAY_MS = 16;
 
-export type MobileWorkspaceTab = 'changes' | 'files' | 'terminal';
-
-const WORKSPACE_TABS: Array<{
-  id: MobileWorkspaceTab;
-  label: string;
-  icon: 'git-branch' | 'file-text' | 'terminal';
-}> = [
-  { id: 'changes', label: 'Changes', icon: 'git-branch' },
-  { id: 'files', label: 'Files', icon: 'file-text' },
-  { id: 'terminal', label: 'Terminal', icon: 'terminal' },
-];
-
-/** The workspace surfaces as tabs (Changes / Files / Terminal).
+/** The workspace surfaces as tabs (Changes / Files / Terminal / PRs / Issues).
 
     Two hosts, same content and same state:
      - `drawer` (default) covers 80% from the right with a dark scrim — matching
@@ -52,6 +48,7 @@ export const MobileWorkspaceDrawer = React.memo(function MobileWorkspaceDrawer({
   drawerRefExternal,
   scrimRefExternal,
   rootRefExternal,
+  githubTabsAvailable = false,
 }: {
   open: boolean;
   onClose: () => void;
@@ -63,6 +60,12 @@ export const MobileWorkspaceDrawer = React.memo(function MobileWorkspaceDrawer({
   drawerRefExternal?: React.RefObject<HTMLElement | null>;
   scrimRefExternal?: React.RefObject<HTMLButtonElement | null>;
   rootRefExternal?: React.RefObject<HTMLDivElement | null>;
+  /**
+   * Whether the GitHub tabs (PRs / Issues) are shown. Resolved by the
+   * caller with the shared `github-repo` rule (`isGitHubRepoAvailable`):
+   * hidden while scope loads, visible with >=1 repo or on scope failure.
+   */
+  githubTabsAvailable?: boolean;
 }) {
   const rootRef = React.useRef<HTMLElement | null>(null);
   const drawerRefInternal = React.useRef<HTMLElement>(null);
@@ -161,9 +164,13 @@ export const MobileWorkspaceDrawer = React.memo(function MobileWorkspaceDrawer({
 
   const duration = prefersReducedMotion ? 0 : MOBILE_DRAWER_DURATION_MS;
 
+  // GitHub tabs follow the same `github-repo` availability as the desktop
+  // rail; the caller resolves it so this component stays presentation-only.
+  const visibleTabs = getVisibleMobileWorkspaceTabs(githubTabsAvailable);
+
   const tabs = (
     <div className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto" role="tablist" aria-label="Workspace" data-no-drawer-swipe="true">
-      {WORKSPACE_TABS.map((item) => {
+      {visibleTabs.map((item) => {
         const isActive = tab === item.id;
         return (
           <button
@@ -173,7 +180,7 @@ export const MobileWorkspaceDrawer = React.memo(function MobileWorkspaceDrawer({
             aria-selected={isActive}
             onClick={() => onTabChange(item.id)}
             className={cn(
-              'flex min-w-0 flex-1 items-center justify-center gap-1 rounded-lg px-1.5 py-2 typography-ui-label transition-colors',
+              'flex min-h-[44px] min-w-0 flex-1 items-center justify-center gap-1 rounded-lg px-1.5 py-2 typography-ui-label transition-colors',
               'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50',
               isActive
                 ? 'bg-interactive-selection text-foreground'
@@ -196,7 +203,7 @@ export const MobileWorkspaceDrawer = React.memo(function MobileWorkspaceDrawer({
           type="button"
           onClick={handleClose}
           aria-label="Close workspace panel"
-          className="flex size-10 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:bg-interactive-hover hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+          className="flex size-11 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:bg-interactive-hover hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
         >
           <Icon name="close" className="size-5" />
         </button>
@@ -232,6 +239,30 @@ export const MobileWorkspaceDrawer = React.memo(function MobileWorkspaceDrawer({
           <div className={cn('h-full', tab !== 'terminal' && 'hidden')}>
             <ErrorBoundary>
               <TerminalView visible={open && tab === 'terminal'} />
+            </ErrorBoundary>
+          </div>
+        ) : null}
+        {/* GitHub tabs share the drawer's visitedTabs keep-alive: once
+            visited they stay mounted (hidden) so list/detail state survives
+            tab switches without a remount fetch. Unlike desktop's singleton
+            remount, restoration comes from staying mounted AND the stores'
+            last-known-first snapshots. Hidden cost is focus-gated revalidate
+            only (no polling). */}
+        {visitedTabs.has('pull-requests') ? (
+          <div className={cn('h-full', tab !== 'pull-requests' && 'hidden')}>
+            <ErrorBoundary>
+              <React.Suspense fallback={null}>
+                <LazyPullRequestsSurface hideFilesTab />
+              </React.Suspense>
+            </ErrorBoundary>
+          </div>
+        ) : null}
+        {visitedTabs.has('issues') ? (
+          <div className={cn('h-full', tab !== 'issues' && 'hidden')}>
+            <ErrorBoundary>
+              <React.Suspense fallback={null}>
+                <LazyIssuesSurface />
+              </React.Suspense>
             </ErrorBoundary>
           </div>
         ) : null}

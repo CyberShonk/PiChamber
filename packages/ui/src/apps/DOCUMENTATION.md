@@ -102,6 +102,14 @@ leave the dirty editor intact.
 
 - Hidden `useGitStore` selectors and `isActive`-gated effects do not run while the drawer is closed because the component is not mounted. The `GitView` chunk is not requested during initial mobile startup (verified via Network panel: no `GitView` request before the first right-drawer open).
 
+## Mobile Workspace GitHub Tabs
+
+- `mobileWorkspaceTabs.ts` owns `MobileWorkspaceTab` (`changes` | `files` | `terminal` | `pull-requests` | `issues`), the drawer/header tab definitions (short labels "PRs" / "Issues"), and the pure helpers `sanitizeMobileWorkspaceTab`, `isMobileGitHubTab`, `getVisibleMobileWorkspaceTabs`, `resolveMobileWorkspaceTab`.
+- Availability reuses the shared `github-repo` rule: `MobileShell` resolves the effective directory, ensures scope through `useGitHubScopeStore` (same path as the desktop rail), derives `toGitHubRailScopeState` + `isGitHubRepoAvailable` from `lib/surfaces/registry`, and passes a boolean down. The drawer and the tablet header switcher stay presentation-only. Tabs hide while scope loads with no result, show with >=1 GitHub repo, and show on scope failure so the failure renders inside the surfaces.
+- An active GitHub tab that becomes unavailable falls back to Changes (`resolveMobileWorkspaceTab` effect in `MobileShell`). Mobile has no rail-style open-tab exception: scope failure counts as available, so the fallback only fires while loading or at zero repos.
+- Keep-alive follows the drawer's `visitedTabs` precedent: PRs/Issues panes stay mounted once visited (hidden with `hidden`), unlike desktop's singleton remount-on-switch. Restoration comes from staying mounted plus the stores' last-known-first snapshots; hidden cost is focus-gated revalidation only (no list polling). The `PullRequestsSurface` / `IssuesSurface` chunks lazy-load on first visit, like Files/Git.
+- Intentional v1 parity differences with desktop: PR detail is Overview + Checks (the drawer renders `PullRequestsSurface hideFilesTab`, which omits the Files tab and skips the files fetch; Files/review on mobile is a follow-up), and there is no composer link picker on mobile. Drawer tab buttons meet 44px touch targets (`min-h-[44px]`, `size-11` close); the tablet header workspace switcher uses 44px icon buttons; safe-area insets follow the existing drawer precedent.
+
 ## Tablet-Layout Subscriptions
 
 - `useTabletLayout` is now `useSyncExternalStore` with a single global `resize` listener and a single `matchMedia('(orientation: landscape)')` listener. Stable snapshots (`isSameTabletLayout`) avoid re-renders when values are equal.
@@ -112,7 +120,7 @@ leave the dirty editor intact.
 
 ## Validation Checklist
 
-- `bun test` — `gestureMath.test.ts` (velocity/progress, two-finger, touchcancel, second-drag, tablet open), `tabletLayout.test.ts`, `mobileDrawerLifecycle.test.ts`.
+- `bun test` — `gestureMath.test.ts` (velocity/progress, two-finger, touchcancel, second-drag, tablet open), `tabletLayout.test.ts`, `mobileDrawerLifecycle.test.ts`, `mobileWorkspaceTabs.test.ts` (github availability, visible tabs, sanitizer, fallback).
 - `bun run type-check` — workspace-wide.
 - `bun run lint` — workspace-wide (only pre-existing `ComposerEditor` warning).
 - `bun run dead-code` — no new unused exports.

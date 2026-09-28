@@ -41,7 +41,6 @@ import { getHeaderLocationLabel, getHeaderOpenDirectory } from './headerLocation
 import { getSessionDisplayTitle } from '@/lib/chat/sessionTitle';
 
 type UsageWindow = any;
-import type { GitHubAuthStatus } from '@/lib/api/types';
 import { OpenInAppButton } from '@/components/desktop/OpenInAppButton';
 import { ProjectActionsButton } from '@/components/layout/ProjectActionsButton';
 
@@ -69,6 +68,8 @@ import { toast } from '@/components/ui';
 import { copyTextToClipboard } from '@/lib/clipboard';
 import { buildExportFilename, downloadAsMarkdown, formatSessionAsMarkdown, saveAsMarkdownDesktop } from '@/lib/exportSession';
 import { Button } from '@/components/ui/button';
+import type { MobileWorkspaceTab, MobileWorkspaceTabDef } from '@/apps/mobileWorkspaceTabs';
+import { getVisibleMobileWorkspaceTabs } from '@/apps/mobileWorkspaceTabs';
 import {
   HeaderIconActionButton,
   DESKTOP_HEADER_ICON_BUTTON_CLASS,
@@ -88,7 +89,7 @@ interface TabConfig {
   showDot?: boolean;
 }
 
-type TabletWorkspaceTab = 'changes' | 'files' | 'terminal';
+type TabletWorkspaceTab = MobileWorkspaceTab;
 
 interface HeaderProps {
   onToggleLeftDrawer?: () => void;
@@ -97,6 +98,12 @@ interface HeaderProps {
   rightDrawerOpen?: boolean;
   tabletWorkspaceTab?: TabletWorkspaceTab;
   onSelectTabletWorkspaceTab?: (tab: TabletWorkspaceTab) => void;
+  /**
+   * Whether the GitHub workspace tabs (PRs / Issues) are shown. Resolved
+   * by the caller with the shared `github-repo` rule; hidden while scope
+   * loads, visible with >=1 repo or on scope failure.
+   */
+  tabletGitHubTabsAvailable?: boolean;
 }
 
 type HeaderSessionSnapshot = {
@@ -115,6 +122,7 @@ export const Header: React.FC<HeaderProps> = ({
   rightDrawerOpen,
   tabletWorkspaceTab,
   onSelectTabletWorkspaceTab,
+  tabletGitHubTabsAvailable = false,
 }) => {
   streamPerfCount('ui.header.render');
   const setSessionSwitcherOpen = useUIStore((state) => state.setSessionSwitcherOpen);
@@ -168,13 +176,11 @@ export const Header: React.FC<HeaderProps> = ({
   const { isMobile } = useDeviceInfo();
   const { enabled: isTabletLayoutEnabled } = useTabletLayout();
   const isTabletWorkspaceMode = Boolean(isTabletLayoutEnabled && onSelectTabletWorkspaceTab && tabletWorkspaceTab !== undefined);
-  const tabletWorkspaceTabs = React.useMemo<Array<{ id: TabletWorkspaceTab; label: string; icon: IconName }>>(() => [
-    { id: 'changes', label: "Changes", icon: "git-branch" },
-    { id: 'files', label: "Files", icon: "file-text" },
-    { id: 'terminal', label: "Terminal", icon: "terminal-box" },
-  ], []);
+  const tabletWorkspaceTabs = React.useMemo<MobileWorkspaceTabDef[]>(
+    () => [...getVisibleMobileWorkspaceTabs(tabletGitHubTabsAvailable)],
+    [tabletGitHubTabsAvailable],
+  );
   const [tabletMetadataOpen, setTabletMetadataOpen] = React.useState(false);
-  const githubAuthStatus = null;
 
   const headerRef = React.useRef<HTMLElement | null>(null);
 
@@ -231,10 +237,6 @@ export const Header: React.FC<HeaderProps> = ({
   }, []);
 
   const isSessionSwitcherOpen = useUIStore((state) => state.isSessionSwitcherOpen);
-  const githubAvatarUrl = null;
-  const githubLogin = null;
-  const githubAccounts: any[] = [];
-  const [isSwitchingGitHubAccount, setIsSwitchingGitHubAccount] = React.useState(false);
   const [isDesktopServicesOpen, setIsDesktopServicesOpen] = React.useState(false);
   const [currentInstanceLabel, setCurrentInstanceLabel] = React.useState('Local');
   const [currentInstanceIsLocal, setCurrentInstanceIsLocal] = React.useState(true);
@@ -669,10 +671,6 @@ export const Header: React.FC<HeaderProps> = ({
     return lastProjectActionsContextRef.current;
   }, [actionDirectory, activeProjectRef]);
 
-
-
-  const handleGitHubAccountSwitch = React.useCallback(async (_accountId: string) => {}, []);
-
   const blurActiveElement = React.useCallback(() => {
     if (typeof document === 'undefined') {
       return;
@@ -1085,15 +1083,7 @@ export const Header: React.FC<HeaderProps> = ({
           onOpenChange={setIsDesktopServicesOpen}
         />
       )}
-      <DesktopGitHubControl
-        isMobile={isMobile}
-        githubAuthStatus={githubAuthStatus}
-        githubAccounts={githubAccounts}
-        githubAvatarUrl={githubAvatarUrl}
-        githubLogin={githubLogin}
-        isSwitchingGitHubAccount={isSwitchingGitHubAccount}
-        handleGitHubAccountSwitch={handleGitHubAccountSwitch}
-      />
+      <DesktopGitHubControl isMobile={isMobile} />
     </>
   );
 
@@ -1444,7 +1434,9 @@ export const Header: React.FC<HeaderProps> = ({
                             role="tab"
                             className={cn(
                               mobileHeaderIconButtonClass,
-                              'relative rounded-lg',
+                              // 44px touch targets for the workspace switcher
+                              // (overrides the shared h-9 icon size via merge).
+                              'relative h-11 w-11 rounded-lg',
                               isActive && 'bg-interactive-selection text-interactive-selection-foreground'
                             )}
                           >

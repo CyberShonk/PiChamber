@@ -16,7 +16,18 @@ import { MobileHeader } from './MobileHeader';
 import { MobileInstancesSurface } from './MobileInstancesSurface';
 import { MobileSessionsSheet } from './MobileSessionsSheet';
 import { MobileFullscreenSurface } from './MobileFullscreenSurface';
-import { MobileWorkspaceDrawer, type MobileWorkspaceTab } from './MobileWorkspaceDrawer';
+import { MobileWorkspaceDrawer } from './MobileWorkspaceDrawer';
+import {
+  isMobileGitHubTab,
+  resolveMobileWorkspaceTab,
+  sanitizeMobileWorkspaceTab,
+  type MobileWorkspaceTab,
+} from './mobileWorkspaceTabs';
+import { isGitHubRepoAvailable, toGitHubRailScopeState } from '@/lib/surfaces/registry';
+import { useEffectiveDirectory } from '@/hooks/useEffectiveDirectory';
+import { useRuntimeAPIs } from '@/hooks/useRuntimeAPIs';
+import { useGitHubScopeStore } from '@/stores/useGitHubScopeStore';
+import { normalizeDirectoryPathKey } from '@/lib/directoryPathKey';
 import { DedicatedMobileAppProvider, type MobileAppActions } from './mobileAppContext';
 import { getAutoConnectTargetLabel } from './mobileConnections';
 import { isCapacitorMobileApp, useNativeAndroidBackButton } from './mobileNativeChrome';
@@ -58,7 +69,13 @@ export const MobileShell: React.FC<MobileShellProps> = ({ onActiveConnectionDele
   // Phone right drawer with the workspace tabs; the tab persists across
   // open/close so the right-edge swipe reopens where the user left off.
   const [workspaceOpen, setWorkspaceOpen] = React.useState(false);
-  const [workspaceTab, setWorkspaceTab] = React.useState<MobileWorkspaceTab>('changes');
+  const [workspaceTabRaw, setWorkspaceTabRaw] = React.useState<MobileWorkspaceTab>('changes');
+  // Every tab selection flows through the sanitizer so persisted values
+  // from older builds (three core tabs) and unknown values stay valid.
+  const setWorkspaceTab = React.useCallback((next: MobileWorkspaceTab) => {
+    setWorkspaceTabRaw(sanitizeMobileWorkspaceTab(next));
+  }, []);
+  const workspaceTab = workspaceTabRaw;
 
   const [settingsInitialMobileStage, setSettingsInitialMobileStage] = React.useState<'nav' | 'page-content'>('nav');
   // When set, the Changes surface opens directly into the per-file diff for this path.
@@ -101,6 +118,35 @@ export const MobileShell: React.FC<MobileShellProps> = ({ onActiveConnectionDele
   const showUpdateItem = !showCapacitorOnlyFeatures
     && updateAvailable
     && (updateRuntimeType === 'desktop' || updateRuntimeType === 'web');
+
+  // GitHub workspace tabs share the desktop rail's `github-repo` rule.
+  // The scope entry resolves here (same ensure path as the rail); the
+  // drawer and tablet header stay presentation-only via the boolean.
+  const effectiveDirectory = useEffectiveDirectory() ?? '';
+  const mobileDirectoryKey = effectiveDirectory ? normalizeDirectoryPathKey(effectiveDirectory) : '';
+  const githubApi = useRuntimeAPIs().github ?? null;
+  const ensureGitHubScope = useGitHubScopeStore((state) => state.ensureScope);
+  React.useEffect(() => {
+    if (!mobileDirectoryKey || !githubApi) return;
+    void ensureGitHubScope(mobileDirectoryKey, githubApi);
+  }, [mobileDirectoryKey, githubApi, ensureGitHubScope]);
+  const githubScopeEntry = useGitHubScopeStore((state) => (
+    mobileDirectoryKey ? state.entriesByDirectory[mobileDirectoryKey] ?? null : null
+  ));
+  const githubScope = React.useMemo(
+    () => toGitHubRailScopeState(githubScopeEntry),
+    [githubScopeEntry],
+  );
+  const githubTabsAvailable = isGitHubRepoAvailable(githubScope);
+
+  // An active GitHub tab that becomes unavailable falls back to Changes
+  // (mobile has no rail open-tab exception; the scope failure itself
+  // renders inside the surfaces when they are available).
+  React.useEffect(() => {
+    if (!githubTabsAvailable && isMobileGitHubTab(workspaceTabRaw)) {
+      setWorkspaceTabRaw(resolveMobileWorkspaceTab(workspaceTabRaw, false));
+    }
+  }, [githubTabsAvailable, workspaceTabRaw]);
 
   // NOTE: pendingChangesDiff is intentionally NOT cleared on close — it keys
   // the persistent Changes pane in the workspace drawer, and clearing it would
@@ -152,13 +198,13 @@ export const MobileShell: React.FC<MobileShellProps> = ({ onActiveConnectionDele
     setPendingChangesDiff(null);
     setWorkspaceTab('files');
     setWorkspaceOpenSafely(true);
-  }, [setWorkspaceOpenSafely]);
+  }, [setWorkspaceTab, setWorkspaceOpenSafely]);
 
   const openChangesSurface = React.useCallback((diff: { path: string; staged: boolean } | null = null) => {
     setPendingChangesDiff(diff);
     setWorkspaceTab('changes');
     setWorkspaceOpenSafely(true);
-  }, [setWorkspaceOpenSafely]);
+  }, [setWorkspaceTab, setWorkspaceOpenSafely]);
 
   const leftResize = useIpadSidebarResize('left', 'pichamber.ipad.leftSidebarWidth', IPAD_LEFT_SIDEBAR_WIDTH);
   const rightResize = useIpadSidebarResize(
@@ -178,13 +224,14 @@ export const MobileShell: React.FC<MobileShellProps> = ({ onActiveConnectionDele
   const sidebarWidth = isTabletLayout && sidebarOpen ? leftResize.width : 0;
 
   const handleTabletWorkspaceTabSelect = React.useCallback((nextTab: MobileWorkspaceTab) => {
-    if (workspaceOpen && workspaceTab === nextTab) {
+    const sanitized = sanitizeMobileWorkspaceTab(nextTab);
+    if (workspaceOpen && workspaceTab === sanitized) {
       setWorkspaceOpenSafely(false);
     } else {
-      setWorkspaceTab(nextTab);
+      setWorkspaceTab(sanitized);
       setWorkspaceOpenSafely(true);
     }
-  }, [workspaceOpen, workspaceTab, setWorkspaceOpenSafely]);
+  }, [workspaceOpen, workspaceTab, setWorkspaceTab, setWorkspaceOpenSafely]);
 
   const handleToggleWorkspace = React.useCallback(() => {
     setWorkspaceOpenSafely(!workspaceOpen);
@@ -524,6 +571,7 @@ export const MobileShell: React.FC<MobileShellProps> = ({ onActiveConnectionDele
                 rightDrawerOpen={workspaceOpen}
                 tabletWorkspaceTab={workspaceTab}
                 onSelectTabletWorkspaceTab={handleTabletWorkspaceTabSelect}
+                tabletGitHubTabsAvailable={githubTabsAvailable}
               />
             </>
           ) : (
@@ -599,6 +647,7 @@ export const MobileShell: React.FC<MobileShellProps> = ({ onActiveConnectionDele
                   onTabChange={setWorkspaceTab}
                   pendingChangesDiff={pendingChangesDiff}
                   variant={workspaceAsPanel ? 'panel' : 'drawer'}
+                  githubTabsAvailable={githubTabsAvailable}
                   drawerRefExternal={phoneRightDrawerRef as React.RefObject<HTMLElement | null>}
                   scrimRefExternal={phoneRightScrimRef as React.RefObject<HTMLButtonElement | null>}
                   rootRefExternal={phoneRightRootRef as React.RefObject<HTMLDivElement | null>}
@@ -621,6 +670,7 @@ export const MobileShell: React.FC<MobileShellProps> = ({ onActiveConnectionDele
             tab={workspaceTab}
             onTabChange={setWorkspaceTab}
             pendingChangesDiff={pendingChangesDiff}
+            githubTabsAvailable={githubTabsAvailable}
             drawerRefExternal={phoneRightDrawerRef as React.RefObject<HTMLElement | null>}
             scrimRefExternal={phoneRightScrimRef as React.RefObject<HTMLButtonElement | null>}
             rootRefExternal={phoneRightRootRef as React.RefObject<HTMLDivElement | null>}

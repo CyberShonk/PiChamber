@@ -82,7 +82,6 @@ import {
 import { useNotificationStore } from '@/sync/notification-store';
 import { useRuntimeAPIs } from '@/hooks/useRuntimeAPIs';
 import { useMobileAppActions } from '@/apps/mobileAppContext';
-import { getGitHubPrStatusKey, useGitHubPrStatusStore } from '@/stores/useGitHubPrStatusStore';
 import { getRuntimeKey } from '@/lib/runtime-switch';
 import { streamPerfCount, streamPerfMark } from '@/stores/utils/streamDebug';
 import { runBackgroundNetworkTask } from '@/lib/background-network';
@@ -1343,7 +1342,7 @@ const SessionSidebarComponent: React.FC<SessionSidebarProps> = ({
       {piConnection === 'error' || piConnection === 'unavailable' ? (
         <div
           role="alert"
-          className="mx-3 mb-2 rounded bg-[var(--status-error-background)] p-2 text-xs text-[var(--status-error-foreground)]"
+          className="mx-3 mb-2 rounded border border-[var(--status-error-border)] bg-[var(--status-error-background)] p-2 text-xs text-foreground"
         >
           {"Unable to reach server"}
         </div>
