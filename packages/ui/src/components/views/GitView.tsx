@@ -2,8 +2,7 @@
 import React from 'react';
 import { useSessionUIStore } from '@/sync/session-ui-store';
 import { useFireworksCelebration } from '@/contexts/FireworksContext';
-import type { GitIdentityProfile, CommitFileEntry, GitStatus } from '@/lib/api/types';
-import { useGitIdentitiesStore } from '@/stores/useGitIdentitiesStore';
+import type { CommitFileEntry, GitStatus } from '@/lib/api/types';
 import { useShallow } from 'zustand/react/shallow';
 import { useEffectiveDirectory } from '@/hooks/useEffectiveDirectory';
 import { copyTextToClipboard } from '@/lib/clipboard';
@@ -12,7 +11,7 @@ import {
   useGitStatus,
   useGitBranches,
   useGitLog,
-  useGitIdentity,
+  useGitAuthor,
   useIsGitRepo,
   useGitLoadingStatus,
   useGitLoadingLog,
@@ -23,6 +22,7 @@ import { Icon } from "@/components/icon/Icon";
 import { useRuntimeAPIs } from '@/hooks/useRuntimeAPIs';
 
 import { GitUnifiedHeader } from './git/GitUnifiedHeader';
+import { GitPrSection } from './git/GitPrSection';
 import type { DiffHeaderControlsState, DiffHeaderScope } from './DiffView';
 import { GitViewDialogs } from './git/GitViewDialogs';
 import { getGitViewSnapshot, rememberGitViewSnapshot } from './git/gitViewSnapshots';
@@ -33,7 +33,6 @@ import type { OperationLogEntry } from './git/BranchIntegrationSection';
 import type { GitLogDialogMode, HistoryBranchDivider } from './git/GitHistoryDialog';
 import { useGitCommitFiles } from './git/useGitCommitFiles';
 import { useGitBranchScope } from './git/useGitBranchScope';
-import { useGitIdentities } from './git/useGitIdentities';
 import { useGitConflictState } from './git/useGitConflictState';
 import { createGitIndexMutationQueue, type GitIndexMutationDirection, type GitIndexMutationQueue } from './git/gitIndexMutationQueue';
 import { MobileGitChrome } from './git/MobileGitChrome';
@@ -83,21 +82,11 @@ export const GitView: React.FC<GitViewProps> = ({
   const currentDirectory = useEffectiveDirectory();
   const currentSessionId = useSessionUIStore((s) => s.currentSessionId);
 
-  const { profiles, globalIdentity, defaultGitIdentityId, loadProfiles, loadGlobalIdentity, loadDefaultGitIdentityId } =
-    useGitIdentitiesStore(useShallow((s) => ({
-      profiles: s.profiles,
-      globalIdentity: s.globalIdentity,
-      defaultGitIdentityId: s.defaultGitIdentityId,
-      loadProfiles: s.loadProfiles,
-      loadGlobalIdentity: s.loadGlobalIdentity,
-      loadDefaultGitIdentityId: s.loadDefaultGitIdentityId,
-    })));
-
   const isGitRepo = useIsGitRepo(currentDirectory ?? null);
   const status = useGitStatus(currentDirectory ?? null);
   const branches = useGitBranches(currentDirectory ?? null);
   const log = useGitLog(currentDirectory ?? null);
-  const currentIdentity = useGitIdentity(currentDirectory ?? null);
+  const currentAuthor = useGitAuthor(currentDirectory ?? null);
   const isLoading = useGitLoadingStatus(currentDirectory ?? null);
   const isLogLoading = useGitLoadingLog(currentDirectory ?? null);
   const {
@@ -108,7 +97,6 @@ export const GitView: React.FC<GitViewProps> = ({
     fetchBranches,
     fetchLog,
     setLogMaxCount,
-    fetchIdentity,
     prefetchDiffs,
     clearDiffCache,
     moveStatusPathsOptimistically,
@@ -122,7 +110,6 @@ export const GitView: React.FC<GitViewProps> = ({
     fetchBranches: state.fetchBranches,
     fetchLog: state.fetchLog,
     setLogMaxCount: state.setLogMaxCount,
-    fetchIdentity: state.fetchIdentity,
     prefetchDiffs: state.prefetchDiffs,
     clearDiffCache: state.clearDiffCache,
     moveStatusPathsOptimistically: state.moveStatusPathsOptimistically,
@@ -249,25 +236,7 @@ export const GitView: React.FC<GitViewProps> = ({
   const [isStashesDialogOpen, setIsStashesDialogOpen] = React.useState(false);
   const [commitAction, setCommitAction] = React.useState<CommitAction>(null);
   const [logMaxCountLocal, setLogMaxCountLocal] = React.useState<number>(25);
-  const [isSettingIdentity, setIsSettingIdentity] = React.useState(false);
   const { triggerFireworks } = useFireworksCelebration();
-
-  const autoAppliedDefaultRef = React.useRef<Map<string, string>>(new Map());
-  const identityApplyCountRef = React.useRef(0);
-
-  const beginIdentityApply = React.useCallback(() => {
-    identityApplyCountRef.current += 1;
-    if (mountedRef.current) {
-      setIsSettingIdentity(true);
-    }
-  }, []);
-
-  const endIdentityApply = React.useCallback(() => {
-    identityApplyCountRef.current = Math.max(0, identityApplyCountRef.current - 1);
-    if (mountedRef.current && identityApplyCountRef.current === 0) {
-      setIsSettingIdentity(false);
-    }
-  }, []);
 
   const [revertingPaths, setRevertingPaths] = React.useState<Set<string>>(new Set());
   const [movingChangePaths, setMovingChangePaths] = React.useState<Set<string>>(new Set());
@@ -329,13 +298,6 @@ export const GitView: React.FC<GitViewProps> = ({
       commitMessage,
     });
   }, [commitMessage, currentDirectory]);
-
-  React.useEffect(() => {
-    if (!isActive) return;
-    loadProfiles();
-    loadGlobalIdentity();
-    loadDefaultGitIdentityId();
-  }, [isActive, loadProfiles, loadGlobalIdentity, loadDefaultGitIdentityId]);
 
   React.useEffect(() => {
     if (!isActive) return;
@@ -422,51 +384,6 @@ export const GitView: React.FC<GitViewProps> = ({
     if (!currentDirectory) return;
     await fetchLog(currentDirectory, git, logMaxCountLocal);
   }, [currentDirectory, git, fetchLog, logMaxCountLocal]);
-
-  const refreshIdentity = React.useCallback(async () => {
-    if (!currentDirectory) return;
-    await fetchIdentity(currentDirectory, git);
-  }, [currentDirectory, git, fetchIdentity]);
-
-  React.useEffect(() => {
-    if (!isActive) return;
-    if (!currentDirectory) return;
-    if (!git?.hasLocalIdentity) return;
-    if (isGitRepo !== true) return;
-
-    const defaultId = typeof defaultGitIdentityId === 'string' ? defaultGitIdentityId.trim() : '';
-    if (!defaultId || defaultId === 'global') return;
-
-    const previousAttempt = autoAppliedDefaultRef.current.get(currentDirectory);
-    if (previousAttempt === defaultId) return;
-
-    let cancelled = false;
-
-    const run = async () => {
-      try {
-        const hasLocal = await git.hasLocalIdentity?.(currentDirectory);
-        if (cancelled) return;
-        if (hasLocal === true) return;
-
-        beginIdentityApply();
-        await git.setGitIdentity(currentDirectory, defaultId);
-        autoAppliedDefaultRef.current.set(currentDirectory, defaultId);
-        await refreshIdentity();
-      } catch (error) {
-        console.warn('Failed to auto-apply default git identity:', error);
-      } finally {
-        if (!cancelled) {
-          endIdentityApply();
-        }
-      }
-    };
-
-    void run();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [isActive, beginIdentityApply, currentDirectory, defaultGitIdentityId, endIdentityApply, git, isGitRepo, refreshIdentity]);
 
   const changeEntries = React.useMemo(() => {
     if (!status) return [];
@@ -827,22 +744,6 @@ export const GitView: React.FC<GitViewProps> = ({
     }
   };
 
-  const handleApplyIdentity = async (profile: GitIdentityProfile) => {
-    if (!currentDirectory) return;
-    beginIdentityApply();
-
-    try {
-      await git.setGitIdentity(currentDirectory, profile.id);
-      toast.success(`Applied identity: ${profile.name}`);
-      await refreshIdentity();
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to apply identity";
-      toast.error(message);
-    } finally {
-      endIdentityApply();
-    }
-  };
-
   const {
     localBranches,
     remoteBranches,
@@ -858,13 +759,6 @@ export const GitView: React.FC<GitViewProps> = ({
     remotes,
     remoteUrl,
     git,
-  });
-
-  const { availableIdentities, activeIdentityProfile } = useGitIdentities({
-    profiles,
-    globalIdentity,
-    currentIdentity,
-    remoteUrl,
   });
 
   const stagedCount = stagedChangeEntries.length;
@@ -1541,7 +1435,7 @@ export const GitView: React.FC<GitViewProps> = ({
     setDiffHeaderState(state);
   }, []);
 
-  // The one meaningful git header: branch, identity, scope, sync, and every
+  // The one meaningful git header: branch, commit author, scope, sync, and every
   // repository/diff view action. Hosts with panel chrome portal it into
   // their header slot; all other hosts render it as a single local row.
   const headerControls = isGitRepo === true && status ? (
@@ -1559,10 +1453,7 @@ export const GitView: React.FC<GitViewProps> = ({
       onCheckoutBranch={handleCheckoutBranch}
       onCreateBranch={handleCreateBranch}
       onRenameBranch={handleRenameBranch}
-      activeIdentityProfile={activeIdentityProfile}
-      availableIdentities={availableIdentities}
-      onSelectIdentity={handleApplyIdentity}
-      isApplyingIdentity={isSettingIdentity}
+      currentAuthor={currentAuthor}
       isWorktreeMode={false}
       upstreamTarget={status.upstreamComparison ? `${status.upstreamComparison.remote}/${status.upstreamComparison.branch}` : null}
       onOpenHistory={() => setGitLogDialogMode('history')}
@@ -1662,6 +1553,14 @@ export const GitView: React.FC<GitViewProps> = ({
   return (
     <div className={cn('flex h-full flex-col overflow-hidden')}>
       {headerRow}
+
+      {currentDirectory && status ? (
+        <GitPrSection
+          directory={currentDirectory}
+          branch={status.current ?? null}
+          hasUpstream={status.tracking != null}
+        />
+      ) : null}
 
       {/* In-progress operation banner */}
       {currentDirectory && (
