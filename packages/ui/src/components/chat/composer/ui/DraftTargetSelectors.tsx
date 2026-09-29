@@ -73,7 +73,7 @@ export function ProjectLabel({
 }
 
 const draftSelectTriggerClassName =
-    'h-7 min-w-0 w-fit max-w-[48vw] gap-1 border-transparent bg-transparent px-1.5 text-muted-foreground typography-micro font-normal hover:bg-transparent hover:text-foreground data-[popup-open]:bg-transparent [&_svg]:size-3.5 [&_svg]:opacity-70 sm:max-w-[20rem]';
+    'h-7 min-w-0 w-fit max-w-[48vw] gap-1 border-transparent bg-transparent px-1.5 text-muted-foreground typography-micro font-normal hover:bg-transparent hover:text-foreground data-[popup-open]:bg-transparent [&_svg]:size-3.5 [&_svg]:opacity-70 sm:max-w-none';
 
 const WorktreeModeToggle = ({
     checked,
@@ -109,7 +109,7 @@ const WorktreeModeToggle = ({
 );
 
 const BranchValue = ({ label, startFrom = false }: { label: string | null; startFrom?: boolean }) => {
-    const displayLabel = label ? truncateWithEllipsis(label, BRANCH_LABEL_MAX_LENGTH) : 'Branch';
+    const displayLabel = label ?? 'Branch';
     return (
         <span className="inline-flex min-w-0 items-center gap-1.5" title={label ?? undefined}>
             <Icon name="git-branch" className="size-3.5 shrink-0 text-muted-foreground" />
@@ -222,7 +222,7 @@ export function DraftTargetSelectors(props: DraftTargetProps) {
                         </SelectContent>
                     </Select>
                 ) : showBranchSelector ? (
-                    <div className="inline-flex h-7 min-w-0 max-w-[20rem] items-center gap-0.5 px-1.5 typography-micro text-muted-foreground">
+                    <div className="inline-flex h-7 min-w-0 items-center gap-0.5 px-1.5 typography-micro text-muted-foreground">
                         <BranchValue label={selectedBranchLabel} startFrom={worktreeMode} />
                         <BranchCopyButton branchName={selectedBranchName} />
                     </div>
