@@ -3,7 +3,7 @@ import type { Session } from '@/lib/chat/types';
 import { useSessionUIStore } from '@/sync/session-ui-store';
 import { useProjectsStore } from '@/stores/useProjectsStore';
 import { useGitBranchLabel, useIsGitRepo } from '@/stores/useGitStore';
-import { getGitHubPrStatusKey, usePrVisualSummary } from '@/stores/useGitHubPrStatusStore';
+import { getGitHubPrStatusKey, useEnsureGitHubPrStatus, usePrVisualSummary } from '@/stores/useGitHubPrStatusStore';
 import { useSessionMultiSelectStore } from '@/stores/useSessionMultiSelectStore';
 import { useGlobalSessionStatus } from '@/sync/sync-context';
 import { useHasSessionActivityDuration } from '@/sync/session-activity-timing';
@@ -72,12 +72,13 @@ export function useSessionNodeItemMetadata({
   const subtaskCount = node.children.length;
   const agentName = (session as Session & { agent?: string }).agent;
 
+  const prBranch = worktree?.branch?.trim() || resolvedBranchLabel?.trim() || null;
+  const prDirectory = normalizePath(worktree?.path ?? sessionDirectory);
   const prLookupKey = React.useMemo(() => {
-    const branch = worktree?.branch?.trim() || resolvedBranchLabel?.trim();
-    const directory = normalizePath(worktree?.path ?? sessionDirectory);
-    return branch && directory ? getGitHubPrStatusKey() : null;
-  }, [resolvedBranchLabel, sessionDirectory, worktree]);
+    return prBranch && prDirectory ? getGitHubPrStatusKey(prDirectory, prBranch) : null;
+  }, [prBranch, prDirectory]);
   const prSummary = usePrVisualSummary(prLookupKey);
+  useEnsureGitHubPrStatus(prDirectory, prBranch);
   const prIconColor = prSummary ? `var(--pr-${prSummary.visualState})` : undefined;
   const prStatusLabel = React.useMemo(() => {
     if (!prSummary) return null;
@@ -135,6 +136,9 @@ export function useSessionNodeItemMetadata({
   return {
     session,
     sessionDirectory,
+    prDirectory,
+    prBranch,
+    prNumber: prSummary?.number ?? null,
     isActive,
     tooltipProjectLabel,
     tooltipBranchLabel,

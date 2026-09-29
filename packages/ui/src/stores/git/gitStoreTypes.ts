@@ -2,14 +2,14 @@ import type {
   GitStatus,
   GitBranch,
   GitLogResponse,
-  GitIdentitySummary,
+  GitAuthorSummary,
 } from '@/lib/api/types';
 
 export const LOG_STALE_THRESHOLD = 10000;
 export const REPO_CHECK_STALE_THRESHOLD = 60_000;
 export const STATUS_STALE_THRESHOLD = 5_000;
 export const BRANCHES_STALE_THRESHOLD = 30_000;
-export const IDENTITY_STALE_THRESHOLD = 60_000;
+export const AUTHOR_STALE_THRESHOLD = 60_000;
 export const DIFF_PREFETCH_MAX_FILES = 25;
 export const DIFF_PREFETCH_FOCUS_MAX_FILES = 40;
 export const DIFF_PREFETCH_CONCURRENCY = 2;
@@ -27,7 +27,7 @@ export interface DirectoryGitState {
   status: GitStatus | null;
   branches: GitBranch | null;
   log: GitLogResponse | null;
-  identity: GitIdentitySummary | null;
+  author: GitAuthorSummary | null;
   diffCache: Map<
     string,
     { original: string; modified: string; fetchedAt: number; isBinary?: boolean }
@@ -38,12 +38,12 @@ export interface DirectoryGitState {
   lastStatusChange: number;
   lastLogFetch: number;
   lastBranchesFetch: number;
-  lastIdentityFetch: number;
+  lastAuthorFetch: number;
   logMaxCount: number;
   isLoadingStatus: boolean;
   isLoadingLog: boolean;
   isLoadingBranches: boolean;
-  isLoadingIdentity: boolean;
+  isLoadingAuthor: boolean;
 }
 
 export interface GitStore {
@@ -66,7 +66,7 @@ export interface GitStore {
     git: GitAPI,
     maxCount?: number
   ) => Promise<void>;
-  fetchIdentity: (directory: string, git: GitAPI) => Promise<void>;
+  fetchAuthor: (directory: string, git: GitAPI) => Promise<void>;
   fetchAll: (
     directory: string,
     git: GitAPI,
@@ -131,9 +131,9 @@ export interface GitAPI {
     directory: string,
     options?: { maxCount?: number }
   ) => Promise<GitLogResponse>;
-  getCurrentGitIdentity: (
+  getCurrentGitAuthor: (
     directory: string
-  ) => Promise<GitIdentitySummary | null>;
+  ) => Promise<GitAuthorSummary | null>;
   getGitFileDiff: (
     directory: string,
     options: { path: string }
@@ -153,7 +153,7 @@ export const createEmptyDirectoryState = (): DirectoryGitState => ({
   status: null,
   branches: null,
   log: null,
-  identity: null,
+  author: null,
   diffCache: new Map(),
   indexRevision: 0,
   lastRepoCheckAt: 0,
@@ -161,10 +161,10 @@ export const createEmptyDirectoryState = (): DirectoryGitState => ({
   lastStatusChange: 0,
   lastLogFetch: 0,
   lastBranchesFetch: 0,
-  lastIdentityFetch: 0,
+  lastAuthorFetch: 0,
   logMaxCount: 25,
   isLoadingStatus: false,
   isLoadingLog: false,
   isLoadingBranches: false,
-  isLoadingIdentity: false,
+  isLoadingAuthor: false,
 });

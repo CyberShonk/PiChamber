@@ -8,7 +8,7 @@ import {
   REPO_CHECK_STALE_THRESHOLD,
   STATUS_STALE_THRESHOLD,
   BRANCHES_STALE_THRESHOLD,
-  IDENTITY_STALE_THRESHOLD,
+  AUTHOR_STALE_THRESHOLD,
   DIFF_PREFETCH_MAX_FILES,
   DIFF_PREFETCH_FOCUS_MAX_FILES,
   DIFF_PREFETCH_CONCURRENCY,
@@ -424,28 +424,28 @@ export const useGitStore = create<GitStore>()(
         }
       },
 
-      fetchIdentity: async (directory, git) => {
-        const token = startRequest(directory, 'identity');
+      fetchAuthor: async (directory, git) => {
+        const token = startRequest(directory, 'author');
         {
           const newDirectories = new Map(get().directories);
           const d = newDirectories.get(directory) ?? createEmptyDirectoryState();
-          newDirectories.set(directory, { ...d, isLoadingIdentity: true });
+          newDirectories.set(directory, { ...d, isLoadingAuthor: true });
           set({ directories: newDirectories });
         }
 
         try {
-          const identity = await git.getCurrentGitIdentity(directory);
+          const author = await git.getCurrentGitAuthor(directory);
           if (!isRequestCurrent(token, directory)) return;
           const newDirectories = new Map(get().directories);
           const dirState = newDirectories.get(directory) ?? createEmptyDirectoryState();
-          newDirectories.set(directory, { ...dirState, identity, isLoadingIdentity: false, lastIdentityFetch: Date.now() });
+          newDirectories.set(directory, { ...dirState, author, isLoadingAuthor: false, lastAuthorFetch: Date.now() });
           set({ directories: newDirectories });
         } catch (error) {
-          console.error('Failed to fetch git identity:', error);
+          console.error('Failed to fetch git author:', error);
           if (!isRequestCurrent(token, directory)) return;
           const newDirectories = new Map(get().directories);
           const d = newDirectories.get(directory) ?? createEmptyDirectoryState();
-          newDirectories.set(directory, { ...d, isLoadingIdentity: false });
+          newDirectories.set(directory, { ...d, isLoadingAuthor: false });
           set({ directories: newDirectories });
         }
       },
@@ -478,7 +478,7 @@ export const useGitStore = create<GitStore>()(
           await get().fetchLog(directory, git);
         }
 
-        await get().fetchIdentity(directory, git);
+        await get().fetchAuthor(directory, git);
 
         // Diff prefetch deferred — triggered on-demand when Git tab opens (GitView reactive prefetch)
 
@@ -687,8 +687,8 @@ export const useGitStore = create<GitStore>()(
           if (!updatedState.log || now - updatedState.lastLogFetch >= LOG_STALE_THRESHOLD) {
             fetches.push(get().fetchLog(directory, git));
           }
-          if (!updatedState.identity || now - updatedState.lastIdentityFetch >= IDENTITY_STALE_THRESHOLD) {
-            fetches.push(get().fetchIdentity(directory, git));
+          if (!updatedState.author || now - updatedState.lastAuthorFetch >= AUTHOR_STALE_THRESHOLD) {
+            fetches.push(get().fetchAuthor(directory, git));
           }
 
           if (fetches.length > 0) await Promise.all(fetches);
@@ -735,10 +735,10 @@ export const useGitLog = (directory: string | null) => {
   });
 };
 
-export const useGitIdentity = (directory: string | null) => {
+export const useGitAuthor = (directory: string | null) => {
   return useGitStore((state) => {
     if (!directory) return null;
-    return state.directories.get(directory)?.identity ?? null;
+    return state.directories.get(directory)?.author ?? null;
   });
 };
 

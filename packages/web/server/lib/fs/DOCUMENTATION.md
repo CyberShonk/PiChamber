@@ -49,5 +49,5 @@ Own filesystem API behavior for the web server runtime, including workspace-boun
 - Keep filesystem policy (workspace root checks, error mapping, exec timeout behavior) inside this module, not in the composition root.
 - Filesystem `EPERM`/`EACCES` failures use the stable `reason: "os-permission"` response marker. Policy denials such as workspace-boundary or missing-grant failures must not use that marker because a native folder picker cannot remediate them.
 - If adding new `/api/fs/*` endpoints, add them in `routes.js` and extend this document.
-- `POST /api/fs/clone` clones a repository into the requested destination and can apply a stored Git identity. It returns the cloned path and rejects an existing destination with HTTP 409.
+- `POST /api/fs/clone` clones a repository into the requested destination using the user's normal git credentials only. It never writes git config. It returns the cloned path and rejects an existing destination with HTTP 409.
 - `GET /api/fs/list` may resolve symlinks with `realpath` to read directory contents, but the response `path` and each entry `path` must stay in the caller’s requested path space (`path.join(requestedPath, name)`). Returning real paths breaks file-tree expansion for directories reached through workspace symlinks.

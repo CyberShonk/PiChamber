@@ -3,7 +3,6 @@ import { toast } from '@/components/ui';
 import { runtimeFetch } from '@/lib/runtime-fetch';
 import { useProjectsStore } from '@/stores/useProjectsStore';
 import { useUIStore } from '@/stores/useUIStore';
-import { useGitIdentitiesStore } from '@/stores/useGitIdentitiesStore';
 import { useSessionUIStore } from '@/sync/session-ui-store';
 import { normalizeDirectoryPath } from './directoryExplorerPaths';
 import type { FilesystemErrorReason } from '@/lib/api/files-errors';
@@ -36,63 +35,16 @@ export function useDirectoryCloneAndAdd({
   const setSessionSwitcherOpen = useUIStore((s) => s.setSessionSwitcherOpen);
   const openNewSessionDraft = useSessionUIStore((s) => s.openNewSessionDraft);
 
-  const gitIdentityProfiles = useGitIdentitiesStore((s) => s.profiles);
-  const globalGitIdentity = useGitIdentitiesStore((s) => s.globalIdentity);
-  const defaultGitIdentityId = useGitIdentitiesStore((s) => s.defaultGitIdentityId);
-  const loadGitIdentityProfiles = useGitIdentitiesStore((s) => s.loadProfiles);
-  const loadGlobalGitIdentity = useGitIdentitiesStore((s) => s.loadGlobalIdentity);
-  const loadDefaultGitIdentityId = useGitIdentitiesStore((s) => s.loadDefaultGitIdentityId);
-
   const [isConfirming, setIsConfirming] = React.useState(false);
   const [isCloneMode, setIsCloneMode] = React.useState(false);
   const [cloneRemoteUrl, setCloneRemoteUrl] = React.useState('');
-  const [selectedGitIdentityId, setSelectedGitIdentityId] = React.useState<string | null>(null);
 
   React.useEffect(() => {
     if (!open) return;
     setIsConfirming(false);
     setIsCloneMode(false);
     setCloneRemoteUrl('');
-    setSelectedGitIdentityId(null);
   }, [open]);
-
-  React.useEffect(() => {
-    if (!open) return;
-    void loadGitIdentityProfiles();
-    void loadGlobalGitIdentity();
-    void loadDefaultGitIdentityId();
-  }, [loadDefaultGitIdentityId, loadGitIdentityProfiles, loadGlobalGitIdentity, open]);
-
-  const availableGitIdentities = React.useMemo(() => {
-    const unique = new Map<string, NonNullable<typeof globalGitIdentity>>();
-    if (globalGitIdentity) {
-      unique.set(globalGitIdentity.id, globalGitIdentity);
-    }
-    for (const profile of gitIdentityProfiles) {
-      unique.set(profile.id, profile);
-    }
-    return Array.from(unique.values());
-  }, [gitIdentityProfiles, globalGitIdentity]);
-
-  React.useEffect(() => {
-    if (!open || !isCloneMode || selectedGitIdentityId !== null) return;
-    const defaultId = typeof defaultGitIdentityId === 'string' ? defaultGitIdentityId.trim() : '';
-    if (defaultId && availableGitIdentities.some((identity) => identity.id === defaultId)) {
-      setSelectedGitIdentityId(defaultId);
-      return;
-    }
-    const firstSshIdentity = availableGitIdentities.find(
-      (identity) => identity.authType === 'ssh' || identity.sshKey,
-    );
-    if (firstSshIdentity) {
-      setSelectedGitIdentityId(firstSshIdentity.id);
-    }
-  }, [availableGitIdentities, defaultGitIdentityId, isCloneMode, open, selectedGitIdentityId]);
-
-  const selectedGitIdentity = React.useMemo(
-    () => availableGitIdentities.find((identity) => identity.id === selectedGitIdentityId) ?? null,
-    [availableGitIdentities, selectedGitIdentityId],
-  );
 
   const openProjectDraft = React.useCallback(
     (projectId: string, projectPath: string) => {
@@ -127,7 +79,6 @@ export function useDirectoryCloneAndAdd({
             body: JSON.stringify({
               remoteUrl,
               destinationPath: target,
-              gitIdentityId: selectedGitIdentity?.id ?? null,
             }),
           });
           if (!response.ok) {
@@ -170,7 +121,6 @@ export function useDirectoryCloneAndAdd({
       isCloneMode,
       isConfirming,
       openProjectDraft,
-      selectedGitIdentity?.id,
       shouldCreateTarget,
       targetPath,
     ],
@@ -209,10 +159,6 @@ export function useDirectoryCloneAndAdd({
     setIsCloneMode,
     cloneRemoteUrl,
     setCloneRemoteUrl,
-    selectedGitIdentityId,
-    setSelectedGitIdentityId,
-    availableGitIdentities,
-    selectedGitIdentity,
     canSubmit,
     submitActionLabel,
     submitModifierLabel,

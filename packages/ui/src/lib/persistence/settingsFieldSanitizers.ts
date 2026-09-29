@@ -10,7 +10,6 @@ export type LegacySkillCatalog = {
   label: string;
   source: string;
   subpath?: string;
-  gitIdentityId?: string;
 };
 
 export type PersistedDesktopSettings = DesktopSettings & {
@@ -41,10 +40,6 @@ export const sanitizeSkillCatalogs = (
       typeof candidate.source === 'string' ? candidate.source.trim() : '';
     const subpath =
       typeof candidate.subpath === 'string' ? candidate.subpath.trim() : '';
-    const gitIdentityId =
-      typeof candidate.gitIdentityId === 'string'
-        ? candidate.gitIdentityId.trim()
-        : '';
 
     if (!id || !label || !source) continue;
     if (seen.has(id)) continue;
@@ -55,7 +50,6 @@ export const sanitizeSkillCatalogs = (
       label,
       source,
       ...(subpath ? { subpath } : {}),
-      ...(gitIdentityId ? { gitIdentityId } : {}),
     });
   }
 

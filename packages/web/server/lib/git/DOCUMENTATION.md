@@ -8,8 +8,20 @@ This module provides Git repository operations for the web server runtime, inclu
   - `index.js`: Public API entry point imported by `packages/web/server/index.js`.
   - `routes.js`: Express route registration for `/api/git/*` endpoints.
   - `service.js`: Core Git operations (repository, branch, worktree, commit, merge/rebase, status/diff, log).
-  - `credentials.js`: Git credentials management.
-  - `identity-storage.js`: Git identity (user.name, user.email) storage.
+
+## Invariants
+- PiChamber never writes git config for identity or credentials: no `user.name`,
+  `user.email`, `core.sshCommand`, `credential.helper`, or signing keys are ever
+  set, globally or per-repository. Commits, pushes, and clones use the user's
+  own git configuration and credentials.
+- The only identity read is the read-only `getCurrentIdentity` (local
+  `user.name`/`user.email`, falling back to global), served at
+  `GET /api/git/current-identity` for the Git view's commit-author line.
+- The retired commit-author profiles feature (profile storage, credential
+  discovery, the local-config writer, and the profile/global/discovery routes)
+  was removed. Any previously saved profiles file (`git-identities.json`) and
+  any git config previously written into repositories are left untouched on
+  disk.
 
 ## Public API
 
@@ -17,10 +29,7 @@ The following functions are exported and used by the web server:
 
 ### Repository Operations
 - `isGitRepository(directory)`: Check if a directory is a Git repository.
-- `getGlobalIdentity()`: Get global Git user.name, user.email, and core.sshCommand.
-- `getCurrentIdentity(directory)`: Get local Git identity (fallback to global if not set locally).
-- `hasLocalIdentity(directory)`: Check if local Git identity is configured.
-- `setLocalIdentity(directory, profile)`: Set local Git identity (userName, userEmail, authType, sshKey/host).
+- `getCurrentIdentity(directory)`: Read-only read of the local Git `user.name`/`user.email` (falling back to global when unset). Never writes config.
 - `getRemoteUrl(directory, remoteName)`: Get URL for a specific remote.
 
 ### Status and Diff Operations
@@ -81,7 +90,6 @@ The following functions are exported and used by the web server:
 ## Internal Helpers
 
 The following functions are internal helpers used by exported functions:
-- `buildSshCommand(sshKeyPath)`: Build SSH command string for git config.
 - `buildGitEnv()`: Build Git environment with SSH_AUTH_SOCK resolution.
 - `createGit(directory)`: Create simple-git instance with environment.
 - `normalizeDirectoryPath(value)`: Normalize directory paths (supports ~ expansion).
@@ -161,10 +169,8 @@ Authenticated `GET /api/git/worktrees`, `POST /api/git/worktrees/validate`, `POS
 6. Return consistent error messages; use `parseGitErrorText(error)` to extract meaningful git errors.
 7. Update this file with the new function in the appropriate API section.
 
-### SSH Key Handling
-- SSH keys are escaped and validated via `escapeSshKeyPath` to prevent command injection.
-- On Windows, paths are converted to MSYS format (`C:/path` → `/c/path`).
-- SSH_AUTH_SOCK is automatically resolved via `resolveSshAuthSock` (checks GPG agent, gpgconf).
+### SSH Agent Handling
+- SSH_AUTH_SOCK is automatically resolved via `resolveSshAuthSock` (checks GPG agent, gpgconf), so the user's normal SSH credentials work without extra config.
 
 ### Working directory (simple-git)
 - Repository operations always pass an explicit `baseDir` (the opened project/directory path) into simple-git. Omitting `baseDir` would default to `process.cwd()`, which breaks when the server was launched from a neutral directory (e.g. `$HOME`) while the opened project lives elsewhere.

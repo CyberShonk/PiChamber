@@ -34,7 +34,7 @@ const createGitApi = (branchesResult?: { all: string[]; current: string }): GitA
     branches: {},
   }),
   getGitLog: async () => ({ all: [], latest: null, total: 0 }),
-  getCurrentGitIdentity: async () => null,
+  getCurrentGitAuthor: async () => null,
   getGitFileDiff: async (_directory: string, options: { path: string }) => ({
     original: '',
     modified: '',

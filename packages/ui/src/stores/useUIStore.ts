@@ -31,6 +31,11 @@ import {
   sanitizeContextPanelByDirectory,
   clampContextPanelRoots,
 } from './ui/contextPanel';
+import {
+  sanitizeGitHubSelectionByDirectory,
+  clampGitHubSelectionRoots,
+  GITHUB_SELECTION_MAX_ROOTS,
+} from './ui/githubSelection';
 
 export type {
   MainTab,
@@ -85,6 +90,8 @@ interface UIStore {
   contextRailOrder: string[];
   contextEditorTreeVisible: boolean;
   contextEditorTreeWidth: number;
+  /** Persisted per-directory `host/owner/repo` pick for the GitHub surfaces. */
+  githubSelectedRepoByDirectory: Record<string, string>;
   isSessionSwitcherOpen: boolean;
   isSessionDropdownOpen: boolean;
   activeMainTab: MainTab;
@@ -182,6 +189,7 @@ interface UIStore {
   setContextRailOrder: (order: string[]) => void;
   toggleContextEditorTree: () => void;
   setContextEditorTreeWidth: (width: number) => void;
+  setGitHubSelectedRepo: (directory: string, repoRef: string | null) => void;
   openContextSurface: (directory: string, mode: ContextPanelMode) => void;
   openContextPanelTab: (directory: string, tab: ContextPanelTabDescriptor) => void;
   openContextDiff: (directory: string, filePath: string, staged?: boolean, scope?: PendingDiffScope | null) => void;
@@ -313,6 +321,7 @@ export const useUIStore = create<UIStore>()(
         contextRailOrder: [],
         contextEditorTreeVisible: true,
         contextEditorTreeWidth: 240,
+        githubSelectedRepoByDirectory: {},
         isSessionSwitcherOpen: false,
         isSessionDropdownOpen: false,
         activeMainTab: 'chat',
@@ -458,6 +467,27 @@ export const useUIStore = create<UIStore>()(
             return;
           }
           set({ contextEditorTreeWidth: Math.min(480, Math.max(200, Math.round(width))) });
+        },
+
+        setGitHubSelectedRepo: (directory, repoRef) => {
+          const normalizedDirectory = normalizeDirectoryPathKey((directory || '').trim());
+          if (!normalizedDirectory) return;
+          set((state) => {
+            if (repoRef == null) {
+              if (!(normalizedDirectory in state.githubSelectedRepoByDirectory)) return state;
+              const next = { ...state.githubSelectedRepoByDirectory };
+              delete next[normalizedDirectory];
+              return { githubSelectedRepoByDirectory: next };
+            }
+            const trimmed = repoRef.trim();
+            if (!trimmed || state.githubSelectedRepoByDirectory[normalizedDirectory] === trimmed) return state;
+            return {
+              githubSelectedRepoByDirectory: clampGitHubSelectionRoots(
+                { ...state.githubSelectedRepoByDirectory, [normalizedDirectory]: trimmed },
+                GITHUB_SELECTION_MAX_ROOTS,
+              ),
+            };
+          });
         },
 
         // Rail entry point: activates the most recent tab of the requested
@@ -1639,6 +1669,11 @@ export const useUIStore = create<UIStore>()(
 
           state.fileEditorKeymap = normalizeFileEditorKeymap(state.fileEditorKeymap);
 
+          state.githubSelectedRepoByDirectory = clampGitHubSelectionRoots(
+            sanitizeGitHubSelectionByDirectory(state.githubSelectedRepoByDirectory),
+            GITHUB_SELECTION_MAX_ROOTS,
+          );
+
           if (typeof state.autoSaveEnabled !== 'boolean') {
             state.autoSaveEnabled = true;
           }
@@ -1657,6 +1692,7 @@ export const useUIStore = create<UIStore>()(
           contextRailOrder: state.contextRailOrder,
           contextEditorTreeVisible: state.contextEditorTreeVisible,
           contextEditorTreeWidth: state.contextEditorTreeWidth,
+          githubSelectedRepoByDirectory: state.githubSelectedRepoByDirectory,
           isSessionSwitcherOpen: state.isSessionSwitcherOpen,
           activeMainTab: state.activeMainTab,
           sidebarSection: state.sidebarSection,

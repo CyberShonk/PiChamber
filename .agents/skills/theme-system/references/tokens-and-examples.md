@@ -89,8 +89,17 @@ Input footers stay transparent over the elevated input surface.
 ### Error Feedback
 
 ```tsx
-<div className="bg-[var(--status-error-background)] text-[var(--status-error-foreground)]" />
+<div className="border border-[var(--status-error-border)] bg-[var(--status-error-background)] text-foreground">
+  <Icon name="error-warning" className="text-[var(--status-error)]" />
+  ...
+</div>
+<p className="text-[var(--status-error)]">Inline error text on a normal surface</p>
 ```
+
+`--status-*-foreground` is the ink for a *solid* status fill (it also backs
+`--destructive-foreground`). On the tinted `--status-*-background` it renders
+near-black in many themes, so tinted alerts use `text-foreground` and mark
+only the icon (or a short label) with `--status-*`.
 
 ### Neutral Card
 

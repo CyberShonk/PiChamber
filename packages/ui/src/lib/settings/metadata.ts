@@ -98,7 +98,7 @@ export const SETTINGS_PAGE_METADATA: readonly SettingsPageMeta[] = [
     title: 'Git',
     group: 'projects',
     kind: 'single',
-    keywords: ['git', 'github', 'identity', 'identities', 'ssh', 'profiles', 'credentials', 'keys', 'commit', 'oauth', 'prs', 'issues'],
+    keywords: ['git', 'github', 'ssh', 'commit', 'oauth', 'prs', 'issues'],
   },
   {
     slug: 'appearance',

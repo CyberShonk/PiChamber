@@ -8,6 +8,8 @@ import type { SortableDragHandleProps } from './sortableItems';
 import type { SessionGroup } from './types';
 import { renderHighlightedText } from './highlightedText';
 import type { MainTab } from '@/stores/useUIStore';
+import { useGitHubSelectedRepo } from '@/stores/useGitHubScopeStore';
+import { openPullRequestInSurface } from '@/components/views/github/PullRequestsSurface';
 
 export interface SessionGroupHeaderProps {
   group: SessionGroup;
@@ -36,6 +38,39 @@ export interface SessionGroupHeaderProps {
     targetFolderId?: string;
   }) => void;
 }
+
+const GroupPrBadge: React.FC<{ directory: string | null; number: number; color?: string }> = ({
+  directory,
+  number,
+  color,
+}) => {
+  const repo = useGitHubSelectedRepo(directory);
+  if (!directory || !repo) {
+    return (
+      <span
+        className="ml-auto flex-shrink-0 text-[0.72rem] font-medium leading-none"
+        style={color ? { color } : undefined}
+      >
+        #{number}
+      </span>
+    );
+  }
+  return (
+    <button
+      type="button"
+      onClick={(event) => {
+        event.stopPropagation();
+        openPullRequestInSurface(directory, repo, number);
+      }}
+      className="ml-auto flex-shrink-0 rounded text-[0.72rem] font-medium leading-none hover:bg-interactive-hover"
+      style={color ? { color } : undefined}
+      title={`Open PR #${number} in Pull requests`}
+      aria-label={`Open pull request #${number} in Pull requests`}
+    >
+      #{number}
+    </button>
+  );
+};
 
 export function SessionGroupHeader({
   group,
@@ -148,12 +183,7 @@ export function SessionGroupHeader({
                 </span>
                 {groupActivityIndicator}
                 {groupPrSummary ? (
-                  <span
-                    className="ml-auto flex-shrink-0 text-[0.72rem] font-medium leading-none"
-                    style={groupPrColor ? { color: groupPrColor } : undefined}
-                  >
-                    #{groupPrSummary.number}
-                  </span>
+                  <GroupPrBadge directory={group.directory ?? null} number={groupPrSummary.number} color={groupPrColor} />
                 ) : null}
               </span>
             ) : (

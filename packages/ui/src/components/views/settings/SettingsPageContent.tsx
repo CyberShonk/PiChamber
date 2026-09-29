@@ -6,7 +6,7 @@ import { RemoteInstancesPage } from '@/components/sections/remote-instances/Remo
 import { ProvidersPage } from '@/components/sections/providers/ProvidersPage';
 import { SnippetsPage } from '@/components/sections/snippets/SnippetsPage';
 import { PromptTemplatesPage } from '@/components/sections/prompt-templates/PromptTemplatesPage';
-import { GitPage } from '@/components/sections/git-identities/GitPage';
+import { GitSettings } from '@/components/sections/pichamber/GitSettings';
 import type { PiChamberSection } from '@/components/sections/pichamber/types';
 import { PiChamberPage } from '@/components/sections/pichamber/PiChamberPage';
 import { AboutSettings } from '@/components/sections/pichamber/AboutSettings';
@@ -75,7 +75,11 @@ export function SettingsPageContent({
     case 'dictation':
       return <DictationSettings />;
     case 'git':
-      return <GitPage />;
+      return (
+        <SettingsPageLayout title={isMobile ? undefined : "Git"}>
+          <GitSettings />
+        </SettingsPageLayout>
+      );
     case 'general':
     case 'appearance':
     case 'chat':

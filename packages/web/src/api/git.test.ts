@@ -40,13 +40,7 @@ vi.mock('@pichamber/ui/lib/gitApiHttp', () => ({
   renameBranch: vi.fn(),
   getGitLog: vi.fn(),
   getCommitFiles: vi.fn(),
-  getCurrentGitIdentity: vi.fn(),
-  hasLocalIdentity: vi.fn(),
-  setGitIdentity: vi.fn(),
-  getGitIdentities: vi.fn(),
-  createGitIdentity: vi.fn(),
-  updateGitIdentity: vi.fn(),
-  deleteGitIdentity: vi.fn(),
+  getCurrentGitAuthor: vi.fn(),
   getRemotes: vi.fn(),
   rebase: vi.fn(),
   abortRebase: vi.fn(),
@@ -64,8 +58,6 @@ vi.mock('@pichamber/ui/lib/gitApiHttp', () => ({
   getCommitFileDiff: vi.fn(),
   previewGitWorktree: vi.fn(),
   getGitWorktreeBootstrapStatus: vi.fn(),
-  discoverGitCredentials: vi.fn(),
-  getGlobalGitIdentity: vi.fn(),
   getRemoteUrl: vi.fn(),
 }));
 

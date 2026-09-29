@@ -16,6 +16,7 @@ import {
   normalizeCombo,
 } from '@/lib/shortcuts';
 import { getVisibleContextRailSurfaces } from '@/lib/surfaces/registry';
+import { useGitHubScopeStore } from '@/stores/useGitHubScopeStore';
 import { useDirectoryStore } from '@/stores/useDirectoryStore';
 import { useProjectsStore } from '@/stores/useProjectsStore';
 import { useEffectiveDirectory } from '@/hooks/useEffectiveDirectory';
@@ -373,10 +374,24 @@ export const useKeyboardShortcuts = () => {
         }
         const directory = normalizeContextPanelDirectoryKey(effectiveDirectory);
         const panelState = state.contextPanelByDirectory[directory];
+        // Mirror the rail's github-repo visibility so shortcut digits map to
+        // the same surfaces the rail renders (loading hides, failure shows).
+        let githubScope: { isLoading: boolean; hasResult: boolean; hasGitHubRepo: boolean; hasError: boolean } | undefined;
+        const scopeEntry = useGitHubScopeStore.getState().entriesByDirectory[directory] ?? null;
+        if (scopeEntry) {
+          const repos = scopeEntry.scope?.repositories ?? [];
+          githubScope = {
+            isLoading: scopeEntry.isLoading,
+            hasResult: Boolean(scopeEntry.scope || scopeEntry.error),
+            hasGitHubRepo: repos.some((candidate) => Boolean(candidate.host && candidate.owner && candidate.repo && !candidate.disabledReason)),
+            hasError: Boolean(scopeEntry.error && !scopeEntry.scope),
+          };
+        }
         const visibleSurfaces = getVisibleContextRailSurfaces({
           railOrder: state.contextRailOrder,
           screenWidth: window.innerWidth,
           tabs: panelState?.tabs ?? [],
+          githubScope,
         });
         const target = visibleSurfaces[switchSurfaceDigit - 1];
         if (!target) {

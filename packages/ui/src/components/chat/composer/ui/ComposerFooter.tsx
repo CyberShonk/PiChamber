@@ -53,6 +53,8 @@ export interface ComposerFooterProps {
     onOpenSettings?: () => void;
     /** Direct local-file picker action, shared by the desktop menu item and the mobile attach button. */
     onPickLocalFiles: () => void;
+    /** Open the GitHub link picker (desktop attach menu entry). */
+    onLinkGitHub?: () => void;
     onPrimaryAction: () => void;
     onQueueMessage: () => void;
     onAbort: () => void;
@@ -83,6 +85,7 @@ export function ComposerFooter(props: ComposerFooterProps) {
         isAttachmentDisabled,
         onOpenSettings,
         onPickLocalFiles,
+        onLinkGitHub,
         onPrimaryAction,
         onQueueMessage,
         onAbort,
@@ -93,6 +96,7 @@ export function ComposerFooter(props: ComposerFooterProps) {
             footerIconButtonClass={footerIconButtonClass}
             iconSizeClass={iconSizeClass}
             handlePickLocalFiles={onPickLocalFiles}
+            onLinkGitHub={onLinkGitHub}
             onOpenSettings={onOpenSettings}
             onOpenMobileSheet={isMobile ? onPickLocalFiles : undefined}
             disabled={isSending}

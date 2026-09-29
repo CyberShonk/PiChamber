@@ -97,7 +97,6 @@ export type DesktopSettings = {
   smallModelUseDefault?: boolean;
   smallModelOverride?: string;
   walkthroughModelOverride?: string;
-  defaultGitIdentityId?: string;
   openInAppId?: string;
   followUpBehavior?: 'steer' | 'queue';
   queueModeEnabled?: boolean;

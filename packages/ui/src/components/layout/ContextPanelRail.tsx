@@ -39,6 +39,7 @@ import {
 } from '@/lib/shortcuts';
 import { cn } from '@/lib/utils';
 import { useGitStatus, useGitStore, useIsGitRepo } from '@/stores/useGitStore';
+import { useGitHubScopeStore } from '@/stores/useGitHubScopeStore';
 import { normalizeContextPanelDirectoryKey, useUIStore } from '@/stores/useUIStore';
 
 const RAIL_TOOLTIP_DELAY_MS = 150;
@@ -261,15 +262,21 @@ export const ContextPanelRail: React.FC = () => {
   const openContextSurface = useUIStore((state) => state.openContextSurface);
   const shortcutOverrides = useUIStore((state) => state.shortcutOverrides);
   const { screenWidth } = useDeviceInfo();
-  const { git } = useRuntimeAPIs();
+  const { git, github } = useRuntimeAPIs();
   const gitStatus = useGitStatus(directoryKey || null);
   const isGitRepo = useIsGitRepo(directoryKey || null);
   const ensureStatus = useGitStore((state) => state.ensureStatus);
+  const ensureGitHubScope = useGitHubScopeStore((state) => state.ensureScope);
 
   React.useEffect(() => {
     if (!directoryKey) return;
     void ensureStatus(directoryKey, git);
   }, [directoryKey, ensureStatus, git]);
+
+  React.useEffect(() => {
+    if (!directoryKey || !github) return;
+    void ensureGitHubScope(directoryKey, github);
+  }, [directoryKey, ensureGitHubScope, github]);
 
   const surfaceSwitchPrefix = React.useMemo(
     () => getEffectiveShortcutPrefix('switch_context_surface', shortcutOverrides),
@@ -442,13 +449,26 @@ export const ContextPanelRail: React.FC = () => {
     };
   }, [railBreakdown, railCacheHitPercent, railContextLimit, railContextMessage, railOutputLimit, railPercentage, railTotalTokens]);
 
+  const githubScopeEntry = useGitHubScopeStore((state) => (directoryKey ? state.entriesByDirectory[directoryKey] ?? null : null));
+  const githubScope = React.useMemo(() => {
+    if (!githubScopeEntry) return { isLoading: true, hasResult: false, hasGitHubRepo: false, hasError: false };
+    const repos = githubScopeEntry.scope?.repositories ?? [];
+    return {
+      isLoading: githubScopeEntry.isLoading,
+      hasResult: Boolean(githubScopeEntry.scope || githubScopeEntry.error),
+      hasGitHubRepo: repos.some((entry) => Boolean(entry.host && entry.owner && entry.repo && !entry.disabledReason)),
+      hasError: Boolean(githubScopeEntry.error && !githubScopeEntry.scope),
+    };
+  }, [githubScopeEntry]);
+
   const surfaces = React.useMemo(() => {
     return getVisibleContextRailSurfaces({
       railOrder: contextRailOrder,
       screenWidth,
       tabs,
+      githubScope,
     });
-  }, [contextRailOrder, screenWidth, tabs]);
+  }, [contextRailOrder, screenWidth, tabs, githubScope]);
 
   const handleDragEnd = React.useCallback((event: DragEndEvent) => {
     const { active, over } = event;

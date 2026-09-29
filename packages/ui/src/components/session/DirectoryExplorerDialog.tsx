@@ -11,7 +11,6 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { useProjectsStore } from '@/stores/useProjectsStore';
 import { cn } from '@/lib/utils';
-import { IdentityDropdown } from '@/components/views/git/IdentityDropdown';
 import { useDeviceInfo } from '@/lib/device';
 import { MobileOverlayPanel } from '@/components/ui/MobileOverlayPanel';
 import { Icon } from '@/components/icon/Icon';
@@ -83,9 +82,6 @@ export const DirectoryExplorerDialog: React.FC<DirectoryExplorerDialogProps> = (
     setIsCloneMode,
     cloneRemoteUrl,
     setCloneRemoteUrl,
-    setSelectedGitIdentityId,
-    availableGitIdentities,
-    selectedGitIdentity,
     canSubmit,
     submitActionLabel,
     submitModifierLabel,
@@ -248,13 +244,6 @@ export const DirectoryExplorerDialog: React.FC<DirectoryExplorerDialogProps> = (
                 autoComplete="off"
                 autoCorrect="off"
                 autoCapitalize="off"
-              />
-              <IdentityDropdown
-                activeProfile={selectedGitIdentity}
-                identities={availableGitIdentities}
-                onSelect={(profile) => setSelectedGitIdentityId(profile.id)}
-                isApplying={isConfirming}
-                iconOnly
               />
             </div>
           </div>

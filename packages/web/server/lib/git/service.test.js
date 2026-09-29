@@ -13,6 +13,7 @@ import {
   getWorktreeBootstrapStatus,
   getWorktrees,
   getBranches,
+  getCurrentIdentity,
   getRangeDiff,
   getRemotes,
   getStatus,
@@ -24,7 +25,6 @@ import {
   resetToCommit,
   resolveBaseRefForLog,
   revertCommit,
-  setLocalIdentity,
   stageFiles,
   unstageFiles,
   applyHunk,
@@ -104,6 +104,47 @@ async function createTempRepo() {
 }
 
 // ---------------------------------------------------------------------------
+// getCurrentIdentity
+// ---------------------------------------------------------------------------
+
+describe.skipIf(!canRunGit())('getCurrentIdentity', () => {
+  const withGlobalConfig = async (entries, run) => {
+    const globalConfig = path.join(createTempDir(), 'gitconfig');
+    fs.writeFileSync(globalConfig, '');
+    for (const [key, value] of entries) {
+      execFileSync('git', ['config', '--file', globalConfig, key, value]);
+    }
+    const previous = process.env.GIT_CONFIG_GLOBAL;
+    process.env.GIT_CONFIG_GLOBAL = globalConfig;
+    try {
+      return await run();
+    } finally {
+      if (previous === undefined) delete process.env.GIT_CONFIG_GLOBAL;
+      else process.env.GIT_CONFIG_GLOBAL = previous;
+    }
+  };
+
+  it('falls back to the global author when the repository sets none', async () => {
+    const repository = createTempDir();
+    runGit(repository, ['init']);
+    const identity = await withGlobalConfig(
+      [['user.name', 'Global User'], ['user.email', 'global@example.com']],
+      () => getCurrentIdentity(repository),
+    );
+    expect(identity).toEqual({ userName: 'Global User', userEmail: 'global@example.com' });
+  });
+
+  it('prefers the repository author over the global one', async () => {
+    const { tmpDir } = await createTempRepo();
+    const identity = await withGlobalConfig(
+      [['user.name', 'Global User'], ['user.email', 'global@example.com']],
+      () => getCurrentIdentity(tmpDir),
+    );
+    expect(identity).toEqual({ userName: 'Test User', userEmail: 'test@example.com' });
+  });
+});
+
+// ---------------------------------------------------------------------------
 // resolveBaseRefForLog
 // ---------------------------------------------------------------------------
 
@@ -153,23 +194,6 @@ describe('git index path validation', () => {
   it('rejects unstage paths outside the repository before invoking git', async () => {
     await expect(unstageFiles('/repo', ['../secret.txt'])).rejects.toThrow(
       'Path is outside repository: ../secret.txt'
-    );
-  });
-});
-
-describe.runIf(canRunGit())('setLocalIdentity', () => {
-  it('configures the local SSH command with the targeted simple-git opt-in', async () => {
-    const { tmpDir } = await createTempRepo();
-
-    await setLocalIdentity(tmpDir, {
-      userName: 'SSH User',
-      userEmail: 'ssh@example.com',
-      authType: 'ssh',
-      sshKey: '/tmp/test key',
-    });
-
-    expect(runGit(tmpDir, ['config', '--local', '--get', 'core.sshCommand']).trim()).toBe(
-      "ssh -i '/tmp/test key' -o IdentitiesOnly=yes"
     );
   });
 });
