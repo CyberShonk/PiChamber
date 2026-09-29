@@ -11,13 +11,11 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { Icon } from "@/components/icon/Icon";
 import { BranchSelector } from './BranchSelector';
 import { WorktreeBranchDisplay } from './WorktreeBranchDisplay';
-import { GitAuthorLine } from './GitAuthorLine';
-import { SyncActions } from './SyncActions';
+import { FetchRemoteMenuItem, SyncActions } from './SyncActions';
 import { ChangeScopeSelector } from '../diff/ChangeScopeSelector';
 import type { DiffHeaderControlsState, DiffHeaderScope } from '../DiffView';
 import type {
   GitStatus,
-  GitAuthorSummary,
   GitRemote,
 } from '@/lib/api/types';
 
@@ -32,12 +30,9 @@ interface GitUnifiedHeaderProps {
   remotes: GitRemote[];
   onFetch: (remote: GitRemote) => void;
   onSync: (remote: GitRemote) => void;
-  onRemoveRemote: (remote: GitRemote) => void;
-  removingRemoteName: string | null;
   onCheckoutBranch: (branch: string) => void;
   onCreateBranch: (name: string, remote?: GitRemote) => Promise<void>;
   onRenameBranch?: (oldName: string, newName: string) => Promise<void>;
-  currentAuthor: GitAuthorSummary | null;
   isWorktreeMode: boolean;
   upstreamTarget: string | null;
   onOpenHistory?: () => void;
@@ -55,8 +50,7 @@ interface GitUnifiedHeaderProps {
 }
 
 /**
- * The single git header row. Branch switching, the read-only commit-author
- * line, change-scope filtering, sync, and every repository/diff view action live here; hosts
+ * The single git header row. Branch switching, change-scope filtering, sync, and every repository/diff view action live here; hosts
  * portal it into their own header (ContextPanel slot) so the panel keeps
  * exactly one header row, or render it inline with a local border when they
  * have no panel chrome (full-view git).
@@ -70,12 +64,9 @@ export const GitUnifiedHeader: React.FC<GitUnifiedHeaderProps> = ({
   remotes,
   onFetch,
   onSync,
-  onRemoveRemote,
-  removingRemoteName,
   onCheckoutBranch,
   onCreateBranch,
   onRenameBranch,
-  currentAuthor,
   isWorktreeMode,
   upstreamTarget,
   onOpenHistory,
@@ -99,7 +90,9 @@ export const GitUnifiedHeader: React.FC<GitUnifiedHeaderProps> = ({
     onOpenReintegrateCommits;
   const hasDiffFiles = (diffHeaderState?.totalCount ?? 0) > 0;
   const isCollapsibleScope = diffScope !== 'turn' && diffScope !== 'branch';
-  const showViewOptions = hasViewsMenu || diffHeaderState !== null;
+  const hasFetchItems = remotes.length > 0;
+  const isFetchDisabled = !status || syncAction !== null;
+  const showViewOptions = hasFetchItems || hasViewsMenu || diffHeaderState !== null;
 
   return (
     <div className="@container/git-header flex min-w-0 flex-1 items-center gap-1">
@@ -121,9 +114,6 @@ export const GitUnifiedHeader: React.FC<GitUnifiedHeaderProps> = ({
           />
         )}
       </div>
-      <div className="shrink-0">
-        <GitAuthorLine author={currentAuthor} />
-      </div>
       <div className="min-w-0 shrink-0">
         <ChangeScopeSelector
           scope={diffScope}
@@ -144,9 +134,8 @@ export const GitUnifiedHeader: React.FC<GitUnifiedHeaderProps> = ({
           remotes={remotes}
           onFetch={onFetch}
           onSync={onSync}
-          onRemoveRemote={onRemoveRemote}
-          removingRemoteName={removingRemoteName}
           disabled={!status}
+          showFetchMenu={false}
           iconOnly={true}
           aheadCount={status.ahead}
           behindCount={status.behind}
@@ -173,7 +162,18 @@ export const GitUnifiedHeader: React.FC<GitUnifiedHeaderProps> = ({
               </TooltipTrigger>
               <TooltipContent sideOffset={8}>{"Repository views"}</TooltipContent>
             </Tooltip>
-            <DropdownMenuContent align="end">
+            <DropdownMenuContent align="end" className="max-w-[min(360px,calc(100vw-2rem))]">
+              {remotes.map((remote) => (
+                <FetchRemoteMenuItem
+                  key={remote.name}
+                  remote={remote}
+                  onFetch={onFetch}
+                  disabled={isFetchDisabled}
+                />
+              ))}
+              {hasFetchItems && (hasViewsMenu || diffHeaderState !== null) ? (
+                <DropdownMenuSeparator />
+              ) : null}
               {onOpenHistory ? (
                 <DropdownMenuItem onSelect={onOpenHistory}>
                   <Icon name="history" className="size-4" />

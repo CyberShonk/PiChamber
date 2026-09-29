@@ -11,7 +11,6 @@ import {
   useGitStatus,
   useGitBranches,
   useGitLog,
-  useGitAuthor,
   useIsGitRepo,
   useGitLoadingStatus,
   useGitLoadingLog,
@@ -86,7 +85,6 @@ export const GitView: React.FC<GitViewProps> = ({
   const status = useGitStatus(currentDirectory ?? null);
   const branches = useGitBranches(currentDirectory ?? null);
   const log = useGitLog(currentDirectory ?? null);
-  const currentAuthor = useGitAuthor(currentDirectory ?? null);
   const isLoading = useGitLoadingStatus(currentDirectory ?? null);
   const isLogLoading = useGitLoadingLog(currentDirectory ?? null);
   const {
@@ -278,7 +276,6 @@ export const GitView: React.FC<GitViewProps> = ({
 
   const [remotes, setRemotes] = React.useState<GitRemote[]>([]);
   const [remoteUrl, setRemoteUrl] = React.useState<string | null>(null);
-  const [removingRemoteName, setRemovingRemoteName] = React.useState<string | null>(null);
   const [branchOperation, setBranchOperation] = React.useState<BranchOperation>(null);
   const [operationLogs, setOperationLogs] = React.useState<OperationLogEntry[]>([]);
   const [graphLog, setGraphLog] = React.useState<import('@/lib/api/types').GitLogResponse | null>(null);
@@ -552,35 +549,6 @@ export const GitView: React.FC<GitViewProps> = ({
       isBinary: response.isBinary,
     };
   }, [currentDirectory, git]);
-
-  const handleRemoveRemote = React.useCallback(async (remote: GitRemote) => {
-    if (!currentDirectory) return;
-
-    const remoteName = remote.name.trim();
-    if (!remoteName) {
-      toast.error("Remote name is required");
-      return;
-    }
-    if (remoteName === 'origin') {
-      toast.error("Cannot remove the origin remote");
-      return;
-    }
-
-    setRemovingRemoteName(remoteName);
-    try {
-      await git.removeRemote(currentDirectory, { remote: remoteName });
-      toast.success(`Removed remote ${remoteName}`);
-      await Promise.all([
-        refreshStatusAndBranches(false),
-        refreshRemotes(),
-      ]);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : `Failed to remove ${remoteName}`;
-      toast.error(message);
-    } finally {
-      setRemovingRemoteName(null);
-    }
-  }, [currentDirectory, git, refreshRemotes, refreshStatusAndBranches]);
 
   const handleCommit = async (options: { pushAfter?: boolean } = {}) => {
     if (!currentDirectory) return;
@@ -1435,7 +1403,7 @@ export const GitView: React.FC<GitViewProps> = ({
     setDiffHeaderState(state);
   }, []);
 
-  // The one meaningful git header: branch, commit author, scope, sync, and every
+  // The one meaningful git header: branch, scope, sync, and every
   // repository/diff view action. Hosts with panel chrome portal it into
   // their header slot; all other hosts render it as a single local row.
   const headerControls = isGitRepo === true && status ? (
@@ -1448,12 +1416,9 @@ export const GitView: React.FC<GitViewProps> = ({
       remotes={effectiveRemotes}
       onFetch={(remote) => handleSyncAction('fetch', remote)}
       onSync={(remote) => handleSyncAction('sync', remote)}
-      onRemoveRemote={handleRemoveRemote}
-      removingRemoteName={removingRemoteName}
       onCheckoutBranch={handleCheckoutBranch}
       onCreateBranch={handleCreateBranch}
       onRenameBranch={handleRenameBranch}
-      currentAuthor={currentAuthor}
       isWorktreeMode={false}
       upstreamTarget={status.upstreamComparison ? `${status.upstreamComparison.remote}/${status.upstreamComparison.branch}` : null}
       onOpenHistory={() => setGitLogDialogMode('history')}
@@ -1494,6 +1459,13 @@ export const GitView: React.FC<GitViewProps> = ({
         unstagedChangeEntries={unstagedChangeEntries}
         effectiveRemotes={effectiveRemotes}
         syncAction={syncAction}
+        localBranches={localBranches}
+        remoteBranches={remoteBranches}
+        branchInfo={branches?.branches}
+        isWorktreeMode={false}
+        onCheckoutBranch={handleCheckoutBranch}
+        onCreateBranch={handleCreateBranch}
+        onRenameBranch={handleRenameBranch}
         commitAction={commitAction}
         commitMessage={commitMessage}
         hasPendingIndexMutation={hasPendingIndexMutation}
