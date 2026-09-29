@@ -21,4 +21,22 @@ describe('sanitizeGitHubHtml', () => {
     expect(out).toContain('target="_blank"');
     expect(out).toContain('rel="noopener noreferrer"');
   });
+
+  // Bun's test env has no `window`, so this exercises the string-fallback
+  // path (the browser DOMPurify path now enriches via an
+  // `afterSanitizeAttributes` hook instead of regex rewrites).
+  test('attribute-breakout payloads yield no executable attributes', () => {
+    const out = sanitizeGitHubHtml(
+      '<img src="https://example.com/a.png" title="<a onerror=alert(1) ">' +
+        '<a href="https://github.com/o/r/pull/1" title="<img src=x onerror=alert(2)>">pr</a>',
+    );
+    // The payload survives only as escaped text; strip quoted values so the
+    // assertion covers real attribute names, not escaped content.
+    const attrNamesOnly = out.replace(/="[^"]*"/g, '=""');
+    expect(attrNamesOnly).not.toContain('onerror');
+    expect(out).toContain('loading="lazy"');
+    expect(out).toContain('target="_blank"');
+    expect(out).toContain('rel="noopener noreferrer"');
+    expect(out).toContain('>pr</a>');
+  });
 });

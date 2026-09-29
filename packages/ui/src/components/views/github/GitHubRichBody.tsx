@@ -112,7 +112,9 @@ export const fallbackSanitizeGitHubHtml = (html: string): string => {
   return out;
 };
 
-/** String-safe enrichment shared by both sanitize paths (no DOM needed). */
+/** String-only enrichment for the no-DOM fallback path below (SSR, tests).
+ * The fallback escapes `&`, `"`, and `<` inside attribute values, so these
+ * tag-prefix insertions cannot break out of an attribute value. */
 const enrichSanitizedHtml = (html: string): string => {
   if (!html) return '';
   return html
@@ -133,12 +135,51 @@ const enrichSanitizedHtml = (html: string): string => {
     .replace(/<input\b(?![^>]*\bdisabled\b)([^>]*type\s*=\s*["']?checkbox[^>]*)>/gi, '<input disabled$1>');
 };
 
+/**
+ * Dedicated DOMPurify instance for GitHub bodies. Enrichment runs as an
+ * `afterSanitizeAttributes` hook via DOM APIs — never as post-sanitize
+ * string rewrites, which older WebKit/Chromium parsers can re-interpret
+ * into executable attributes (mutation-XSS). A dedicated instance keeps
+ * this hook from leaking into other DOMPurify users (e.g. chat markdown).
+ */
+let githubPurify: ReturnType<typeof DOMPurify> | null = null;
+
+const getGitHubPurify = (): ReturnType<typeof DOMPurify> | null => {
+  if (typeof window === 'undefined' || !DOMPurify.isSupported) return null;
+  if (!githubPurify) {
+    const instance = DOMPurify(window);
+    instance.addHook('afterSanitizeAttributes', (node) => {
+      if (!(node instanceof Element)) return;
+      if (node.tagName === 'IMG') {
+        if (!node.hasAttribute('loading')) node.setAttribute('loading', 'lazy');
+        if (!node.hasAttribute('decoding')) node.setAttribute('decoding', 'async');
+        if (!node.hasAttribute('referrerpolicy')) node.setAttribute('referrerpolicy', 'no-referrer');
+      } else if (node.tagName === 'A') {
+        // Always overwrite: GitHub-supplied target/rel must not drop noopener.
+        node.setAttribute('target', '_blank');
+        node.setAttribute('rel', 'noopener noreferrer');
+      } else if (node.tagName === 'VIDEO') {
+        if (!node.hasAttribute('controls')) node.setAttribute('controls', '');
+      } else if (node.tagName === 'INPUT') {
+        // Task-list checkboxes only, matching fallbackSanitizeGitHubHtml.
+        if ((node.getAttribute('type') || '').toLowerCase() !== 'checkbox') {
+          node.remove();
+          return;
+        }
+        if (!node.hasAttribute('disabled')) node.setAttribute('disabled', '');
+      }
+    });
+    githubPurify = instance;
+  }
+  return githubPurify;
+};
+
 /** Sanitize GitHub-rendered HTML (DOMPurify in the browser, string fallback without DOM). */
 export const sanitizeGitHubHtml = (html: string): string => {
   if (!html) return '';
-  if (typeof window !== 'undefined' && DOMPurify.isSupported) {
-    const clean = DOMPurify.sanitize(html, GITHUB_SANITIZE_CONFIG) as unknown as string;
-    return enrichSanitizedHtml(String(clean));
+  const purify = getGitHubPurify();
+  if (purify) {
+    return String(purify.sanitize(html, GITHUB_SANITIZE_CONFIG) as unknown as string);
   }
   return enrichSanitizedHtml(fallbackSanitizeGitHubHtml(html));
 };
