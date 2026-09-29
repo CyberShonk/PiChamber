@@ -1970,16 +1970,11 @@ export const registerPiRuntimeRoutes = (app, {
 
     try {
       const result = await getDaemonRuntime(getPiSessionDaemonRuntime).request('sessions.create', { ...input, cwd });
-      if (!result || typeof result !== 'object' || !Array.isArray(result.messages) || result.messages.length !== 0 || !Number.isSafeInteger(result.lastSequence)) {
-        throw protocolMismatch();
-      }
-      res.status(201).json({
-        session: projectSession(result.session),
-        messages: [],
-        lastSequence: result.lastSequence,
-        isStreaming: result.isStreaming === true,
-        lifecycle: result.isStreaming === true ? 'busy' : 'idle',
-      });
+      // A fresh session is not necessarily empty: extensions may append
+      // entries or messages from `session_start`. Project it exactly like a
+      // session read so those items, the stream epoch, and extension UI state
+      // reach the client instead of failing creation.
+      res.status(201).json(projectSessionDetail(result));
     } catch (error) {
       writeDaemonError(res, error);
     }

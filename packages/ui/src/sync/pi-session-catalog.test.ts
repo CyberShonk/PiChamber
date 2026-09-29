@@ -732,6 +732,59 @@ describe('PiSessionStore catalog', () => {
     }
   });
 
+  test('create keeps extension items appended at session start and prompts without a refetch', async () => {
+    const calls: string[] = [];
+    const stubs = stubDaemons({
+      listSessions: async () => ({ sessions: [listItem('seed', '/repo-a', { updatedAt: 1 })] }),
+      getSession: async (id) => {
+        calls.push(`getSession:${id}`);
+        return {
+          session: { id, directory: '/repo-a', createdAt: 0, updatedAt: 0 },
+          lastSequence: 0,
+          messages: [],
+        };
+      },
+      createSession: async (input) => {
+        calls.push('createSession');
+        const directory = (input as { cwd?: string }).cwd ?? '/repo-a';
+        return {
+          session: { id: 'created-extension', directory, title: 'New chat', createdAt: 1, updatedAt: 1, parentId: null, messageCount: 1 },
+          lastSequence: 2,
+          messages: [{
+            message: {
+              id: 'plannotator-entry', sessionId: 'created-extension', directory, role: 'extension',
+              customType: 'plannotator', text: 'Plan mode ready', createdAt: 1,
+            },
+            parts: [],
+          }],
+        };
+      },
+      sendPrompt: async () => {
+        calls.push('sendPrompt');
+        return { accepted: true, messageId: 'message-1' };
+      },
+    });
+    const store = new PiSessionStore();
+    try {
+      await store.start({ directory: '/repo-a' });
+      await tickMicrotasks();
+      calls.length = 0;
+
+      const sessionId = await store.create('New chat', { select: false });
+      expect(store.getState().reducer.bySession.get(sessionId)?.messages.has('plannotator-entry')).toBe(true);
+
+      await store.prompt(sessionId, 'hello', 'prompt', undefined, { knownEmptyTranscript: true });
+
+      expect(calls).toEqual(['createSession', 'sendPrompt']);
+      const resident = store.getState().reducer.bySession.get(sessionId);
+      expect(resident?.messages.has('plannotator-entry')).toBe(true);
+      expect(resident?.lifecycle).toBe('busy');
+    } finally {
+      stubs.restore();
+      store.dispose();
+    }
+  });
+
   test('create applies per-model thinking from sidecar defaults', async () => {
     let createdInput: { cwd?: string; title?: string; model?: unknown; thinking?: unknown } | undefined;
     const stubs = stubDaemons({
