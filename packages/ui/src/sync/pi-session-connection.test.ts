@@ -99,6 +99,73 @@ describe('prompt crypto compatibility', () => {
   });
 });
 
+describe('PiSessionStore create detail on a live stream', () => {
+  const createWithEpoch = async (createdEpoch: string) => {
+    const store = new PiSessionStore();
+    const internal = asInternal(store);
+    internal.stream = { dispose: () => undefined };
+    (store as unknown as { streamEpoch: string | null }).streamEpoch = 'epoch-live';
+    internal.state = { ...store.getState(), directory: '/repo', connection: 'ready' };
+    const calls: string[] = [];
+    const originals = {
+      createSession: piClient.createSession,
+      getSession: piClient.getSession,
+      getSettings: piClient.getSettings,
+      sendPrompt: piClient.sendPrompt,
+    };
+    piClient.getSettings = (async () => ({ pi: { global: {}, project: { trusted: true } }, pichamber: { version: 1 } })) as typeof piClient.getSettings;
+    piClient.createSession = (async () => {
+      calls.push('createSession');
+      return {
+        session: { id: 'created', directory: '/repo', createdAt: 1, updatedAt: 1, messageCount: 1 },
+        lastSequence: 2,
+        streamEpoch: createdEpoch,
+        messages: [{
+          message: { id: 'plannotator-entry', sessionId: 'created', directory: '/repo', role: 'extension', customType: 'plannotator', text: 'Plan mode ready', createdAt: 1 },
+          parts: [],
+        }],
+      };
+    }) as unknown as typeof piClient.createSession;
+    piClient.getSession = (async (id: string) => {
+      calls.push(`getSession:${id}`);
+      return { ...emptyDetail(id, '/repo', 2), streamEpoch: 'epoch-live' };
+    }) as unknown as typeof piClient.getSession;
+    piClient.sendPrompt = (async (input: { messageId?: string }) => {
+      calls.push('sendPrompt');
+      return { accepted: true, messageId: input.messageId! };
+    }) as unknown as typeof piClient.sendPrompt;
+    const restore = () => {
+      Object.assign(piClient, originals);
+      store.dispose();
+    };
+    try {
+      const sessionId = await store.create('New chat', { select: false });
+      const hydratedFromCreate = store.getState().hydratedSessionIds.has(sessionId);
+      const hasExtensionEntry = store.getState().reducer.bySession.get(sessionId)?.messages.has('plannotator-entry') === true;
+      await store.prompt(sessionId, 'hello', 'prompt', undefined, { knownEmptyTranscript: true });
+      return { calls, hydratedFromCreate, hasExtensionEntry, lifecycle: store.getState().reducer.bySession.get(sessionId)?.lifecycle };
+    } finally {
+      restore();
+    }
+  };
+
+  test('a current-epoch create detail seeds extension items and skips the first-prompt refetch', async () => {
+    const result = await createWithEpoch('epoch-live');
+    expect(result.hydratedFromCreate).toBe(true);
+    expect(result.hasExtensionEntry).toBe(true);
+    expect(result.calls).toEqual(['createSession', 'sendPrompt']);
+    expect(result.lifecycle).toBe('busy');
+  });
+
+  test('a stale-epoch create detail is not committed and the first prompt restores from a session read', async () => {
+    const result = await createWithEpoch('epoch-previous');
+    expect(result.hydratedFromCreate).toBe(false);
+    expect(result.hasExtensionEntry).toBe(false);
+    expect(result.calls).toEqual(['createSession', 'getSession:created', 'sendPrompt']);
+    expect(result.lifecycle).toBe('busy');
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Helpers / fakes
 // ---------------------------------------------------------------------------

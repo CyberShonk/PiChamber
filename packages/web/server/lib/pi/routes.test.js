@@ -1171,6 +1171,86 @@ describe('Pi runtime route', () => {
     }
   });
 
+  it('creates a session and projects the created detail like a session read', async () => {
+    const calls = [];
+    let created;
+    const runtime = {
+      health: async () => ({ state: 'ready', protocolVersion: 1, capabilities: [] }),
+      request: async (command, payload) => {
+        calls.push({ command, payload });
+        return created;
+      },
+    };
+    const app = express();
+    app.use(express.json());
+    registerPiRuntimeRoutes(app, { getPiSessionDaemonRuntime: () => runtime });
+    server = await listen(app);
+    const url = `http://127.0.0.1:${server.address().port}/api/pi/sessions`;
+    const create = (body) => fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const session = { id: 'pi-session-new', directory: '/workspace', createdAt: 1, updatedAt: 1, messageCount: 0, privatePath: '/private' };
+
+    created = { session, messages: [], lastSequence: 3, isStreaming: false, lifecycle: 'idle', streamEpoch: 'epoch-create', serverNow: 10 };
+    const empty = await create({ directory: '/workspace', title: 'New' });
+    expect(empty.status).toBe(201);
+    await expect(empty.json()).resolves.toEqual({
+      session: { id: 'pi-session-new', directory: '/workspace', createdAt: 1, updatedAt: 1, messageCount: 0 },
+      messages: [],
+      lastSequence: 3,
+      isStreaming: false,
+      lifecycle: 'idle',
+      streamEpoch: 'epoch-create',
+      serverNow: 10,
+    });
+    expect(calls).toEqual([{ command: 'sessions.create', payload: { directory: '/workspace', title: 'New', cwd: '/workspace' } }]);
+
+    // Extensions such as Plannotator append entries or messages from
+    // `session_start`, so a brand-new session can carry extension items and
+    // extension UI state.
+    created = {
+      session: { ...session, messageCount: 2 },
+      messages: [
+        { message: { id: 'entry-1', sessionId: 'pi-session-new', directory: '/workspace', role: 'extension', customType: 'plannotator', createdAt: 2, data: { mode: 'plan' } }, parts: [] },
+        { message: { id: 'entry-2', sessionId: 'pi-session-new', directory: '/workspace', role: 'extension', customType: 'plannotator', text: 'Plan mode ready', createdAt: 3, details: { step: 1 } }, parts: [] },
+      ],
+      lastSequence: 4,
+      isStreaming: false,
+      lifecycle: 'idle',
+      streamEpoch: 'epoch-create',
+      extensionStatuses: [{ key: 'plannotator', text: 'planning' }],
+    };
+    const withExtension = await create({ cwd: '/workspace' });
+    expect(withExtension.status).toBe(201);
+    await expect(withExtension.json()).resolves.toMatchObject({
+      session: { id: 'pi-session-new', messageCount: 2 },
+      messages: [
+        { message: { id: 'entry-1', role: 'extension', customType: 'plannotator', data: { mode: 'plan' } }, parts: [] },
+        { message: { id: 'entry-2', role: 'extension', customType: 'plannotator', text: 'Plan mode ready', details: { step: 1 } }, parts: [] },
+      ],
+      lastSequence: 4,
+      lifecycle: 'idle',
+      streamEpoch: 'epoch-create',
+      extensionStatuses: [{ key: 'plannotator', text: 'planning' }],
+    });
+
+    for (const malformed of [
+      { session, messages: [{ message: { id: 'entry-1', sessionId: 'pi-session-new', directory: '/workspace', role: 'system', createdAt: 2 }, parts: [] }], lastSequence: 4 },
+      { session, messages: [{ message: { id: 'entry-1', sessionId: 'pi-session-new', directory: '/workspace', role: 'extension', createdAt: 2 } }], lastSequence: 4 },
+      { session, messages: [], lastSequence: 'x' },
+      { session, lastSequence: 4 },
+      { session: { id: '' }, messages: [], lastSequence: 4 },
+      null,
+    ]) {
+      created = malformed;
+      const response = await create({ cwd: '/workspace' });
+      expect(response.status).toBe(503);
+      await expect(response.json()).resolves.toEqual({ error: { code: 'DAEMON_PROTOCOL_MISMATCH' } });
+    }
+
+    const callsBeforeInvalid = calls.length;
+    expect((await create({})).status).toBe(400);
+    expect(calls).toHaveLength(callsBeforeInvalid);
+  });
+
   it('verifies archive membership against the owning directory', async () => {
     const calls = [];
     const runtime = {
