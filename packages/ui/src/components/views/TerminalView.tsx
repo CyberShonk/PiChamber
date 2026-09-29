@@ -13,6 +13,7 @@ import { useUIStore } from '@/stores/useUIStore';
 import { Button } from '@/components/ui/button';
 import { Icon } from '@/components/icon/Icon';
 import { TerminalTabDropdown } from './terminal/TerminalTabDropdown';
+import { MobileSurfaceHeader } from '@/apps/MobileSurfaceHeader';
 import { useDeviceInfo } from '@/lib/device';
 import { useRuntimeAPIs } from '@/hooks/useRuntimeAPIs';
 import { PROJECT_ACTION_ICON_MAP, type ProjectActionIconKey } from '@/lib/projectActions';
@@ -327,12 +328,12 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ visible, onCloseView
           type="button"
           size="xs"
           variant="ghost"
-          className={cn('shrink-0', isTouchTerminal ? 'h-8 w-8 p-0' : 'h-7 w-7 p-0')}
+          className="h-8 w-8 shrink-0 p-0"
           onClick={handleCreateTab}
           title={'New tab'}
           aria-label={'New tab'}
         >
-          <Icon name="add" className={`${isTouchTerminal ? 'h-[18px] w-[18px]' : 'h-4 w-4'}`} />
+          <Icon name="add" className="h-4 w-4" />
         </Button>
 
         <div className="flex shrink-0 items-center gap-1 overflow-visible">
@@ -340,7 +341,7 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ visible, onCloseView
             type="button"
             size="xs"
             variant="ghost"
-            className="h-7 w-7 p-0"
+            className="h-8 w-8 p-0"
             onClick={() => void handleRestart()}
             disabled={isRestarting}
             title={'Restart terminal'}
@@ -377,21 +378,97 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ visible, onCloseView
     />
   );
 
+  // Panel hosts portal the tab dropdown + action buttons into their own
+  // header row, leaving this wrapper without local content when desktop
+  // quick keys are off (the default). Skip it then so no empty padded strip
+  // separates the panel header from the viewport; touch layouts always keep
+  // their wrapper untouched.
+  const renderChromeWrapper = !terminalHeaderSlot || isTouchTerminal || showQuickKeys;
+
   return (
-    <div className="flex h-full flex-col overflow-hidden bg-[var(--surface-background)]">
+    <div className="flex h-full flex-col overflow-hidden bg-background">
+      {headerControls && terminalHeaderSlot
+        ? createPortal(
+            <div className="flex min-w-0 flex-1 items-center gap-1.5">{headerControls}</div>,
+            terminalHeaderSlot,
+          )
+        : null}
+      {isTouchTerminal && headerControls && !terminalHeaderSlot && directoryTerminalState ? (
+        <MobileSurfaceHeader
+          leading={
+            <div className="min-w-0 flex-1 -ml-2">
+              <TerminalTabDropdown
+                items={terminalTabItems}
+                activeId={activeTabId}
+                onSelect={handleSelectTab}
+                onClose={handleCloseTab}
+                onCreate={handleCreateTab}
+              />
+            </div>
+          }
+          actions={
+            <>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                onClick={handleCreateTab}
+                title={'New tab'}
+                aria-label={'New tab'}
+              >
+                <Icon name="add" className="size-4" />
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                onClick={() => void handleRestart()}
+                disabled={isRestarting}
+                title={'Restart terminal'}
+                aria-label={'Restart terminal'}
+              >
+                <Icon name="restart" className="size-4" />
+              </Button>
+              {previewUrl ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8 shrink-0 gap-1 px-2"
+                  onClick={() => {
+                    if (!effectiveDirectory) return;
+                    openContextPreview(effectiveDirectory, previewUrl);
+                  }}
+                  title={'Open preview pane'}
+                >
+                  <Icon name="global" className="size-3.5 shrink-0" />
+                  <span className="whitespace-nowrap">{'Preview'}</span>
+                </Button>
+              ) : null}
+              {onCloseView ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  onClick={onCloseView}
+                  title={'Close terminal view'}
+                  aria-label={'Close terminal view'}
+                >
+                  <Icon name="close" className="size-4" />
+                </Button>
+              ) : null}
+            </>
+          }
+        />
+      ) : null}
+      {!isTouchTerminal && renderChromeWrapper ? (
       <div
         className={cn(
-          'app-region-no-drag sticky top-0 z-20 shrink-0 bg-[var(--surface-background)] text-xs',
-          isTouchTerminal ? 'px-3 py-1.5' : 'pl-3 pr-1.5 py-1',
+          'app-region-no-drag sticky top-0 z-20 shrink-0 bg-background text-xs',
+          'px-3 py-2',
         )}
       >
-        {headerControls ? (
-          terminalHeaderSlot ? (
-            createPortal(
-              <div className="flex min-w-0 flex-1 items-center gap-1.5">{headerControls}</div>,
-              terminalHeaderSlot,
-            )
-          ) : (
+        {headerControls && !terminalHeaderSlot ? (
             <div className="flex items-center gap-2 pl-1 pr-1">
               {headerControls}
               {onCloseView ? (
@@ -408,7 +485,6 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ visible, onCloseView
                 </Button>
               ) : null}
             </div>
-          )
         ) : null}
 
         {!isTouchTerminal && showQuickKeys && enableTabs && directoryTerminalState ? (
@@ -419,6 +495,7 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ visible, onCloseView
           <div className="mt-2 flex flex-wrap items-center gap-1">{quickKeysControls}</div>
         ) : null}
       </div>
+      ) : null}
 
       <div className="relative flex-1 overflow-hidden" style={{ backgroundColor: xtermTheme.background }}>
         <div className="h-full w-full box-border pl-4 pr-1.5 pt-3 pb-4">
