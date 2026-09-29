@@ -158,7 +158,7 @@ export const UserMessageBody = React.memo(function UserMessageBody({
       <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
         <div
           className={cn(
-            'flex items-center justify-start gap-1',
+            'flex items-center justify-start gap-1.5',
           isMobile
             ? userActionsMode === 'inline'
               ? 'translate-x-5'
