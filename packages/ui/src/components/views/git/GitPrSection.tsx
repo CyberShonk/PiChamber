@@ -70,7 +70,7 @@ const GitNoPrRow: React.FC<{
   onExpand: () => void;
 }> = ({ headBranch, onExpand }) => {
   return (
-    <div className="flex min-w-0 items-center gap-2 rounded-md px-2 py-1">
+    <div className="flex min-w-0 items-center gap-2 py-1">
       <Icon name="git-pull-request" className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
       <p className="flex min-w-0 flex-1 items-center gap-1.5 typography-micro text-muted-foreground">
         <span className="shrink-0">No pull request for</span>
@@ -125,7 +125,7 @@ export const GitPrSection: React.FC<{
   if (entry?.skippedDefaultBranch) return null;
   if (entry?.pr) {
     return (
-      <div className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-1.5">
+      <div className="flex shrink-0 items-center gap-2 border-b border-border px-1 py-1.5">
         <GitExistingPrRow directory={directory} branch={branch} repo={repo} />
       </div>
     );

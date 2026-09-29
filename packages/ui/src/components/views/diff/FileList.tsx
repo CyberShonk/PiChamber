@@ -21,7 +21,7 @@ export const FileList = React.memo<FileListProps>(function FileList({
   if (changedFiles.length === 0) return null;
 
   return (
-    <ScrollableOverlay outerClassName="flex-1 min-h-0" className="px-2 py-2">
+    <ScrollableOverlay outerClassName="flex-1 min-h-0" className="px-1 py-2">
       <ul className="flex flex-col gap-1">
         {changedFiles.map((file) => {
           const descriptor = describeGitChange(file);

@@ -352,7 +352,7 @@ export const DiffView: React.FC<DiffViewProps> = ({
           />
         ) : (
           <div className="flex items-center gap-1 rounded-md px-2 py-1 text-muted-foreground shrink-0">
-            <span className="typography-ui-label font-semibold text-foreground">
+            <span className="typography-ui-label font-medium text-foreground">
               {isLoadingStatus && !status
                 ? "Loading changes..."
                 : changedFiles.length === 1

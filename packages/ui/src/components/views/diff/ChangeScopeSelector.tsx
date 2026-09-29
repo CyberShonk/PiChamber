@@ -7,6 +7,7 @@ import {
   DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { Button } from '@/components/ui/button';
 import { Icon } from '@/components/icon/Icon';
 import type { DiffScope } from './diffTypes';
 
@@ -56,16 +57,18 @@ export const ChangeScopeSelector = React.memo<ChangeScopeSelectorProps>(function
   return (
     <DropdownMenu open={open} onOpenChange={setOpen}>
       <DropdownMenuTrigger asChild>
-        <button
+        <Button
           type="button"
-          className="flex h-7 flex-shrink-0 items-center gap-1.5 rounded-md px-2 typography-ui-label font-semibold text-foreground outline-none hover:bg-interactive-hover focus-visible:ring-2 focus-visible:ring-ring"
+          variant="ghost"
+          size="sm"
+          className="h-8 flex-shrink-0 gap-1.5 px-2 py-1 normal-case"
           aria-label={"Select change mode"}
         >
-          <span className="whitespace-nowrap">
+          <span className="whitespace-nowrap font-medium">
             {currentLabel}<span className="diff-toolbar__scope-count">: {currentCount}</span>
           </span>
           <Icon name="arrow-down-s" className="size-4 flex-shrink-0 opacity-60" />
-        </button>
+        </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="w-40">
         <DropdownMenuRadioGroup
