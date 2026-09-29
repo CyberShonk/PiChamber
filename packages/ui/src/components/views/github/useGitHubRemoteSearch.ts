@@ -57,10 +57,13 @@ export const useGitHubRemoteSearch = <TItem extends { number: number }, TRemoteQ
 
   React.useEffect(() => {
     if (!autoRemote) return;
-    if (remoteEntry?.data || remoteEntry?.isLoading || remotePending) return;
+    // A failed search stays failed until the user retries (Retry /
+    // Search all call runRemoteSearch directly); without the error guard
+    // the loading→idle transition would re-schedule failing requests.
+    if (remoteEntry?.data || remoteEntry?.isLoading || remoteEntry?.error || remotePending) return;
     const timer = setTimeout(runRemoteSearch, 400);
     return () => clearTimeout(timer);
-  }, [autoRemote, queryKey, remoteEntry?.data, remoteEntry?.isLoading, remotePending, runRemoteSearch]);
+  }, [autoRemote, queryKey, remoteEntry?.data, remoteEntry?.isLoading, remoteEntry?.error, remotePending, runRemoteSearch]);
 
   const handleSearchAll = React.useCallback(() => {
     setManualRemoteKey(queryKey);

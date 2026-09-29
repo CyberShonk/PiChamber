@@ -50,6 +50,8 @@ export const GitHubLinkPicker: React.FC<{
   const [searchError, setSearchError] = React.useState<string | null>(null);
   const [resolving, setResolving] = React.useState(false);
   const [attachingKey, setAttachingKey] = React.useState<string | null>(null);
+  // Sequence guard: only the latest search may update state, so a slower
+  // earlier response never overwrites newer results.
 
   React.useEffect(() => {
     if (!open || !github) return;
@@ -75,9 +77,12 @@ export const GitHubLinkPicker: React.FC<{
   // Direct `#123` / `owner/repo#123` / URL resolution against the scope.
   const direct = React.useMemo(() => parseGitHubLinkInput(query, scopeRepos), [query, scopeRepos]);
 
+  const searchSeqRef = React.useRef(0);
+
   const runSearch = React.useCallback(
     async (search: string, searchRepo: string, searchKind: 'issue' | 'pr') => {
       if (!github) return;
+      const seq = (searchSeqRef.current += 1);
       const trimmed = search.trim();
       const parsed = parseGitHubLinkInput(trimmed, scopeRepos);
       if (!trimmed || parsed.link || parsed.outOfScope) {
@@ -91,6 +96,7 @@ export const GitHubLinkPicker: React.FC<{
       try {
         if (searchKind === 'issue') {
           const page = await github.issuesList(directory, searchRepo, { state: 'all', q: trimmed });
+          if (searchSeqRef.current !== seq) return;
           setResults(
             page.items.slice(0, 60).map((item) => ({
               kind: 'issue' as const,
@@ -102,6 +108,7 @@ export const GitHubLinkPicker: React.FC<{
           );
         } else {
           const page = await github.pullsList(directory, searchRepo, { state: 'all', q: trimmed });
+          if (searchSeqRef.current !== seq) return;
           setResults(
             page.items.slice(0, 60).map((item) => ({
               kind: 'pr' as const,
@@ -113,18 +120,23 @@ export const GitHubLinkPicker: React.FC<{
           );
         }
       } catch (error) {
+        if (searchSeqRef.current !== seq) return;
         setResults([]);
         setSearchError(error instanceof Error ? error.message : 'Search failed');
       } finally {
-        setSearching(false);
+        if (searchSeqRef.current === seq) setSearching(false);
       }
     },
     [github, directory, scopeRepos],
   );
 
+  // Debounced (250 ms) so keystrokes never fetch per character.
   React.useEffect(() => {
     if (!open || !repo) return;
-    void runSearch(query, repo, kind);
+    const timer = setTimeout(() => {
+      void runSearch(query, repo, kind);
+    }, 250);
+    return () => clearTimeout(timer);
   }, [open, query, repo, kind, runSearch]);
 
   const resolveDirect = React.useCallback(async (): Promise<PickTarget | null> => {
