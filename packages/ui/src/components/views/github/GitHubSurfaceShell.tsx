@@ -107,7 +107,7 @@ export const GitHubSurfaceShell: React.FC<{
   if (!selectedRepo) {
     return (
       <div className="flex h-full flex-col">
-        <div className="flex shrink-0 items-center gap-2 border-b border-border px-2 py-1.5">
+        <div className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2">
           <RepositoryPicker
             entries={entries}
             value={selectedRepo}
@@ -126,7 +126,7 @@ export const GitHubSurfaceShell: React.FC<{
   return (
     <div className="flex h-full flex-col">
       {multiRepo ? (
-        <div className="flex shrink-0 items-center gap-2 border-b border-border px-2 py-1.5">
+        <div className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2">
           <RepositoryPicker
             entries={entries}
             value={selectedRepo}

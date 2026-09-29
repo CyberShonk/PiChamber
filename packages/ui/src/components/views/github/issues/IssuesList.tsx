@@ -16,7 +16,9 @@ import {
   GitHubRowLabels,
 } from '../GitHubRow';
 import type { IssuesFilters } from '@/stores/useGitHubIssuesStore';
+import type { GitHubHeaderActionsPresentation } from '../GitHubFiltersMenu';
 import { ISSUE_INVOLVEMENT_TABS, ISSUE_SORT_OPTIONS, ISSUE_STATE_TABS } from './issueLogic';
+import { useDeviceInfo } from '@/lib/device';
 
 const commentCountSignal = (count?: number): React.ReactNode => {
   if (typeof count !== 'number' || count === 0) return null;
@@ -58,6 +60,14 @@ export const IssuesList: React.FC<{
   onRetry: () => void;
   onOpen: (number: number) => void;
   onNewIssue: () => void;
+  /**
+   * Host header slot for the action controls (Refresh + New issue). When
+   * present, actions portal into it and the toolbar keeps search + filters
+   * only. Only passed while the list is shown.
+   */
+  headerActionsSlot?: HTMLElement | null;
+  /** Which header hosts the slot (`desktop` ContextPanel or `drawer` mobile/tablet). */
+  headerActionsPresentation?: GitHubHeaderActionsPresentation;
 }> = ({
   items,
   hasMore,
@@ -77,9 +87,61 @@ export const IssuesList: React.FC<{
   onRetry,
   onOpen,
   onNewIssue,
+  headerActionsSlot = null,
+  headerActionsPresentation = 'drawer',
 }) => {
   const isDefaultFilters =
     filters.state === 'open' && filters.involvement === 'all' && !filters.search.trim() && !filters.labels.trim();
+  const { isMobile, isTablet } = useDeviceInfo();
+  const isTouchIssues = isMobile || isTablet;
+  const hasHeaderSlot = headerActionsSlot != null;
+  const headerPresentation = headerActionsPresentation ?? 'drawer';
+  // The primary action is explicitly separate from the filter controls:
+  // the same node portals into the host header when a slot is provided
+  // (header sizing) and renders inline in the toolbar otherwise (toolbar
+  // sizing, as before). Desktop header matches the `h-8` panel buttons;
+  // drawer header uses `h-9` touch targets; both use `size-4` icons.
+  const primaryAction = hasHeaderSlot
+    ? headerPresentation === 'desktop'
+      ? (
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          onClick={onNewIssue}
+          aria-label="New issue"
+          title="New issue"
+        >
+          <Icon name="add" className="size-4" />
+          New issue
+        </Button>
+      )
+      : (
+        <Button
+          type="button"
+          variant="ghost"
+          size="default"
+          onClick={onNewIssue}
+          aria-label="New issue"
+          title="New issue"
+        >
+          <Icon name="add" className="size-4" />
+          New issue
+        </Button>
+      )
+    : (
+      <Button
+        type="button"
+        variant="ghost"
+        size={isTouchIssues ? "sm" : "xs"}
+        onClick={onNewIssue}
+        aria-label="New issue"
+        title="New issue"
+      >
+        <Icon name="add" className="size-3.5" />
+        New issue
+      </Button>
+    );
 
   const renderRow = React.useCallback((issue: GitHubIssueSummary) => (
     <li key={issue.number} role="listitem">
@@ -116,34 +178,24 @@ export const IssuesList: React.FC<{
       searchPlaceholder="Search issues, or label:bug"
       searchAriaLabel="Search issues"
       toolbarControls={
-        <>
-          <GitHubListMenus
-            stateValue={filters.state}
-            stateOptions={ISSUE_STATE_TABS.map((tab) => ({ id: tab.id, label: tab.label }))}
-            onStateChange={(id) => onFiltersChange({ state: id as IssuesFilters['state'] })}
-            involvementValue={filters.involvement}
-            involvementOptions={ISSUE_INVOLVEMENT_TABS.map((tab) => ({ id: tab.id, label: tab.label }))}
-            onInvolvementChange={(id) => onFiltersChange({ involvement: id as IssuesFilters['involvement'] })}
-            labelsValue={filters.labels}
-            onLabelsChange={(value) => onFiltersChange({ labels: value })}
-            sortValue={filters.sort}
-            sortOptions={ISSUE_SORT_OPTIONS.map((option) => ({ id: option.id, label: option.label }))}
-            onSortChange={(id) => onFiltersChange({ sort: id as IssuesFilters['sort'] })}
-            sortAriaLabel="Sort issues"
-          />
-          <Button
-            type="button"
-            variant="ghost"
-            size="xs"
-            onClick={onNewIssue}
-            aria-label="New issue"
-            title="New issue"
-          >
-            <Icon name="add" className="size-3.5" />
-            New issue
-          </Button>
-        </>
+        <GitHubListMenus
+          stateValue={filters.state}
+          stateOptions={ISSUE_STATE_TABS.map((tab) => ({ id: tab.id, label: tab.label }))}
+          onStateChange={(id) => onFiltersChange({ state: id as IssuesFilters['state'] })}
+          involvementValue={filters.involvement}
+          involvementOptions={ISSUE_INVOLVEMENT_TABS.map((tab) => ({ id: tab.id, label: tab.label }))}
+          onInvolvementChange={(id) => onFiltersChange({ involvement: id as IssuesFilters['involvement'] })}
+          labelsValue={filters.labels}
+          onLabelsChange={(value) => onFiltersChange({ labels: value })}
+          sortValue={filters.sort}
+          sortOptions={ISSUE_SORT_OPTIONS.map((option) => ({ id: option.id, label: option.label }))}
+          onSortChange={(id) => onFiltersChange({ sort: id as IssuesFilters['sort'] })}
+          sortAriaLabel="Sort issues"
+        />
       }
+      primaryAction={primaryAction}
+      headerActionsSlot={headerActionsSlot}
+      headerActionsPresentation={headerPresentation}
       isDefaultFilters={isDefaultFilters}
       stateLabel={ISSUE_STATE_TABS.find((tab) => tab.id === filters.state)?.label ?? filters.state}
       kindSingular="issue"

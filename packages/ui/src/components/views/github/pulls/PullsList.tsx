@@ -17,6 +17,7 @@ import {
   GitHubRowBranches,
 } from '../GitHubRow';
 import type { PullsFilters } from '@/stores/useGitHubPullRequestsStore';
+import type { GitHubHeaderActionsPresentation } from '../GitHubFiltersMenu';
 import { PULL_INVOLVEMENT_TABS, PULL_SORT_OPTIONS, PULL_STATE_TABS } from './pullLogic';
 import { selectPrChecksIndex, useGitHubPrStatusStore } from '@/stores/useGitHubPrStatusStore';
 
@@ -46,6 +47,14 @@ export const PullsList: React.FC<{
   onLoadMore: () => void;
   onRetry: () => void;
   onOpen: (number: number) => void;
+  /**
+   * Host header slot for the action controls (Refresh; PRs have no primary
+   * action). When present, actions portal into it and the toolbar keeps
+   * search + filters only. Only passed while the list is shown.
+   */
+  headerActionsSlot?: HTMLElement | null;
+  /** Which header hosts the slot (`desktop` ContextPanel or `drawer` mobile/tablet). */
+  headerActionsPresentation?: GitHubHeaderActionsPresentation;
 }> = ({
   items,
   hasMore,
@@ -65,6 +74,8 @@ export const PullsList: React.FC<{
   onLoadMore,
   onRetry,
   onOpen,
+  headerActionsSlot = null,
+  headerActionsPresentation = 'drawer',
 }) => {
   const isDefaultFilters = filters.state === 'open' && filters.involvement === 'all' && !filters.search.trim();
 
@@ -124,6 +135,8 @@ export const PullsList: React.FC<{
           sortAriaLabel="Sort pull requests"
         />
       }
+      headerActionsSlot={headerActionsSlot}
+      headerActionsPresentation={headerActionsPresentation}
       isDefaultFilters={isDefaultFilters}
       stateLabel={PULL_STATE_TABS.find((tab) => tab.id === filters.state)?.label ?? filters.state}
       kindSingular="pull request"

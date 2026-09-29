@@ -1,4 +1,5 @@
 import React from 'react';
+import { createPortal } from 'react-dom';
 import { formatGitHubRelativeTime } from './GitHubDetailScaffold';
 import {
   GitHubEmptyState,
@@ -15,6 +16,7 @@ import {
   GitHubFiltersMenu,
   GitHubRefreshButton,
   GitHubSortMenu,
+  type GitHubHeaderActionsPresentation,
 } from './GitHubFiltersMenu';
 import { GitHubUnavailableState, toUnavailableInfo } from './GitHubUnavailableState';
 import type { IconName } from '@/components/icon/icons';
@@ -53,8 +55,30 @@ export type GitHubListViewProps<TItem extends { number: number }> = {
   onSearchChange: (value: string) => void;
   searchPlaceholder: string;
   searchAriaLabel: string;
-  /** State/involvement (/labels) menus + sort + refresh + entity extras. */
+  /** State/involvement (/labels) menus + sort. Always stays inline in the list toolbar (second row). */
   toolbarControls: React.ReactNode;
+  /**
+   * Primary list action (e.g. New issue). Portals into `headerActionsSlot`
+   * with Refresh when a slot is provided; renders inline in the toolbar
+   * when no slot is provided (any other host).
+   */
+  primaryAction?: React.ReactNode;
+  /**
+   * Host header slot (TerminalView `terminalHeaderSlot` precedent). When
+   * present, the action controls (Refresh + `primaryAction`) portal into
+   * it and the toolbar keeps only search + `toolbarControls` (filters).
+   * When absent, actions render inline in the toolbar exactly as before.
+   * Only the list route passes a slot; detail/form routes unmount the
+   * list, so the portal unmounts and the header never shows list actions.
+   */
+  headerActionsSlot?: HTMLElement | null;
+  /**
+   * Which header hosts the slot: `desktop` (ContextPanel `h-10` header,
+   * ghost `h-8 w-8` buttons) or `drawer` (mobile/tablet
+   * `MobileSurfaceHeader` actions, ghost 36px touch targets). Defaults to
+   * `drawer`.
+   */
+  headerActionsPresentation?: GitHubHeaderActionsPresentation;
   /** True when no filter is active: empty state reads as "no items". */
   isDefaultFilters: boolean;
   /** Lowercase state label for the footer (`open`, `closed`, …). */
@@ -98,6 +122,9 @@ export const GitHubListView = <TItem extends { number: number }>({
   searchPlaceholder,
   searchAriaLabel,
   toolbarControls,
+  primaryAction,
+  headerActionsSlot = null,
+  headerActionsPresentation = 'drawer',
   isDefaultFilters,
   stateLabel,
   kindSingular,
@@ -135,11 +162,22 @@ export const GitHubListView = <TItem extends { number: number }>({
 
   const blockingError = Boolean(error) && items.length === 0;
   const firstLoad = !blockingError && isLoading && items.length === 0;
+  // Action controls (Refresh + primary) portal into the host header while
+  // the list is mounted. Filters/Sort always stay inline in the toolbar.
+  // The drawer keeps hidden tabs mounted, but each tab owns its slot, so a
+  // hidden tab's portal stays inside its own hidden header and never leaks
+  // into the visible tab. Hosts additionally gate the slot by visibility
+  // (terminal `terminalHeaderSlot={isActive ? slot : null}` precedent), and
+  // detail routes unmount this view entirely, which unmounts the portal
+  // and empties the header.
+  const headerSlot = headerActionsSlot ?? null;
+  const headerPresentation = headerActionsPresentation ?? 'drawer';
+  const isRefreshingNow = isRefreshing || isLoading;
 
   return (
     <div className="flex h-full min-h-0 flex-col">
       {stale ? <GitHubStaleBanner onRetry={onRetry} /> : null}
-      <div className="flex shrink-0 flex-wrap items-center gap-1.5 border-b border-border px-2 py-1.5">
+      <div className="flex shrink-0 flex-wrap items-center gap-1.5 border-b border-border px-3 py-2">
         <GitHubSearchInput
           value={searchValue}
           onChange={onSearchChange}
@@ -147,8 +185,22 @@ export const GitHubListView = <TItem extends { number: number }>({
           ariaLabel={searchAriaLabel}
         />
         {toolbarControls}
-        <GitHubRefreshButton isRefreshing={isRefreshing || isLoading} onRefresh={onRetry} />
+        {headerSlot ? null : (
+          <>
+            {primaryAction}
+            <GitHubRefreshButton isRefreshing={isRefreshingNow} onRefresh={onRetry} presentation="toolbar" />
+          </>
+        )}
       </div>
+      {headerSlot
+        ? createPortal(
+            <>
+              {primaryAction}
+              <GitHubRefreshButton isRefreshing={isRefreshingNow} onRefresh={onRetry} presentation={headerPresentation} />
+            </>,
+            headerSlot,
+          )
+        : null}
       {blockingError ? (
         <div className="min-h-0 flex-1 overflow-y-auto">
           <GitHubUnavailableState
@@ -175,7 +227,7 @@ export const GitHubListView = <TItem extends { number: number }>({
           ) : (
             <>
               {items.length > 0 ? (
-                <ul className="flex flex-col p-1.5">
+                <ul className="flex flex-col p-1">
                   {items.map((item) => (
                     <React.Fragment key={item.number}>{renderRow(item)}</React.Fragment>
                   ))}
@@ -219,7 +271,7 @@ export const GitHubListView = <TItem extends { number: number }>({
   );
 };
 
-/** Row toolbar for entity filter/sort menus (the refresh button lives in the view). */
+/** Row toolbar for entity filter/sort menus (always inline in the list toolbar; the action controls live in the view). */
 export const GitHubListMenus: React.FC<{
   stateValue: string;
   stateOptions: Array<{ id: string; label: string }>;

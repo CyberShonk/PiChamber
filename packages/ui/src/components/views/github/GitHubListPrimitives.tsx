@@ -84,7 +84,7 @@ export const GitHubListSkeleton: React.FC<{ rows?: number; label: string }> = ({
   const widths = ['w-3/5', 'w-2/5', 'w-1/2', 'w-2/3', 'w-2/5', 'w-3/5', 'w-1/2'];
   const metaWidths = ['w-2/5', 'w-1/3', 'w-2/5', 'w-1/4', 'w-1/3', 'w-2/5', 'w-1/3'];
   return (
-    <div role="status" aria-label={label} className="flex animate-pulse flex-col p-1.5">
+    <div role="status" aria-label={label} className="flex animate-pulse flex-col p-1">
       {Array.from({ length: rows }, (_, index) => (
         <div key={index} className="flex items-center gap-2 rounded-md px-2 py-2">
           <span aria-hidden="true" className="size-4 shrink-0 rounded-full bg-muted-foreground/15" />
@@ -219,7 +219,7 @@ export const GitHubRemoteSection: React.FC<{
           Searching GitHub…
         </p>
       ) : null}
-      {hasResults ? <div className="flex flex-col p-1.5 pt-0.5">{children}</div> : null}
+      {hasResults ? <div className="flex flex-col p-1 pt-0.5">{children}</div> : null}
       {!error && hasResults ? (
         <GitHubLoadMore hasMore={hasMore} isLoading={isLoadingMore} onLoadMore={onLoadMore} label="Load more results" />
       ) : null}
@@ -259,7 +259,7 @@ export const GitHubNumberJumpRow: React.FC<{
   onOpen: () => void;
 }> = ({ number, kindLabel, onOpen }) => {
   return (
-    <div className="flex flex-col p-1.5">
+    <div className="flex flex-col p-1">
       <button
         type="button"
         onClick={onOpen}

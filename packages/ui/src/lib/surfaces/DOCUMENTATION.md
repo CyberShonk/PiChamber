@@ -43,6 +43,11 @@ edge (`components/layout/ContextPanelRail.tsx`) and rendered by
    sanitizer whitelist in `sanitizeContextPanelTabs`).
 2. Register a descriptor here (icon, label, availability).
 3. Render the mode in `ContextPanel.tsx` (content dispatch, label, icon).
+   Surfaces whose list actions belong in the panel top header (terminal,
+   git, diff, pull-requests/issues) portal them into a header slot there
+   (a div with a ref callback into state, passed down gated by visibility
+   as `isActive ? slot : null`); the surface `createPortal`s into it only
+   while its list route is shown, so detail routes leave the slot empty.
 4. Provide direct user-facing `label` and `description` in the descriptor.
 
 No new header buttons: the rail and `openContextSurface` are the only entry

@@ -62,7 +62,32 @@ sections, and comment cards.
   `GitHubListView` (`GitHubListView.tsx`) owns the whole list chrome both
   entity lists share (toolbar, stale banner, blocking error/first-load
   branching, empty state, load more, remote section, incomplete notice,
-  footer); pulls/issues pass only row rendering, toolbar menus, and copy.
+  footer); pulls/issues pass only row rendering, filter menus, the primary
+  action, and copy. The list toolbar (second row, `border-b border-border
+  px-3 py-2`) always keeps search + filters (Filters dropdown, Sort).
+  `GitHubListView` takes an optional `primaryAction` (the primary list
+  action, e.g. New issue — explicitly separate from the filter controls)
+  and an optional `headerActionsSlot` plus `headerActionsPresentation`
+  (`desktop` ContextPanel header, `drawer` mobile/tablet header;
+  TerminalView `terminalHeaderSlot` precedent): when a host provides the
+  slot, the action controls (Refresh + `primaryAction`) portal into the
+  host top header row and the toolbar keeps only search + filters; when
+  absent (any other host) actions render inline in the toolbar exactly as
+  before. Pulls/issues pass the slot through as `headerActionsSlot` +
+  `headerActionsPresentation` (`PullRequestsSurface` / `IssuesSurface` →
+  `PullsList` / `IssuesList` → `GitHubListView`), and only while the list
+  is shown — detail/form routes unmount the list, so the portal unmounts
+  and the header never shows list actions. Hosts gate the slot by
+  visibility (`isActive ? slot : null`, terminal precedent). The desktop
+  `ContextPanel` hosts one `githubHeaderSlot` in its `h-10` header (icon +
+  title stay left, actions right-aligned before the panel buttons) with
+  `desktop` sizing (ghost `h-8 w-8` icon buttons, `size-4` icons; New issue
+  a ghost `h-8` text button). The mobile/tablet drawer
+  (`MobileWorkspaceDrawer`) hosts one slot per tab inside its
+  `MobileSurfaceHeader` actions with `drawer` sizing (ghost 36px `size-9`
+  icon buttons, `h-9` text button, `size-4` icons), so the keep-alive
+  hidden tab portals into its own hidden header and never leaks into the
+  visible tab.
   `useGitHubRemoteSearch` owns the remote-search state both surfaces share
   (auto search after ~400 ms idle, manual search-all, remote paging,
   number-jump parsing, local dedupe).
@@ -70,8 +95,13 @@ sections, and comment cards.
   pill) holding State/Involvement radio submenus (plus a Labels entry for
   issues — the separate labels input is gone, behavior preserved through
   `filters.labels`), `GitHubSortMenu` icon button, `GitHubRefreshButton`
-  icon button (spins while refreshing). Triggers use
-  `dropdownTriggerVariants`.
+  icon button (spins while refreshing). Filters/Sort triggers are borderless ghost
+  `Button`s (`h-8`, matching the search input, like the Git/Files header
+  controls) inline in the list toolbar. `GitHubRefreshButton` takes
+  `presentation`: `toolbar` renders the same ghost `h-8 w-8` inline, `desktop` renders a ghost `h-8 w-8`
+  icon button (`size-4` icon) for the ContextPanel header, `drawer`
+  renders a ghost 36px (`size="icon"`, `size-4` icon) button for the
+  mobile/tablet drawer header.
 - Detail scaffold (`GitHubDetailScaffold`): `formatGitHubRelativeTime`
   (short labels: `just now` / `{m}m ago` / `{h}h ago` / `{d}d ago` /
   `{w}w ago` / `{mo}mo ago` / `{y}y ago`),
@@ -124,7 +154,11 @@ sections, and comment cards.
   close/reopen follow-up runs through the shared `useCommentWithFollowUp`
   sequencing. Gating (hiding the form) stays with the caller.
 - `PullRequestsSurface`: pull-request list/detail surface (companion worker).
-  List toolbar (no title): search + Filters + Sort + refresh; rows per
+  List toolbar (no title): search + Filters + Sort always inline; the
+  action controls (Refresh — PRs have no primary action) portal into the
+  host top header row (`headerActionsSlot` + `headerActionsPresentation`)
+  while the list is shown, and render inline in the toolbar when no slot
+  is provided; rows per
   `GitHubRow`; footer counts; skeleton only on true first load of the
   needed collection(s). The list reads two wide collections (`open` +
   `closed`, perPage 100) and every view — state tab (merged split locally
@@ -185,7 +219,10 @@ sections, and comment cards.
   optimistic posting and rollback; actions and edits are permission-gated
   with reasons (`pullLogic.ts`), falling back to attempt-and-surface when
   permission resolution failed.
-- `IssuesSurface`: issues list (same toolbar + New issue ghost button,
+- `IssuesSurface`: issues list (same toolbar; New issue arrives as
+  `primaryAction` — explicitly separate from the filter controls — so it
+  portals into the host header with Refresh while Filters/Sort stay
+  inline in the toolbar,
   State/Involvement in Filters menu, labels via Filters Labels entry,
   cursor Load more per collection, last-known-first with the same 30 s
   stale-while-revalidate contract as pulls; local views add the labels
