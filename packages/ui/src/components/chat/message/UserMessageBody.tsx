@@ -189,13 +189,13 @@ export const UserMessageBody = React.memo(function UserMessageBody({
           <MessageRevertAction
             sessionId={sessionId ?? null}
             messageId={messageId}
-            size="user"
+            size="assistant"
           />
         ) : null}
         <MessageForkAction
           sessionId={sessionId ?? null}
           messageId={messageId}
-          size="user"
+          size="assistant"
         />
         {canCopyMessage && hasCopyableText && (
           <Tooltip>
@@ -205,7 +205,7 @@ export const UserMessageBody = React.memo(function UserMessageBody({
                 variant="ghost"
                 size="icon"
                 data-visible={copyHintVisible || isMessageCopied ? 'true' : undefined}
-                className="h-6 w-6 text-muted-foreground bg-transparent hover:text-foreground hover:!bg-transparent active:!bg-transparent focus-visible:!bg-transparent focus-visible:ring-2 focus-visible:ring-primary/50"
+                className="h-8 w-8 text-muted-foreground bg-transparent hover:text-foreground hover:!bg-transparent active:!bg-transparent focus-visible:!bg-transparent focus-visible:ring-2 focus-visible:ring-primary/50"
                 aria-label={'Copy message text'}
                 onPointerDown={(event) => event.stopPropagation()}
                 onClick={handleCopyButtonClick}
@@ -219,10 +219,10 @@ export const UserMessageBody = React.memo(function UserMessageBody({
                 {isMessageCopied ? (
                   <Icon
                     name="check"
-                    className="h-3 w-3 text-[color:var(--status-success)]"
+                    className="h-3.5 w-3.5 text-[color:var(--status-success)]"
                   />
                 ) : (
-                  <Icon name="file-copy" className="h-3 w-3" />
+                  <Icon name="file-copy" className="h-3.5 w-3.5" />
                 )}
               </Button>
             </TooltipTrigger>
