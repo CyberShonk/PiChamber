@@ -1,5 +1,6 @@
 import React from 'react';
 import { createPortal } from 'react-dom';
+import { motion } from 'motion/react';
 
 import { Icon } from '@/components/icon/Icon';
 import { ErrorBoundary } from '@/components/ui/ErrorBoundary';
@@ -88,6 +89,7 @@ export const MobileWorkspaceDrawer = React.memo(function MobileWorkspaceDrawer({
   }, [onClose]);
   const [entered, setEntered] = React.useState(false);
   const [visible, setVisible] = React.useState(open);
+  const selectionLayoutId = `mobile-workspace-tab-${React.useId()}`;
   const prefersReducedMotion = React.useMemo(() => {
     if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return false;
     return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -167,29 +169,58 @@ export const MobileWorkspaceDrawer = React.memo(function MobileWorkspaceDrawer({
   // GitHub tabs follow the same `github-repo` availability as the desktop
   // rail; the caller resolves it so this component stays presentation-only.
   const visibleTabs = getVisibleMobileWorkspaceTabs(githubTabsAvailable);
+  const tabTransition = prefersReducedMotion
+    ? { duration: 0 }
+    : { type: 'spring' as const, stiffness: 520, damping: 40, mass: 0.8 };
 
   const tabs = (
-    <div className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto" role="tablist" aria-label="Workspace" data-no-drawer-swipe="true">
+    <div className="flex min-w-0 flex-1 items-center gap-0.5 py-1 overflow-x-auto overflow-y-hidden scrollbar-none" role="tablist" aria-label="Workspace" data-no-drawer-swipe="true">
       {visibleTabs.map((item) => {
         const isActive = tab === item.id;
         return (
-          <button
+          <motion.button
             key={item.id}
+            layout="position"
+            transition={tabTransition}
             type="button"
             role="tab"
             aria-selected={isActive}
+            aria-label={item.label}
             onClick={() => onTabChange(item.id)}
             className={cn(
-              'flex min-h-[44px] min-w-0 flex-1 items-center justify-center gap-1 rounded-lg px-1.5 py-2 typography-ui-label transition-colors',
+              'relative flex min-h-[44px] items-center justify-center gap-1 rounded-lg py-2 typography-ui-label transition-colors',
               'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50',
+              // Inactive tabs are 44px icon targets; the active tab adds its
+              // label and sizes to it rather than filling the strip.
               isActive
-                ? 'bg-interactive-selection text-foreground'
-                : 'text-muted-foreground hover:bg-interactive-hover hover:text-foreground',
+                ? 'min-w-0 shrink px-2.5 text-foreground'
+                : 'size-11 shrink-0 text-muted-foreground hover:bg-interactive-hover hover:text-foreground',
             )}
           >
-            <Icon name={item.icon} className="size-5 shrink-0" />
-            <span className="truncate">{item.label}</span>
-          </button>
+            {isActive ? (
+              // Shared-layout pill glides between tabs; motion animates it
+              // with transforms only.
+              <motion.span
+                layoutId={selectionLayoutId}
+                transition={tabTransition}
+                className="absolute inset-0 bg-interactive-selection"
+                style={{ borderRadius: 8 }}
+                aria-hidden="true"
+              />
+            ) : null}
+            <Icon name={item.icon} className="relative size-5 shrink-0" />
+            {isActive ? (
+              <motion.span
+                key={item.id}
+                initial={prefersReducedMotion ? false : { opacity: 0, x: -4 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={tabTransition}
+                className="relative truncate"
+              >
+                {item.label}
+              </motion.span>
+            ) : null}
+          </motion.button>
         );
       })}
     </div>
@@ -197,6 +228,10 @@ export const MobileWorkspaceDrawer = React.memo(function MobileWorkspaceDrawer({
 
   const body = (
     <>
+      {/* The panel variant only renders in tablet layout, where the Header
+          already hosts the workspace switcher (tapping the active tab closes
+          the panel), so the strip would be a duplicate there. */}
+      {variant === 'panel' ? null : (
       <div className="flex h-[var(--oc-header-height,56px)] shrink-0 items-center gap-1 px-2">
         {tabs}
         <button
@@ -208,6 +243,7 @@ export const MobileWorkspaceDrawer = React.memo(function MobileWorkspaceDrawer({
           <Icon name="close" className="size-5" />
         </button>
       </div>
+      )}
       <div className="min-h-0 flex-1 overflow-hidden">
         {visitedTabs.has('changes') ? (
           <div
