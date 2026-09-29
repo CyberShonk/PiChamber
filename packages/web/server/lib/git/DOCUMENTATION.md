@@ -16,7 +16,8 @@ This module provides Git repository operations for the web server runtime, inclu
   own git configuration and credentials.
 - The only identity read is the read-only `getCurrentIdentity` (local
   `user.name`/`user.email`, falling back to global), served at
-  `GET /api/git/current-identity` for the Git view's commit-author line.
+  `GET /api/git/current-identity`. No client consumes that route; it is
+  retained server-side only.
 - The retired commit-author profiles feature (profile storage, credential
   discovery, the local-config writer, and the profile/global/discovery routes)
   was removed. Any previously saved profiles file (`git-identities.json`) and

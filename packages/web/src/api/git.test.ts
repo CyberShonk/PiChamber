@@ -40,7 +40,6 @@ vi.mock('@pichamber/ui/lib/gitApiHttp', () => ({
   renameBranch: vi.fn(),
   getGitLog: vi.fn(),
   getCommitFiles: vi.fn(),
-  getCurrentGitAuthor: vi.fn(),
   getRemotes: vi.fn(),
   rebase: vi.fn(),
   abortRebase: vi.fn(),

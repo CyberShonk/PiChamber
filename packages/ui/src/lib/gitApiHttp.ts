@@ -62,7 +62,6 @@ export {
   getCommitFileDiff,
   stash,
   stashPop,
-  getCurrentGitAuthor,
   getRemoteUrl,
   getRemotes,
   rebase,

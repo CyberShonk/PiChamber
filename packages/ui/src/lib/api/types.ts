@@ -290,16 +290,6 @@ export interface MergeConflictDetails {
   operation: 'merge' | 'rebase';
 }
 
-/**
- * Read-only commit author resolved from the user's own git config
- * (local user.name/user.email, falling back to global). PiChamber never
- * writes git config. Served by GET /api/git/current-identity.
- */
-export interface GitAuthorSummary {
-  userName: string | null;
-  userEmail: string | null;
-}
-
 export interface GitLogEntry {
   hash: string;
   date: string;
@@ -448,7 +438,6 @@ export interface GitAPI {
   getGitLog(directory: string, options?: GitLogOptions): Promise<GitLogResponse>;
   getCommitFiles(directory: string, hash: string): Promise<GitCommitFilesResponse>;
   getCommitFileDiff?(directory: string, hash: string, filePath: string, isBinary: boolean): Promise<CommitFileDiffResponse>;
-  getCurrentGitAuthor(directory: string): Promise<GitAuthorSummary | null>;
   getRemoteUrl?(directory: string, remote?: string): Promise<string | null>;
   getRemotes(directory: string): Promise<GitRemote[]>;
   rebase(directory: string, options: { onto: string }): Promise<GitRebaseResult>;
