@@ -249,6 +249,37 @@ describe('pagination cursors', () => {
     expect(short.nextCursor).toBe(null);
   });
 
+  it('issues pagination advances from the raw page when it contains pull requests', async () => {
+    const raw = [
+      {
+        number: 1, title: 'PR 1', html_url: '', state: 'open',
+        user: { login: 'octocat' }, labels: [], assignees: [], comments: 0,
+        created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-02T00:00:00Z', closed_at: null,
+        pull_request: {},
+      },
+      {
+        number: 2, title: 'Issue 2', html_url: '', state: 'open',
+        user: { login: 'octocat' }, labels: [], assignees: [], comments: 0,
+        created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-02T00:00:00Z', closed_at: null,
+      },
+      {
+        number: 3, title: 'Issue 3', html_url: '', state: 'open',
+        user: { login: 'octocat' }, labels: [], assignees: [], comments: 0,
+        created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-02T00:00:00Z', closed_at: null,
+      },
+    ];
+    const client = {
+      request: async (args) => {
+        if (args.operation === 'issue list') return { body: raw };
+        throw new Error(`unexpected ${args.operation}`);
+      },
+    };
+    const issues = createIssuesService({ client });
+    const page = await issues.listIssues(credential, repo, { perPage: 3 });
+    expect(page.items.map((item) => item.number)).toEqual([2, 3]);
+    expect(page.nextCursor).toBe('2');
+  });
+
   it('state=merged advances from the raw closed page so filtered-empty pages keep paging', async () => {
     const serviceFor = (items) => createPullsService({
       client: {

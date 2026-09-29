@@ -202,10 +202,13 @@ export const createIssuesService = ({ client, now = Date.now, resolveViewer = nu
           operation: 'issue list',
         });
         // The issues endpoint also returns pull requests; exclude them.
-        const items = (Array.isArray(response.body) ? response.body : [])
+        // The cursor follows the raw page (like pulls' merged filter), so a
+        // page containing PRs still advances instead of stalling.
+        const raw = Array.isArray(response.body) ? response.body : [];
+        const items = raw
           .filter((item) => !item.pull_request)
           .map(mapIssueSummary);
-        return { items, nextCursor: nextCursor(items, page, effectivePerPage) };
+        return { items, nextCursor: nextCursor(raw, page, effectivePerPage) };
       }
       const response = await client.request({
         credential,
@@ -221,7 +224,8 @@ export const createIssuesService = ({ client, now = Date.now, resolveViewer = nu
         },
         operation: 'issue search',
       });
-      const items = ((response.body?.items || [])
+      const rawItems = Array.isArray(response.body?.items) ? response.body.items : [];
+      const items = (rawItems
         .filter((item) => !item.pull_request)
         .map((item) => ({
           number: item.number,
@@ -236,7 +240,7 @@ export const createIssuesService = ({ client, now = Date.now, resolveViewer = nu
           updatedAt: item.updated_at || null,
           closedAt: item.closed_at || null,
         })));
-      return { items, nextCursor: nextCursor(items, page, effectivePerPage) };
+      return { items, nextCursor: nextCursor(rawItems, page, effectivePerPage) };
     };
     const { value, fetchedAt, stale } = await readWithStaleFallback(listCache, key, load);
     return { repo: { ...repo }, ...value, fetchedAt, ...(stale ? { stale: true } : {}) };
@@ -468,9 +472,10 @@ export const createIssuesService = ({ client, now = Date.now, resolveViewer = nu
 
   const invalidate = (credential = null, repo = null, number = null) => {
     const fingerprint = credential?.fingerprint || '';
-    for (const cache of [listCache, detailCache]) {
-      cache.invalidate(repoInvalidatePredicate({ fingerprint, repo, number }));
-    }
+    // List keys end with `:perPage`, so a number filter would never match;
+    // invalidate the repo's lists wholesale while scoping detail/comments.
+    listCache.invalidate(repoInvalidatePredicate({ fingerprint, repo }));
+    detailCache.invalidate(repoInvalidatePredicate({ fingerprint, repo, number }));
     commentsCache.invalidate(repoInvalidatePredicate({ fingerprint, repo, number, matchNumberInside: true }));
     metaCache.invalidate(repoInvalidatePredicate({ fingerprint, repo }));
   };
