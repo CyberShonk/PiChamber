@@ -44,7 +44,7 @@ export const PullCommentForm: React.FC<{
 }> = ({ directory, repo, number, github, pr, access, onCommented }) => {
   const addComment = useGitHubPullRequestsStore((state) => state.addComment);
   const performAction = useGitHubPullRequestsStore((state) => state.performAction);
-  const pendingStore = useGitHubPendingReviewStore();
+  const clearCommentDraft = useGitHubPendingReviewStore((state) => state.clearCommentDraft);
   const { draft, onDraftChange, flushDraft } = useDebouncedCommentDraft(repo, number);
   const { busy, error, submit } = useCommentWithFollowUp({
     postComment: (body) => addComment(directory, repo, number, body, github),
@@ -53,7 +53,7 @@ export const PullCommentForm: React.FC<{
     doneLabels: { close: 'Closed with comment', reopen: 'Reopened with comment' },
     afterPost: () => {
       onDraftChange('');
-      pendingStore.clearCommentDraft(repo, number);
+      clearCommentDraft(repo, number);
       onCommented();
     },
   });
@@ -108,7 +108,8 @@ const ReviewForm: React.FC<{
   textareaRef: React.Ref<HTMLTextAreaElement>;
   onSubmit: () => void;
 }> = ({ repo, number, verdicts, summary, verdict, pendingCount, busy, textareaRef, onSubmit }) => {
-  const pendingStore = useGitHubPendingReviewStore();
+  const setSummary = useGitHubPendingReviewStore((state) => state.setSummary);
+  const setVerdict = useGitHubPendingReviewStore((state) => state.setVerdict);
   const selected = verdicts.includes(verdict) ? verdict : verdicts[0] ?? 'comment';
   const submittable = canSubmitReview({ verdict: selected, summary, pendingCount });
 
@@ -121,7 +122,7 @@ const ReviewForm: React.FC<{
         placeholder="Summarize your review (optional)"
         aria-label="Review summary"
         disabled={busy}
-        onChange={(event) => pendingStore.setSummary(repo, number, event.target.value)}
+        onChange={(event) => setSummary(repo, number, event.target.value)}
         onKeyDown={(event) => {
           if (event.nativeEvent.isComposing) return;
           if (
@@ -143,7 +144,7 @@ const ReviewForm: React.FC<{
           <select
             value={selected}
             disabled={busy}
-            onChange={(event) => pendingStore.setVerdict(repo, number, event.target.value as PullReviewVerdict)}
+            onChange={(event) => setVerdict(repo, number, event.target.value as PullReviewVerdict)}
             aria-label="Review verdict"
             className="h-7 max-w-40 truncate rounded-md border border-border bg-[var(--surface-elevated)] px-1.5 typography-micro text-foreground"
           >
@@ -189,7 +190,9 @@ export const PullReviewControl: React.FC<{
   onReviewSubmitted?: () => void;
 }> = ({ directory, repo, number, github, access, size = 'sm', onReviewSubmitted }) => {
   const submitReviewAction = useGitHubPullRequestsStore((state) => state.submitReview);
-  const pendingStore = useGitHubPendingReviewStore();
+  const removeComments = useGitHubPendingReviewStore((state) => state.removeComments);
+  const clearSummary = useGitHubPendingReviewStore((state) => state.clearSummary);
+  const clearComments = useGitHubPendingReviewStore((state) => state.clearComments);
   const pendingComments = usePendingReviewComments(repo, number);
   const summary = usePendingReviewSummary(repo, number);
   const verdict = usePendingReviewVerdict(repo, number);
@@ -198,6 +201,9 @@ export const PullReviewControl: React.FC<{
   const reviewRef = React.useRef<HTMLTextAreaElement | null>(null);
 
   const verdicts = React.useMemo(() => allowedReviewVerdicts(access), [access]);
+  // The effective verdict is what ReviewForm shows: fall back to the first
+  // allowed verdict when the stored one is no longer permitted.
+  const effectiveVerdict = verdicts.includes(verdict) ? verdict : verdicts[0] ?? 'comment';
   const pendingCount = pendingComments.length;
   const reviewStarted = pendingCount > 0 || summary.trim().length > 0;
 
@@ -225,7 +231,7 @@ export const PullReviewControl: React.FC<{
         directory,
         repo,
         number,
-        { event: verdict, body: submittedSummary.trim() ? submittedSummary : undefined, comments },
+        { event: effectiveVerdict, body: submittedSummary.trim() ? submittedSummary : undefined, comments },
         github,
       );
       if (!result.ok) {
@@ -236,13 +242,13 @@ export const PullReviewControl: React.FC<{
       // More remarks may have arrived while the host accepted this snapshot:
       // remove only the submitted comments, and the summary only when it is
       // still the submitted text.
-      pendingStore.removeComments(
+      removeComments(
         repo,
         number,
         submittedComments.map((comment) => comment.id),
       );
-      pendingStore.clearSummary(repo, number, submittedSummary);
-      toast.success(verdict === 'approve' ? 'Pull request approved' : verdict === 'request-changes' ? 'Changes requested' : 'Review submitted');
+      clearSummary(repo, number, submittedSummary);
+      toast.success(effectiveVerdict === 'approve' ? 'Pull request approved' : effectiveVerdict === 'request-changes' ? 'Changes requested' : 'Review submitted');
       setOpen(false);
       onReviewSubmitted?.();
     } finally {
@@ -294,7 +300,7 @@ export const PullReviewControl: React.FC<{
                     aria-label="Discard pending line comments"
                     title="Discard pending line comments"
                     disabled={reviewBusy}
-                    onClick={() => pendingStore.clearComments(repo, number)}
+                    onClick={() => clearComments(repo, number)}
                     className="size-6"
                   >
                     <Icon name="delete-bin" className="size-3.5" />
@@ -317,7 +323,7 @@ export const PullReviewControl: React.FC<{
               number={number}
               verdicts={verdicts}
               summary={summary}
-              verdict={verdict}
+              verdict={effectiveVerdict}
               pendingCount={pendingCount}
               busy={reviewBusy}
               textareaRef={reviewRef}

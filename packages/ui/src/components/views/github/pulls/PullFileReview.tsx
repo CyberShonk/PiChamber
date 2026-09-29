@@ -322,7 +322,10 @@ const FileCardInner: React.FC<{
   onThreadsChanged: () => void;
 }> = ({ file, collapsed, onToggleCollapse, viewed, onToggleViewed, blobUrl, threads, directory, repo, number, github, access, onThreadsChanged }) => {
   const threadAction = useGitHubPullRequestsStore((state) => state.threadAction);
-  const pendingStore = useGitHubPendingReviewStore();
+  // Actions only (stable references): subscribing to the whole store would
+  // re-render every FileCard on each keystroke/draft change elsewhere.
+  const removePendingComment = useGitHubPendingReviewStore((state) => state.removeComment);
+  const addPendingComment = useGitHubPendingReviewStore((state) => state.addComment);
   const pendingComments = usePendingReviewComments(repo, number);
   const [draft, setDraft] = React.useState<DraftAnchor | null>(null);
   const [threadBusy, setThreadBusy] = React.useState(false);
@@ -502,7 +505,7 @@ const FileCardInner: React.FC<{
           <PendingReviewCommentCard
             key={pending.id}
             comment={pending}
-            onRemove={() => pendingStore.removeComment(repo, number, pending.id)}
+            onRemove={() => removePendingComment(repo, number, pending.id)}
           />
         ))}
         {annotation.metadata.draft ? (
@@ -514,7 +517,7 @@ const FileCardInner: React.FC<{
             onAddToReview={(body) => {
               const target = annotation.metadata.draft;
               if (!target) return;
-              pendingStore.addComment(repo, number, {
+              addPendingComment(repo, number, {
                 path: file.filename,
                 body,
                 line: target.realLine,
@@ -541,7 +544,7 @@ const FileCardInner: React.FC<{
         ) : null}
       </div>
     ),
-    [replyGate.allowed, replyGate.reason, resolveGate.allowed, resolveGate.reason, threadBusy, handleReply, handleToggleResolved, pendingStore, repo, number, file.filename, fileKey, sendingKey, directory, send],
+    [replyGate.allowed, replyGate.reason, resolveGate.allowed, resolveGate.reason, threadBusy, handleReply, handleToggleResolved, removePendingComment, addPendingComment, repo, number, file.filename, fileKey, sendingKey, directory, send],
   );
 
   return (

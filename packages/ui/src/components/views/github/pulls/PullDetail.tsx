@@ -143,25 +143,33 @@ const PullActionBar: React.FC<{
 }) => {
   const setMergeMethod = useGitHubPullRequestsStore((state) => state.setMergeMethod);
   const isOpen = pr.state === 'open';
-  const mergeGate = gatePullAction(mergeMethod, pr, access);
+  // The persisted method may be disallowed for this repo; fall back to the
+  // first allowed one so the user can still merge another way.
+  const allowedMergeMethods = PULL_MERGE_METHODS.filter((option) => gatePullAction(option.id, pr, access).allowed);
+  const effectiveMergeMethod = allowedMergeMethods.some((option) => option.id === mergeMethod)
+    ? mergeMethod
+    : (allowedMergeMethods[0]?.id ?? mergeMethod);
+  const mergeGate = gatePullAction(effectiveMergeMethod, pr, access);
   const readyGate = gatePullAction('ready', pr, access);
   const draftGate = gatePullAction('draft', pr, access);
   const closeGate = gatePullAction('close', pr, access);
   const reopenGate = gatePullAction('reopen', pr, access);
-  const selectedMerge = PULL_MERGE_METHODS.find((option) => option.id === mergeMethod) ?? PULL_MERGE_METHODS[0];
+  const selectedMerge = PULL_MERGE_METHODS.find((option) => option.id === effectiveMergeMethod) ?? PULL_MERGE_METHODS[0];
+  // The options trigger stays usable while any method is allowed.
+  const mergeMenuDisabled = allowedMergeMethods.length === 0 || acting;
 
   return (
     <div className="flex flex-wrap items-center gap-1.5 px-3 pt-1 pb-2" aria-label="Pull request actions">
       {isOpen && !pr.draft ? (
         <span role="group" aria-label="Merge pull request" className="inline-flex shrink-0 items-center gap-1">
           <GitHubConfirmActionButton
-            copy={pullActionConfirmCopy(mergeMethod, pr.base, pr.head)}
+            copy={pullActionConfirmCopy(effectiveMergeMethod, pr.base, pr.head)}
             busy={acting}
             disabled={!mergeGate.allowed}
             disabledReason={mergeGate.reason ?? `Merge via ${selectedMerge.label}`}
-            label={mergeMethod === 'merge' ? 'Merge pull request' : selectedMerge.label}
+            label={effectiveMergeMethod === 'merge' ? 'Merge pull request' : selectedMerge.label}
             icon={<Icon name="git-merge" className="size-3.5" aria-hidden="true" />}
-            onConfirm={() => onRun(mergeMethod)}
+            onConfirm={() => onRun(effectiveMergeMethod)}
           />
           <DropdownMenu modal={false}>
             <DropdownMenuTrigger asChild>
@@ -172,14 +180,14 @@ const PullActionBar: React.FC<{
                 className="shrink-0 px-1.5"
                 title="Merge options"
                 aria-label="Merge options"
-                disabled={!mergeGate.allowed || acting}
+                disabled={mergeMenuDisabled}
               >
                 <Icon name="arrow-down-s" className="size-3.5" />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start" className="w-72">
               <DropdownMenuRadioGroup
-                value={mergeMethod}
+                value={effectiveMergeMethod}
                 onValueChange={(value) => {
                   const method = value as PullMergeMethod;
                   onMergeMethodChange(method);
