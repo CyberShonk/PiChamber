@@ -32,7 +32,7 @@ export const PullsList: React.FC<{
   stale: boolean;
   error: { kind: string; message?: string } | null;
   filters: PullsFilters;
-  checksByNumber: Record<number, string | null>;
+  checksByUrl: Record<string, string | null>;
   /** False while the viewed collections still page: counts show a `+` suffix. */
   countComplete?: boolean;
   /** Honesty notice for incomplete collections with an active filter. */
@@ -55,7 +55,7 @@ export const PullsList: React.FC<{
   stale,
   error,
   filters,
-  checksByNumber,
+  checksByUrl,
   countComplete = true,
   incompleteNotice = null,
   remote = null,
@@ -72,7 +72,7 @@ export const PullsList: React.FC<{
     <li key={pr.number} role="listitem">
       <GitHubRow
         glyph={<GitHubStateGlyph kind="pr" state={pr.state} draft={pr.draft} />}
-        glyphBelow={<GitHubChecksGlyph state={checksByNumber[pr.number] ?? null} />}
+        glyphBelow={<GitHubChecksGlyph state={(pr.url ? checksByUrl[pr.url] : undefined) ?? null} />}
         number={`#${pr.number}`}
         title={pr.title}
         status={
@@ -94,7 +94,7 @@ export const PullsList: React.FC<{
         ariaLabel={`Open pull request #${pr.number} ${pr.title}`}
       />
     </li>
-  ), [checksByNumber, onOpen]);
+  ), [checksByUrl, onOpen]);
 
   return (
     <GitHubListView
@@ -149,18 +149,19 @@ export const PullsList: React.FC<{
 
 export const usePullsRowChecks = (
   items: GitHubPullRequestSummary[],
-): Record<number, string | null> => {
+): Record<string, string | null> => {
   // Row checks glyphs reuse the pr-status store's authoritative checks state
-  // through the shared per-number index (derived once per store change),
+  // through the shared per-URL index (derived once per store change),
   // so rows do O(rows) lookups instead of nested scans per render.
   const results = useGitHubPrStatusStore((state) => state.results);
   return React.useMemo(() => {
     const index = selectPrChecksIndex(results);
-    const checksByNumber: Record<number, string | null> = {};
+    const checksByUrl: Record<string, string | null> = {};
     for (const item of items) {
-      const state = index.get(item.number);
-      if (state !== undefined) checksByNumber[item.number] = state;
+      if (!item.url) continue;
+      const state = index.get(item.url);
+      if (state !== undefined) checksByUrl[item.url] = state;
     }
-    return checksByNumber;
+    return checksByUrl;
   }, [items, results]);
 };

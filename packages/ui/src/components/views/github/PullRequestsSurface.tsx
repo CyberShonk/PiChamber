@@ -175,7 +175,7 @@ const PullsContent: React.FC<{
     }),
     [index, filters.state, filters.involvement, filters.search, filters.sort, viewerLogin],
   );
-  const checksByNumber = usePullsRowChecks(items);
+  const checksByUrl = usePullsRowChecks(items);
 
   const relevantEntries = need === 'both' ? [openEntry, closedEntry] : [need === 'open' ? openEntry : closedEntry];
   const hasRelevantData = relevantEntries.some((entry) => entry?.data != null);
@@ -293,7 +293,7 @@ const PullsContent: React.FC<{
       stale={relevantStale}
       error={relevantError}
       filters={filters}
-      checksByNumber={checksByNumber}
+      checksByUrl={checksByUrl}
       countComplete={complete}
       incompleteNotice={incompleteSummary ? { summary: incompleteSummary, searching: remotePending, onSearchAll: handleSearchAll } : null}
       remote={remote}

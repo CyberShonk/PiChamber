@@ -87,6 +87,12 @@ const evictOldestBranches = (
     delete next[key];
     lastAccessByKey.delete(key);
     generationsByKey.delete(key);
+    // Clear the pending poll timer or it will fire and resurrect the key.
+    const timer = pollTimersByKey.get(key);
+    if (timer !== undefined) {
+      clearTimeout(timer);
+      pollTimersByKey.delete(key);
+    }
   }
   return next;
 };
@@ -105,6 +111,8 @@ const schedulePoll = (key: string, directory: string, branch: string, github?: G
   const delay = nextPollDelay(entry);
   const timer = setTimeout(() => {
     pollTimersByKey.delete(key);
+    // Never resurrect an evicted key: a timer firing after eviction is stale.
+    if (!useGitHubPrStatusStore.getState().results[key]) return;
     if (typeof document !== 'undefined' && document.hidden) {
       schedulePoll(key, directory, branch, github);
       return;
@@ -242,21 +250,22 @@ if (typeof window !== 'undefined') {
 }
 
 /**
- * Checks state by PR number, derived once per `results` change and shared by
- * all row consumers. Row hooks do O(rows) map lookups against this index
+ * Checks state by PR URL, derived once per `results` change and shared by
+ * all row consumers. Keyed by `url` because PR numbers collide across
+ * repositories. Row hooks do O(rows) map lookups against this index
  * instead of O(rows × status entries) nested scans per render.
  */
-let checksIndexCache: { results: Record<string, GitHubPrStatusEntry>; index: Map<number, string | null> } | null = null;
+let checksIndexCache: { results: Record<string, GitHubPrStatusEntry>; index: Map<string, string | null> } | null = null;
 
 export const selectPrChecksIndex = (
   results: Record<string, GitHubPrStatusEntry>,
-): Map<number, string | null> => {
+): Map<string, string | null> => {
   if (checksIndexCache && checksIndexCache.results === results) return checksIndexCache.index;
-  const index = new Map<number, string | null>();
+  const index = new Map<string, string | null>();
   for (const entry of Object.values(results)) {
-    const number = entry.pr?.number;
-    if (number == null || index.has(number)) continue;
-    index.set(number, entry.checks?.state ?? null);
+    const url = entry.pr?.url;
+    if (!url || index.has(url)) continue;
+    index.set(url, entry.checks?.state ?? null);
   }
   checksIndexCache = { results, index };
   return index;
