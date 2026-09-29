@@ -1,4 +1,5 @@
 import React from 'react';
+import { normalizeDirectoryPathKey } from '@/lib/directoryPathKey';
 import { useRuntimeAPIs } from '@/hooks/useRuntimeAPIs';
 import { useGitHubScopeStore, useGitHubSelectedRepo } from '@/stores/useGitHubScopeStore';
 import { useGitHubStatusStore } from '@/stores/useGitHubStatusStore';
@@ -28,7 +29,8 @@ export const GitHubSurfaceShell: React.FC<{
   const apis = useRuntimeAPIs();
   const github = apis.github ?? null;
 
-  const scopeEntry = useGitHubScopeStore((state) => state.entriesByDirectory[directory] ?? null);
+  // The store keys entries by the normalized directory; read with the same key.
+  const scopeEntry = useGitHubScopeStore((state) => state.entriesByDirectory[normalizeDirectoryPathKey(directory.trim())] ?? null);
   const ensureScope = useGitHubScopeStore((state) => state.ensureScope);
   const refreshScope = useGitHubScopeStore((state) => state.refreshScope);
   const setSelectedRepo = useGitHubScopeStore((state) => state.setSelectedRepo);

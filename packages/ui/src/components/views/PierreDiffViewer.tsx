@@ -530,7 +530,13 @@ export const PierreDiffViewer: React.FC<PierreDiffViewerProps> = ({
   // Roots whose line no longer carries an annotation are unmounted so
   // discarded cards do not leak React trees.
   useEffect(() => {
-    if (!lineAnnotations) return;
+    // No annotations: unmount/clear stale roots too, or discarded cards
+    // leak React trees once the list is cleared.
+    if (!lineAnnotations) {
+      for (const [, entry] of annotationRootsRef.current) entry.root.unmount();
+      annotationRootsRef.current.clear();
+      return;
+    }
     const live = new Set(lineAnnotations.map(annotationKeyOf));
     for (const [key, entry] of annotationRootsRef.current) {
       if (!live.has(key)) {
