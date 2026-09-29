@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg"
+     viewBox="0 0 100 100">
+  <g fill="none"
+     stroke="black"
+     stroke-linecap="round"
+     stroke-linejoin="round">
+    <path d="M50 3 91 27 50 51 9 27Z"
+          fill="black"
+          fill-opacity=".08"
+          stroke="none"/>
+    <path d="M9 27 50 51V97L9 73Z"
+          fill="black"
+          fill-opacity=".15"
+          stroke="none"/>
+    <path d="M50 51 91 27V73L50 97Z"
+          fill="black"
+          fill-opacity=".24"
+          stroke="none"/>
+    <path d="M50 3 91 27V73L50 97 9 73V27Z"
+          stroke-width="2.5"/>
+    <path d="M28 31H72 M38 31V68 M62 31V55C62 64 67 68 75 68"
+          stroke-width="6"/>
+  </g>
+</svg>
