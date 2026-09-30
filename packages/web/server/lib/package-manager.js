@@ -215,53 +215,178 @@ function getUniquePaths(paths) {
   return result;
 }
 
-function getCommandOutput(command, args) {
+function runSpawnSyncRequest({ command, args, timeout }) {
   try {
     const result = spawnSync(command, args, {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
-      timeout: 10000,
+      timeout,
       ...getSpawnSyncBaseOptions(),
     });
 
-    if (result.status !== 0) {
-      return null;
+    if (!result || result.status !== 0) {
+      return { status: result?.status ?? 1, stdout: '' };
     }
 
-    const stdout = result.stdout.trim();
-    return stdout || null;
+    const stdout = typeof result.stdout === 'string' ? result.stdout : '';
+    return { status: result.status, stdout };
   } catch {
-    return null;
+    return { status: 1, stdout: '' };
   }
 }
 
-function getGlobalBinDirs(pm) {
-  const pmCommand = resolvePackageManagerCommand(pm);
-  if (!isCommandAvailable(pmCommand)) {
+function runSpawnGeneratorSync(generator) {
+  let step = generator.next();
+  while (!step.done) {
+    step = generator.next(runSpawnSyncRequest(step.value));
+  }
+  return step.value;
+}
+
+function spawnAsyncRequest({ command, args, timeout }) {
+  return new Promise((resolve) => {
+    let child;
+    try {
+      // stderr is ignored so a chatty package manager cannot fill an unread pipe.
+      child = spawn(command, args, {
+        stdio: ['ignore', 'pipe', 'ignore'],
+        ...getSpawnSyncBaseOptions(),
+      });
+    } catch {
+      resolve({ status: 1, stdout: '' });
+      return;
+    }
+
+    if (!child || typeof child.on !== 'function') {
+      resolve({ status: 1, stdout: '' });
+      return;
+    }
+
+    let stdout = '';
+    let settled = false;
+    let timer = null;
+    const finish = (status) => {
+      if (settled) return;
+      settled = true;
+      if (timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
+      resolve({ status: typeof status === 'number' ? status : 1, stdout });
+    };
+
+    try {
+      if (timeout && timeout > 0) {
+        timer = setTimeout(() => {
+          try {
+            child.kill?.('SIGKILL');
+          } catch {
+          }
+          finish(1);
+        }, timeout);
+        try {
+          timer.unref?.();
+        } catch {
+        }
+      }
+
+      const stdoutStream = child.stdout;
+      if (stdoutStream && typeof stdoutStream.on === 'function') {
+        stdoutStream.setEncoding?.('utf8');
+        stdoutStream.on('data', (chunk) => {
+          try {
+            stdout += String(chunk);
+          } catch {
+          }
+        });
+      }
+      child.on('error', () => finish(1));
+      child.on('close', (code) => finish(typeof code === 'number' ? code : 1));
+    } catch {
+      finish(1);
+    }
+  });
+}
+
+async function runSpawnGeneratorAsync(generator) {
+  let step = generator.next();
+  while (!step.done) {
+    let result;
+    try {
+      result = await spawnAsyncRequest(step.value);
+    } catch {
+      result = { status: 1, stdout: '' };
+    }
+    step = generator.next(result);
+  }
+  return step.value;
+}
+
+function* getCommandOutputGen(command, args) {
+  let result;
+  try {
+    result = yield { command, args, timeout: 10000 };
+  } catch {
+    return null;
+  }
+  if (!result || result.status !== 0) {
+    return null;
+  }
+  const stdout = typeof result.stdout === 'string' ? result.stdout.trim() : '';
+  return stdout || null;
+}
+
+function getCommandOutput(command, args) {
+  return runSpawnGeneratorSync(getCommandOutputGen(command, args));
+}
+
+function* isCommandAvailableGen(command) {
+  let result;
+  try {
+    result = yield { command, args: ['--version'], timeout: 5000 };
+  } catch {
+    return false;
+  }
+  return !!result && result.status === 0;
+}
+
+function* resolvePackageManagerCommandGen(pm) {
+  const candidates = getPackageManagerCommandCandidates(pm);
+  for (const candidate of candidates) {
+    if (yield* isCommandAvailableGen(candidate)) {
+      return candidate;
+    }
+  }
+  return pm;
+}
+
+function* getGlobalBinDirsGen(pm) {
+  const pmCommand = yield* resolvePackageManagerCommandGen(pm);
+  if (!(yield* isCommandAvailableGen(pmCommand))) {
     return [];
   }
 
   const dirs = [];
   switch (pm) {
     case 'pnpm': {
-      const pnpmBin = getCommandOutput(pmCommand, ['bin', '-g']);
+      const pnpmBin = yield* getCommandOutputGen(pmCommand, ['bin', '-g']);
       if (pnpmBin) dirs.push(pnpmBin);
-      const pnpmPrefix = getCommandOutput(pmCommand, ['prefix', '-g']);
+      const pnpmPrefix = yield* getCommandOutputGen(pmCommand, ['prefix', '-g']);
       if (pnpmPrefix) dirs.push(process.platform === 'win32' ? pnpmPrefix : path.join(pnpmPrefix, 'bin'));
       break;
     }
     case 'yarn': {
-      const yarnBin = getCommandOutput(pmCommand, ['global', 'bin']);
+      const yarnBin = yield* getCommandOutputGen(pmCommand, ['global', 'bin']);
       if (yarnBin) dirs.push(yarnBin);
       break;
     }
     case 'bun': {
-      const bunBin = getCommandOutput(pmCommand, ['pm', 'bin', '-g']);
+      const bunBin = yield* getCommandOutputGen(pmCommand, ['pm', 'bin', '-g']);
       if (bunBin) dirs.push(bunBin);
       break;
     }
     default: {
-      const npmPrefix = getCommandOutput(pmCommand, ['prefix', '-g']);
+      const npmPrefix = yield* getCommandOutputGen(pmCommand, ['prefix', '-g']);
       if (npmPrefix) dirs.push(process.platform === 'win32' ? npmPrefix : path.join(npmPrefix, 'bin'));
       break;
     }
@@ -270,10 +395,14 @@ function getGlobalBinDirs(pm) {
   return getUniquePaths(dirs);
 }
 
-function getGlobalNodeModulesRoots(pm) {
+function getGlobalBinDirs(pm) {
+  return runSpawnGeneratorSync(getGlobalBinDirsGen(pm));
+}
+
+function* getGlobalNodeModulesRootsGen(pm) {
   try {
-    const pmCommand = resolvePackageManagerCommand(pm);
-    if (!isCommandAvailable(pmCommand)) {
+    const pmCommand = yield* resolvePackageManagerCommandGen(pm);
+    if (!(yield* isCommandAvailableGen(pmCommand))) {
       return [];
     }
 
@@ -281,19 +410,19 @@ function getGlobalNodeModulesRoots(pm) {
 
     switch (pm) {
       case 'pnpm': {
-        const pnpmRoot = getCommandOutput(pmCommand, ['root', '-g']);
+        const pnpmRoot = yield* getCommandOutputGen(pmCommand, ['root', '-g']);
         if (pnpmRoot) roots.push(pnpmRoot);
-        const pnpmPrefix = getCommandOutput(pmCommand, ['prefix', '-g']);
+        const pnpmPrefix = yield* getCommandOutputGen(pmCommand, ['prefix', '-g']);
         if (pnpmPrefix) roots.push(process.platform === 'win32' ? path.join(pnpmPrefix, 'node_modules') : path.join(pnpmPrefix, 'lib', 'node_modules'));
         break;
       }
       case 'yarn': {
-        const yarnDir = getCommandOutput(pmCommand, ['global', 'dir']);
+        const yarnDir = yield* getCommandOutputGen(pmCommand, ['global', 'dir']);
         if (yarnDir) roots.push(path.join(yarnDir, 'node_modules'));
         break;
       }
       case 'bun': {
-        const bunBinDir = getCommandOutput(pmCommand, ['pm', 'bin', '-g']);
+        const bunBinDir = yield* getCommandOutputGen(pmCommand, ['pm', 'bin', '-g']);
         if (bunBinDir) {
           roots.push(path.resolve(bunBinDir, '..', 'install', 'global', 'node_modules'));
           roots.push(path.resolve(bunBinDir, '..', '..', 'node_modules'));
@@ -302,9 +431,9 @@ function getGlobalNodeModulesRoots(pm) {
       }
       default:
       {
-        const npmRoot = getCommandOutput(pmCommand, ['root', '-g']);
+        const npmRoot = yield* getCommandOutputGen(pmCommand, ['root', '-g']);
         if (npmRoot) roots.push(npmRoot);
-        const npmPrefix = getCommandOutput(pmCommand, ['prefix', '-g']);
+        const npmPrefix = yield* getCommandOutputGen(pmCommand, ['prefix', '-g']);
         if (npmPrefix) roots.push(process.platform === 'win32' ? path.join(npmPrefix, 'node_modules') : path.join(npmPrefix, 'lib', 'node_modules'));
         break;
       }
@@ -316,9 +445,14 @@ function getGlobalNodeModulesRoots(pm) {
   }
 }
 
-function getOwnedPackagePathsFromGlobalBins(pm) {
+function getGlobalNodeModulesRoots(pm) {
+  return runSpawnGeneratorSync(getGlobalNodeModulesRootsGen(pm));
+}
+
+function* getOwnedPackagePathsFromGlobalBinsGen(pm) {
   const packagePaths = [];
-  for (const binDir of getGlobalBinDirs(pm)) {
+  const binDirs = yield* getGlobalBinDirsGen(pm);
+  for (const binDir of binDirs) {
     const binaryName = process.platform === 'win32' ? 'pichamber.cmd' : 'pichamber';
     const binaryPath = path.join(binDir, binaryName);
     if (!fs.existsSync(binaryPath)) continue;
@@ -333,15 +467,21 @@ function getOwnedPackagePathsFromGlobalBins(pm) {
   return getUniquePaths(packagePaths);
 }
 
+function getOwnedPackagePathsFromGlobalBins(pm) {
+  return runSpawnGeneratorSync(getOwnedPackagePathsFromGlobalBinsGen(pm));
+}
+
 function detectPackageManagerFromCurrentInstallPath() {
   return detectPackageManagerFromInstallPath(getCurrentPackagePath());
 }
 
-function packageManagerOwnsCurrentInstall(pm) {
+function* packageManagerOwnsCurrentInstallGen(pm) {
   const currentPackagePaths = getComparablePaths(getCurrentPackagePath());
+  const roots = yield* getGlobalNodeModulesRootsGen(pm);
+  const owned = yield* getOwnedPackagePathsFromGlobalBinsGen(pm);
   const candidatePackagePaths = [
-    ...getGlobalNodeModulesRoots(pm).map(getPackagePathForGlobalRoot),
-    ...getOwnedPackagePathsFromGlobalBins(pm),
+    ...roots.map(getPackagePathForGlobalRoot),
+    ...owned,
   ];
 
   for (const candidatePath of candidatePackagePaths) {
@@ -354,27 +494,39 @@ function packageManagerOwnsCurrentInstall(pm) {
   return false;
 }
 
-function detectionResult(packageManager, reason) {
+function packageManagerOwnsCurrentInstall(pm) {
+  return runSpawnGeneratorSync(packageManagerOwnsCurrentInstallGen(pm));
+}
+
+function* detectionResultGen(packageManager, reason) {
   return {
     packageManager,
     reason,
     packagePath: getCurrentPackagePath(),
-    packageManagerCommand: resolvePackageManagerCommand(packageManager),
-    globalNodeModulesRoot: getGlobalNodeModulesRoots(packageManager)[0] || null,
+    packageManagerCommand: yield* resolvePackageManagerCommandGen(packageManager),
+    globalNodeModulesRoot: (yield* getGlobalNodeModulesRootsGen(packageManager))[0] || null,
   };
 }
 
-function cacheTrustedDetection(packageManager, reason) {
-  cachedDetectedPm = packageManager;
-  return detectionResult(packageManager, reason);
+function detectionResult(packageManager, reason) {
+  return runSpawnGeneratorSync(detectionResultGen(packageManager, reason));
 }
 
-export function detectPackageManagerDetails() {
+function* cacheTrustedDetectionGen(packageManager, reason) {
+  cachedDetectedPm = packageManager;
+  return yield* detectionResultGen(packageManager, reason);
+}
+
+function cacheTrustedDetection(packageManager, reason) {
+  return runSpawnGeneratorSync(cacheTrustedDetectionGen(packageManager, reason));
+}
+
+function* detectPackageManagerDetailsGen() {
   // In desktop (Electron) runtime, package-manager detection is worthless —
   // the app ships as a .app bundle, not installed via npm/pnpm/yarn/bun, and
   // updates are handled by electron-updater. The detection path does up to a
-  // dozen spawnSync(pm, ['bin', '-g']) calls with 10s timeouts each; under
-  // the in-process server every one blocks the Electron main event loop and
+  // dozen spawn(pm, ['bin', '-g']) calls with 10s timeouts each; under
+  // the in-process server every sync one blocks the event loop and
   // manifests as a multi-second UI freeze. Short-circuit here.
   if (process.env.PICHAMBER_RUNTIME === 'desktop') {
     return {
@@ -391,29 +543,29 @@ export function detectPackageManagerDetails() {
         packageManager: cachedDetectedPm,
         reason: 'cached',
         packagePath: getCurrentPackagePath(),
-        packageManagerCommand: resolvePackageManagerCommand(cachedDetectedPm),
-        globalNodeModulesRoot: getGlobalNodeModulesRoots(cachedDetectedPm)[0] || null,
+        packageManagerCommand: yield* resolvePackageManagerCommandGen(cachedDetectedPm),
+        globalNodeModulesRoot: (yield* getGlobalNodeModulesRootsGen(cachedDetectedPm))[0] || null,
       };
   }
 
   const forcedPm = process.env.PICHAMBER_PACKAGE_MANAGER?.trim();
   if (forcedPm && UPDATE_PACKAGE_MANAGERS.has(forcedPm)) {
-    const forcedPmCommand = resolvePackageManagerCommand(forcedPm);
-    if (isCommandAvailable(forcedPmCommand)) {
-      return cacheTrustedDetection(forcedPm, 'forced-env');
+    const forcedPmCommand = yield* resolvePackageManagerCommandGen(forcedPm);
+    if (yield* isCommandAvailableGen(forcedPmCommand)) {
+      return yield* cacheTrustedDetectionGen(forcedPm, 'forced-env');
     }
   }
 
   // First prefer the package manager that demonstrably owns the current install.
   const installPathPm = detectPackageManagerFromCurrentInstallPath();
-  if (installPathPm && packageManagerOwnsCurrentInstall(installPathPm)) {
-    return cacheTrustedDetection(installPathPm, 'install-path-owner');
+  if (installPathPm && (yield* packageManagerOwnsCurrentInstallGen(installPathPm))) {
+    return yield* cacheTrustedDetectionGen(installPathPm, 'install-path-owner');
   }
 
   const ownershipCandidates = ['pnpm', 'yarn', 'bun', 'npm'];
   for (const candidate of ownershipCandidates) {
-    if (packageManagerOwnsCurrentInstall(candidate)) {
-      return cacheTrustedDetection(candidate, 'global-root-owner');
+    if (yield* packageManagerOwnsCurrentInstallGen(candidate)) {
+      return yield* cacheTrustedDetectionGen(candidate, 'global-root-owner');
     }
   }
 
@@ -445,29 +597,158 @@ export function detectPackageManagerDetails() {
   }
 
   // Validate the hint against package visibility, but only after ownership checks failed.
-  if (hintedPm && isCommandAvailable(resolvePackageManagerCommand(hintedPm)) && isPackageInstalledWith(hintedPm)) {
-    return detectionResult(hintedPm, 'hinted-visible-install');
-  }
-
-  const runtimePm = detectPackageManagerFromRuntimePath(process.execPath);
-  if (runtimePm && isCommandAvailable(resolvePackageManagerCommand(runtimePm)) && isPackageInstalledWith(runtimePm)) {
-    return detectionResult(runtimePm, 'runtime-visible-install');
-  }
-
-  const pmChecks = [
-    { name: 'pnpm', check: () => isCommandAvailable(resolvePackageManagerCommand('pnpm')) },
-    { name: 'yarn', check: () => isCommandAvailable(resolvePackageManagerCommand('yarn')) },
-    { name: 'bun', check: () => isCommandAvailable(resolvePackageManagerCommand('bun')) },
-    { name: 'npm', check: () => isCommandAvailable(resolvePackageManagerCommand('npm')) },
-  ];
-
-  for (const { name, check } of pmChecks) {
-    if (check() && isPackageInstalledWith(name)) {
-      return detectionResult(name, 'last-resort-visible-install');
+  if (hintedPm) {
+    const hintedCommand = yield* resolvePackageManagerCommandGen(hintedPm);
+    if ((yield* isCommandAvailableGen(hintedCommand)) && (yield* isPackageInstalledWithGen(hintedPm))) {
+      return yield* detectionResultGen(hintedPm, 'hinted-visible-install');
     }
   }
 
-  return detectionResult('npm', 'default-fallback');
+  const runtimePm = detectPackageManagerFromRuntimePath(process.execPath);
+  if (runtimePm) {
+    const runtimeCommand = yield* resolvePackageManagerCommandGen(runtimePm);
+    if ((yield* isCommandAvailableGen(runtimeCommand)) && (yield* isPackageInstalledWithGen(runtimePm))) {
+      return yield* detectionResultGen(runtimePm, 'runtime-visible-install');
+    }
+  }
+
+  const pmNames = ['pnpm', 'yarn', 'bun', 'npm'];
+  for (const name of pmNames) {
+    const candidateCommand = yield* resolvePackageManagerCommandGen(name);
+    if (!(yield* isCommandAvailableGen(candidateCommand))) continue;
+    if (yield* isPackageInstalledWithGen(name)) {
+      return yield* detectionResultGen(name, 'last-resort-visible-install');
+    }
+  }
+
+  return yield* detectionResultGen('npm', 'default-fallback');
+}
+
+let cachedAsyncDetectionDetails = null;
+let inFlightAsyncDetection = null;
+
+// The in-process PiChamber server must never block its event loop on
+// package-manager probing: the sync detection above fans out to dozens of
+// `spawnSync` calls (each with multi-second timeouts), which once stalled
+// every HTTP request for ~36s after UI boot. The async variant below reuses
+// the exact same generator decision logic with a non-blocking `spawn` driver,
+// memoizes the final details for the process lifetime (install ownership
+// cannot change while the server runs), and shares one in-flight detection
+// across concurrent update-checks.
+//
+// Detection normally runs as one child process (`package-manager-detect-child.js`)
+// so the server forks once; its sync probes then fork from that small child.
+// If the child cannot run or returns malformed output, the in-process async
+// generator driver is the fallback, so a detection failure never degrades to a
+// blocking path.
+const DETECTION_CHILD_PATH = path.join(__dirname, 'package-manager-detect-child.js');
+const DETECTION_CHILD_TIMEOUT_MS = 180000;
+
+function isDetectionDetails(value) {
+  return Boolean(value)
+    && typeof value === 'object'
+    && typeof value.packageManager === 'string'
+    && typeof value.reason === 'string';
+}
+
+function runDetectionChild() {
+  return new Promise((resolve) => {
+    if (!fs.existsSync(DETECTION_CHILD_PATH)) {
+      resolve(null);
+      return;
+    }
+    let child;
+    try {
+      child = spawn(process.execPath, [DETECTION_CHILD_PATH], {
+        stdio: ['ignore', 'pipe', 'ignore'],
+        env: { ...process.env, PICHAMBER_DETECT_INVOKED_PATH: process.argv?.[1] || '' },
+        ...getSpawnSyncBaseOptions(),
+      });
+    } catch {
+      resolve(null);
+      return;
+    }
+    if (!child || typeof child.on !== 'function') {
+      resolve(null);
+      return;
+    }
+
+    let stdout = '';
+    let settled = false;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(value);
+    };
+    const timer = setTimeout(() => {
+      try {
+        child.kill?.('SIGKILL');
+      } catch {
+      }
+      finish(null);
+    }, DETECTION_CHILD_TIMEOUT_MS);
+    timer.unref?.();
+
+    child.stdout?.setEncoding?.('utf8');
+    child.stdout?.on?.('data', (chunk) => {
+      stdout += String(chunk);
+    });
+    child.on('error', () => finish(null));
+    child.on('close', (code) => {
+      if (code !== 0) {
+        finish(null);
+        return;
+      }
+      try {
+        const parsed = JSON.parse(stdout);
+        finish(isDetectionDetails(parsed) ? parsed : null);
+      } catch {
+        finish(null);
+      }
+    });
+  });
+}
+
+async function detectPackageManagerDetailsOffThread() {
+  if (process.env.PICHAMBER_RUNTIME === 'desktop') {
+    return runSpawnGeneratorAsync(detectPackageManagerDetailsGen());
+  }
+  const fromChild = await runDetectionChild();
+  if (fromChild) {
+    if (TRUSTED_UPDATE_REASONS.has(fromChild.reason) && fromChild.reason !== 'cached') {
+      cachedDetectedPm = fromChild.packageManager;
+    }
+    return fromChild;
+  }
+  return runSpawnGeneratorAsync(detectPackageManagerDetailsGen());
+}
+
+export async function detectPackageManagerDetailsAsync() {
+  if (cachedAsyncDetectionDetails) return cachedAsyncDetectionDetails;
+  if (inFlightAsyncDetection) return inFlightAsyncDetection;
+  inFlightAsyncDetection = detectPackageManagerDetailsOffThread().then(
+    (details) => {
+      cachedAsyncDetectionDetails = details;
+      inFlightAsyncDetection = null;
+      return details;
+    },
+    (error) => {
+      inFlightAsyncDetection = null;
+      throw error;
+    },
+  );
+  return inFlightAsyncDetection;
+}
+
+export function resetPackageManagerDetectionCacheForTests() {
+  cachedDetectedPm = null;
+  cachedAsyncDetectionDetails = null;
+  inFlightAsyncDetection = null;
+}
+
+export function detectPackageManagerDetails() {
+  return runSpawnGeneratorSync(detectPackageManagerDetailsGen());
 }
 
 export function detectPackageManager() {
@@ -661,13 +942,7 @@ function getPackageManagerCommandCandidates(pm) {
 }
 
 function resolvePackageManagerCommand(pm) {
-  const candidates = getPackageManagerCommandCandidates(pm);
-  for (const candidate of candidates) {
-    if (isCommandAvailable(candidate)) {
-      return candidate;
-    }
-  }
-  return pm;
+  return runSpawnGeneratorSync(resolvePackageManagerCommandGen(pm));
 }
 
 function quoteCommand(command) {
@@ -680,22 +955,12 @@ function quoteCommand(command) {
 }
 
 function isCommandAvailable(command) {
-  try {
-    const result = spawnSync(command, ['--version'], {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-      timeout: 5000,
-      ...getSpawnSyncBaseOptions(),
-    });
-    return result.status === 0;
-  } catch {
-    return false;
-  }
+  return runSpawnGeneratorSync(isCommandAvailableGen(command));
 }
 
-function isPackageInstalledWith(pm) {
+function* isPackageInstalledWithGen(pm) {
   try {
-    const pmCommand = resolvePackageManagerCommand(pm);
+    const pmCommand = yield* resolvePackageManagerCommandGen(pm);
     let args;
     switch (pm) {
       case 'pnpm':
@@ -711,18 +976,22 @@ function isPackageInstalledWith(pm) {
         args = ['list', '-g', '--depth=0', PACKAGE_NAME];
     }
 
-    const result = spawnSync(pmCommand, args, {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-      timeout: 10000,
-      ...getSpawnSyncBaseOptions(),
-    });
+    let result;
+    try {
+      result = yield { command: pmCommand, args, timeout: 10000 };
+    } catch {
+      return false;
+    }
 
-    if (result.status !== 0) return false;
-    return result.stdout.includes(PACKAGE_NAME);
+    if (!result || result.status !== 0) return false;
+    return typeof result.stdout === 'string' && result.stdout.includes(PACKAGE_NAME);
   } catch {
     return false;
   }
+}
+
+function isPackageInstalledWith(pm) {
+  return runSpawnGeneratorSync(isPackageInstalledWithGen(pm));
 }
 
 /**
@@ -935,13 +1204,18 @@ async function fetchChangelogNotes(fromVersion, toVersion) {
 
 export async function checkForUpdates(options = {}) {
   const currentVersion = options.currentVersion || getCurrentVersion();
-  const pm = detectPackageManager();
+  const channel = normalizeServerUpdateChannel(options.channel);
   const appType = normalizeAppType(options.appType);
   const platform = normalizePlatform(options.platform);
-  const channel = normalizeServerUpdateChannel(options.channel);
-  const target = currentVersion === 'unknown'
-    ? null
-    : await getRegistryUpdateTarget(currentVersion, channel);
+  // Run package-manager detection concurrently with the registry lookup.
+  // Detection is non-blocking (memoized async spawn) so the in-process
+  // server event loop stays responsive to other requests while both settle.
+  const detectionPromise = detectPackageManagerDetailsAsync().catch(() => null);
+  const targetPromise = currentVersion === 'unknown'
+    ? Promise.resolve(null)
+    : getRegistryUpdateTarget(currentVersion, channel);
+  const [details, target] = await Promise.all([detectionPromise, targetPromise]);
+  const pm = details?.packageManager || 'npm';
   const latestVersion = target?.version;
 
   if (!latestVersion || currentVersion === 'unknown') {

@@ -1,3 +1,4 @@
+import { EventEmitter } from 'node:events';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Mock child_process so package-manager-detection does not hit real binaries.
@@ -9,6 +10,9 @@ vi.mock('node:child_process', () => ({
 const {
   checkForUpdates,
   detectPackageManager,
+  detectPackageManagerDetails,
+  detectPackageManagerDetailsAsync,
+  resetPackageManagerDetectionCacheForTests,
   detectSystemdServiceContext,
   executeUpdate,
   getCurrentVersion,
@@ -754,5 +758,110 @@ describe('resolveTrustedUpdatePackageManager', () => {
       packageManager: 'pnpm',
       reason: 'last-resort-visible-install',
     })).toBeNull();
+  });
+});
+
+describe('non-blocking package-manager detection', () => {
+  const fakeChild = (result) => {
+    const child = new EventEmitter();
+    child.stdout = new EventEmitter();
+    child.kill = vi.fn();
+    setTimeout(() => {
+      if (result.stdout) child.stdout.emit('data', result.stdout);
+      child.emit('close', result.status);
+    }, 0);
+    return child;
+  };
+
+  beforeEach(async () => {
+    resetPackageManagerDetectionCacheForTests();
+    const { spawn, spawnSync } = await import('node:child_process');
+    spawn.mockReset();
+    spawnSync.mockClear();
+  });
+
+  afterEach(async () => {
+    const { spawn } = await import('node:child_process');
+    spawn.mockReset();
+    resetPackageManagerDetectionCacheForTests();
+  });
+
+  it('reaches the same details as sync detection without spawnSync', async () => {
+    const { spawn, spawnSync } = await import('node:child_process');
+    spawn.mockImplementation((command, args) => fakeChild(spawnSync.getMockImplementation()(command, args)));
+    const expected = detectPackageManagerDetails();
+    spawnSync.mockClear();
+
+    const actual = await detectPackageManagerDetailsAsync();
+
+    expect(actual).toEqual(expected);
+    expect(spawnSync).not.toHaveBeenCalled();
+    expect(spawn).toHaveBeenCalled();
+  });
+
+  it('adopts the detection child result when it returns valid details', async () => {
+    const { spawn } = await import('node:child_process');
+    const childDetails = {
+      packageManager: 'pnpm',
+      reason: 'global-root-owner',
+      packagePath: '/opt/pnpm/global/node_modules/@pi-chamber/web',
+      packageManagerCommand: 'pnpm',
+      globalNodeModulesRoot: '/opt/pnpm/global/node_modules',
+    };
+    spawn.mockImplementation(() => fakeChild({ status: 0, stdout: JSON.stringify(childDetails) }));
+
+    expect(await detectPackageManagerDetailsAsync()).toEqual(childDetails);
+    expect(spawn).toHaveBeenCalledTimes(1);
+    expect(spawn.mock.calls[0][0]).toBe(process.execPath);
+    expect(String(spawn.mock.calls[0][1][0])).toContain('package-manager-detect-child.js');
+  });
+
+  it('falls back to in-process async probing when the child output is malformed', async () => {
+    const { spawn } = await import('node:child_process');
+    spawn.mockImplementation(() => fakeChild({ status: 0, stdout: 'not json' }));
+
+    expect(await detectPackageManagerDetailsAsync()).toMatchObject({ packageManager: 'npm' });
+    expect(spawn.mock.calls.length).toBeGreaterThan(1);
+  });
+
+  it('shares one detection across concurrent callers and memoizes the result', async () => {
+    const { spawn } = await import('node:child_process');
+    spawn.mockImplementation(() => fakeChild({ status: 1, stdout: '' }));
+
+    const [first, second] = await Promise.all([
+      detectPackageManagerDetailsAsync(),
+      detectPackageManagerDetailsAsync(),
+    ]);
+    const callsAfterFirst = spawn.mock.calls.length;
+    const third = await detectPackageManagerDetailsAsync();
+
+    expect(second).toBe(first);
+    expect(third).toBe(first);
+    expect(spawn.mock.calls.length).toBe(callsAfterFirst);
+  });
+
+  it('treats throwing or missing child processes as unavailable commands', async () => {
+    const { spawn } = await import('node:child_process');
+    spawn.mockImplementation(() => { throw new Error('ENOENT'); });
+    const thrown = await detectPackageManagerDetailsAsync();
+    expect(thrown).toMatchObject({ packageManager: 'npm', reason: 'default-fallback' });
+
+    resetPackageManagerDetectionCacheForTests();
+    spawn.mockImplementation(() => undefined);
+    const missing = await detectPackageManagerDetailsAsync();
+    expect(missing).toMatchObject({ packageManager: 'npm', reason: 'default-fallback' });
+  });
+
+  it('short-circuits the desktop runtime without spawning', async () => {
+    const { spawn } = await import('node:child_process');
+    const previous = process.env.PICHAMBER_RUNTIME;
+    process.env.PICHAMBER_RUNTIME = 'desktop';
+    try {
+      expect(await detectPackageManagerDetailsAsync()).toMatchObject({ packageManager: 'electron', reason: 'desktop-runtime' });
+      expect(spawn).not.toHaveBeenCalled();
+    } finally {
+      if (typeof previous === 'string') process.env.PICHAMBER_RUNTIME = previous;
+      else delete process.env.PICHAMBER_RUNTIME;
+    }
   });
 });
