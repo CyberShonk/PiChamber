@@ -193,6 +193,8 @@ mock.module('@/lib/runtime-fetch', () => ({
 
 mock.module('@/lib/persistence', () => ({
   updateDesktopSettings: mock(async () => undefined),
+  // No shared document: config defaults take their own request paths.
+  loadSharedSettingsDocument: mock(async () => null),
 }));
 
 mock.module('@/lib/startupTrace', () => ({

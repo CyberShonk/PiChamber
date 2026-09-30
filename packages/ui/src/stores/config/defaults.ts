@@ -3,6 +3,7 @@ import { parseModelIdentifier } from '@/lib/modelIdentifier';
 import { parsePiThinkingLevel } from '@/lib/pi/thinking';
 import { runtimeFetch } from '@/lib/runtime-fetch';
 import { markStartupTrace } from '@/lib/startupTrace';
+import { loadSharedSettingsDocument } from '@/lib/persistence';
 
 export interface PiChamberDefaults {
     defaultModel?: string;
@@ -62,6 +63,23 @@ const loadSidecarDefaults = async (): Promise<{
     }
 };
 
+const parseSettingsDefaults = (data: Record<string, unknown>): PiChamberDefaults => {
+    const defaultModel = typeof data.defaultModel === 'string' ? data.defaultModel.trim() : '';
+    const defaultVariant = typeof data.defaultVariant === 'string' ? data.defaultVariant.trim() : '';
+    const zenModel = typeof data.zenModel === 'string' ? data.zenModel.trim() : '';
+    const messageStreamTransport =
+        data.messageStreamTransport === 'ws' || data.messageStreamTransport === 'sse' || data.messageStreamTransport === 'auto'
+            ? data.messageStreamTransport
+            : undefined;
+    return {
+        defaultModel: defaultModel.length > 0 ? defaultModel : undefined,
+        defaultVariant: defaultVariant.length > 0 ? defaultVariant : undefined,
+        autoCreateWorktree: typeof data.autoCreateWorktree === 'boolean' ? data.autoCreateWorktree : undefined,
+        zenModel: zenModel.length > 0 ? zenModel : undefined,
+        messageStreamTransport,
+    };
+};
+
 export const fetchPiChamberDefaults = async (): Promise<PiChamberDefaults> => {
     markStartupTrace('config.defaults:start');
     const started = typeof performance !== 'undefined' ? performance.now() : Date.now();
@@ -87,6 +105,13 @@ export const fetchPiChamberDefaults = async (): Promise<PiChamberDefaults> => {
                 defaultThinkingByModel: sidecarDefaults.defaultThinkingByModel,
             });
         };
+
+        // 0. Shared settings GET (the same cached request `syncDesktopSettings`
+        //    makes at startup). Falls through to the direct paths on failure.
+        const shared = await loadSharedSettingsDocument().catch(() => null);
+        if (shared) {
+            return withSidecarModel('shared-settings', parseSettingsDefaults(shared));
+        }
 
         // 1. Runtime settings API (desktop/embedded surfaces)
         const runtimeSettings = getRegisteredRuntimeAPIs()?.settings;

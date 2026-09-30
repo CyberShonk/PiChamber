@@ -61,6 +61,13 @@ let _settingsCache: {
   at: number;
   context: SettingsRuntimeContext;
 } | null = null;
+// Raw document behind `_settingsCache`, always written and cleared with it.
+// Readers that need fields the sanitizer does not keep (e.g. config
+// defaults) share the same GET through `loadSharedSettingsDocument`.
+let _settingsRawCache: {
+  value: Record<string, unknown> | null;
+  context: SettingsRuntimeContext;
+} | null = null;
 let _settingsInflight: {
   promise: Promise<DesktopSettings | null>;
   context: SettingsRuntimeContext;
@@ -70,8 +77,147 @@ let _pendingSettingsContext: SettingsRuntimeContext | null = null;
 let _settingsFlushTimer: ReturnType<typeof setTimeout> | null = null;
 let _settingsFlushWaiters: Array<() => void> = [];
 let _settingsLifecycleInitialized = false;
-const SETTINGS_CACHE_TTL = 2_000; // 2 seconds — covers the startup burst
+// Settled successful GETs stay valid until a PUT from this client replaces
+// them with its full-document response (or invalidates them when that
+// response is missing/invalid) or a runtime endpoint change clears them.
+// The TTL only caps staleness
+// against other clients/processes writing the same files. Failures (null)
+// are never cached. `invalidateSettingsCache()` remains the explicit
+// force-refresh path (call it before a settings surface needs fresh values).
+const SETTINGS_CACHE_TTL = 30_000; // 30 seconds — covers the startup burst
 const SETTINGS_DEBOUNCE_MS = 200;
+
+// Authoritative "last synced" image for no-op write suppression.
+//
+// Contract: the image is the last successfully fetched settings document —
+// or the full document returned by a successful PUT — for the current
+// runtime. It is updated only on success: a failed GET leaves it unknown
+// (null) and a failed PUT leaves it untouched so a retry still sends. Two
+// mechanisms keep startup traffic minimal:
+//
+// - Initial-load gating. A flush with no image first awaits one authoritative
+//   load through the shared `fetchWebSettings` path, reusing the in-flight
+//   boot GET when there is one and starting it early when none has run yet
+//   (that GET would happen at boot anyway). Pending writes are snapshotted
+//   only after the wait, so the diff covers everything that arrived while
+//   waiting and a runtime switch mid-wait strands nothing. Boot-time echoes
+//   of server state therefore send zero PUTs. A failed or timed-out load
+//   (3 s cap) falls through and sends the patch exactly as before — unknown
+//   state never suppresses. The endpoint-change drain skips the gate so
+//   departing-runtime writes still complete against their captured owner.
+//   The wait never runs for `syncDesktopSettings` itself (it already holds
+//   the load result) and never blocks on a load started synchronously from
+//   inside the flush.
+// - PUT-response adoption. The server (`write()` in
+//   `packages/web/server/lib/pi/ui-settings-store.js`, served at
+//   `PUT /api/pi/ui-settings`) and the web `save()` transport both return the
+//   full merged settings document. A successful PUT therefore adopts its
+//   response as the new image and as a fresh GET cache entry (same TTL), so
+//   the next sync needs no refetch. A missing/invalid response falls back to
+//   merging the acknowledged patch into the image and invalidating the cache.
+//
+// Before sending a debounced PUT, pending keys deep-equal to the image are
+// no-ops: when nothing remains the flush is skipped but callers still resolve
+// and observe the same `saved` state as a successful save. Write ordering for
+// changed keys is unchanged — a partially changed patch is still sent whole,
+// matching the existing PUT contract. The image (and the
+// initial-load-succeeded marker below) reset on runtime endpoint change
+// alongside the GET cache, so one runtime's state never suppresses another's
+// writes; `invalidateSettingsCache()` still forces the next write out.
+//
+// Equality is strict per the server merge in
+// `packages/web/server/lib/pi/ui-settings-store.js` (`write()` spreads the
+// patch over the stored record and rewrites both JSON files): `undefined`
+// and `null` differ. `undefined` values are dropped by `JSON.stringify`, so
+// they delete the key on the next read, while `null` persists as a value. A
+// pending `null` against an absent key is therefore a real change and is
+// sent; a pending `undefined` against an absent key is already absent and is
+// a no-op.
+let _lastSyncedSettings: DesktopSettings | null = null;
+
+// True once a settings load has succeeded in the current runtime generation.
+// Separate from `_lastSyncedSettings` (which `invalidateSettingsCache()`
+// clears to force the next write out): a forced refresh must not trigger a
+// reload-and-suppress cycle in the next flush. Reset on runtime endpoint
+// change alongside the GET cache and the image.
+let _settingsInitialLoadSucceeded = false;
+
+// How long a flush with no synced image waits for the initial settings load
+// before giving up and sending the patch unsuppressed. Bounded so a hung GET
+// can delay but never deadlock a write; kept under the UI suite's per-test
+// timeout so the timeout path stays covered by tests.
+const SETTINGS_INITIAL_LOAD_TIMEOUT_MS = 3_000;
+
+// Synchronous reentrancy guard around the in-flight slot assignment in
+// `fetchWebSettings`. The load promise executor starts running before
+// `_settingsInflight` is assigned, so a flush triggered synchronously from
+// inside the load path must not wait on the load it is helping to start — it
+// sends as if no image existed.
+let _isStartingSettingsLoad = false;
+
+const isSettingsRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+const areSettingsValuesEqual = (left: unknown, right: unknown): boolean => {
+  if (Object.is(left, right)) return true;
+  if (Array.isArray(left) || Array.isArray(right)) {
+    if (!Array.isArray(left) || !Array.isArray(right)) return false;
+    return (
+      left.length === right.length &&
+      left.every((entry, index) => areSettingsValuesEqual(entry, right[index]))
+    );
+  }
+  if (isSettingsRecord(left) || isSettingsRecord(right)) {
+    if (!isSettingsRecord(left) || !isSettingsRecord(right)) return false;
+    // Match the JSON-file merge: keys with `undefined` values serialize away,
+    // so treat them as absent on both sides.
+    const leftEntries = Object.entries(left).filter(([, value]) => value !== undefined);
+    const rightEntries = Object.entries(right).filter(([, value]) => value !== undefined);
+    return (
+      leftEntries.length === rightEntries.length &&
+      leftEntries.every(([key, value]) => {
+        if (!Object.prototype.hasOwnProperty.call(right, key)) return false;
+        const other = right[key];
+        return other !== undefined && areSettingsValuesEqual(value, other);
+      })
+    );
+  }
+  return false;
+};
+
+const cloneSettingsSnapshot = (settings: DesktopSettings): DesktopSettings =>
+  JSON.parse(JSON.stringify(settings)) as DesktopSettings;
+
+const recordAcknowledgedSettings = (changes: Partial<DesktopSettings>): void => {
+  // Merge exactly what the server acknowledged into the image so a later
+  // identical write suppresses. Keys explicitly sent as `undefined` delete
+  // the stored key (see the JSON-file merge above), so drop them from the
+  // image too; everything else is cloned so later caller-side mutation of
+  // nested values cannot corrupt the baseline.
+  const merged: Record<string, unknown> = { ...(_lastSyncedSettings ?? {}) };
+  for (const [key, value] of Object.entries(changes)) {
+    if (value === undefined) {
+      delete merged[key];
+    } else {
+      const serialized = JSON.stringify(value);
+      merged[key] = serialized === undefined ? value : (JSON.parse(serialized) as unknown);
+    }
+  }
+  _lastSyncedSettings = merged as DesktopSettings;
+};
+
+const isPendingSettingsNoop = (changes: Partial<DesktopSettings>): boolean => {
+  if (!_lastSyncedSettings) return false;
+  const baseline = _lastSyncedSettings as Record<string, unknown>;
+  return Object.entries(changes).every(([key, value]) => {
+    if (!Object.prototype.hasOwnProperty.call(baseline, key)) {
+      // Absent baseline key: only `undefined` (already absent after the
+      // JSON-file merge) is a no-op. `null` persists as a value — send it.
+      return value === undefined;
+    }
+    return areSettingsValuesEqual(value, baseline[key]);
+  });
+};
 
 const captureSettingsRuntimeContext = (): SettingsRuntimeContext => ({
   runtimeKey: getRuntimeKey(),
@@ -97,15 +243,26 @@ const ensureSettingsRuntimeLifecycle = (): void => {
   subscribeRuntimeEndpointWillChange((detail) => {
     if (detail.runtimeKey === detail.previousRuntimeKey) return;
     if (_settingsFlushTimer) clearTimeout(_settingsFlushTimer);
-    if (_pendingSettingsChanges) void _flushSettingsUpdate();
+    // Drain against the captured (departing) owner: skip initial-load gating
+    // so the write completes instead of parking on a load the switch is
+    // about to invalidate.
+    if (_pendingSettingsChanges) void _flushSettingsUpdate({ skipInitialLoadGate: true });
   });
   subscribeRuntimeEndpointChanged((detail) => {
     if (detail.runtimeKey === detail.previousRuntimeKey) return;
     _settingsRuntimeGeneration += 1;
     _settingsCache = null;
+    _settingsRawCache = null;
     _settingsInflight = null;
+    _lastSyncedSettings = null;
+    _settingsInitialLoadSucceeded = false;
   });
 };
+
+const toRawSettingsDocument = (value: unknown): Record<string, unknown> | null =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
 
 const fetchWebSettings = async (
   context = captureSettingsRuntimeContext()
@@ -125,6 +282,9 @@ const fetchWebSettings = async (
   )
     return _settingsInflight.promise;
 
+  // See `_isStartingSettingsLoad`: mark the creation window before the
+  // promise executor below starts running.
+  _isStartingSettingsLoad = true;
   const inflight = {
     context,
     promise: (async (): Promise<DesktopSettings | null> => {
@@ -135,6 +295,9 @@ const fetchWebSettings = async (
           if (!isSettingsRuntimeContextCurrent(context)) return null;
           const settings = sanitizeWebSettings(result.settings);
           _settingsCache = { value: settings, at: Date.now(), context };
+          _settingsRawCache = { value: toRawSettingsDocument(result.settings), context };
+          _settingsInitialLoadSucceeded = true;
+          if (settings) _lastSyncedSettings = cloneSettingsSnapshot(settings);
           return settings;
         } catch (error) {
           if (!isSettingsRuntimeContextCurrent(context)) return null;
@@ -160,6 +323,9 @@ const fetchWebSettings = async (
         if (!isSettingsRuntimeContextCurrent(context)) return null;
         const settings = sanitizeWebSettings(data);
         _settingsCache = { value: settings, at: Date.now(), context };
+        _settingsRawCache = { value: toRawSettingsDocument(data), context };
+        _settingsInitialLoadSucceeded = true;
+        if (settings) _lastSyncedSettings = cloneSettingsSnapshot(settings);
         return settings;
       } catch (error) {
         if (!isSettingsRuntimeContextCurrent(context)) return null;
@@ -169,6 +335,7 @@ const fetchWebSettings = async (
     })(),
   };
   _settingsInflight = inflight;
+  _isStartingSettingsLoad = false;
   void inflight.promise.finally(() => {
     if (_settingsInflight === inflight) _settingsInflight = null;
   });
@@ -176,9 +343,29 @@ const fetchWebSettings = async (
   return inflight.promise;
 };
 
+/**
+ * Raw settings document from the shared startup GET (cache + in-flight
+ * dedupe, same runtime scoping as `syncDesktopSettings`). Returns null when
+ * the load failed; callers keep their own fallback. The returned object is
+ * shared — treat it as read-only.
+ */
+export const loadSharedSettingsDocument = async (): Promise<Record<string, unknown> | null> => {
+  const context = captureSettingsRuntimeContext();
+  const settings = await fetchWebSettings(context);
+  if (!settings) return null;
+  if (_settingsRawCache && isSameSettingsRuntimeContext(_settingsRawCache.context, context)) {
+    return _settingsRawCache.value;
+  }
+  return null;
+};
+
 /** Invalidate cached settings (call after a successful PUT) */
 export const invalidateSettingsCache = (): void => {
   _settingsCache = null;
+  _settingsRawCache = null;
+  // Force-refresh path: the next write must go out even if it echoes the
+  // last synced image, so drop the no-op suppression baseline too.
+  _lastSyncedSettings = null;
 };
 
 export const buildDraftStarterMigrationPatch = (
@@ -310,9 +497,84 @@ export const syncDesktopSettings = async (): Promise<void> => {
   }
 };
 
+const isFullSettingsResponse = (value: unknown): value is DesktopSettings =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+// Adopt a successful PUT response as the new synced image and GET cache
+// value. Both the server (`write()` in
+// `packages/web/server/lib/pi/ui-settings-store.js`) and the web `save()`
+// transport return the full merged settings document, so the next sync or
+// flush needs no refetch. A missing/invalid body falls back to merging the
+// acknowledged patch into the image and invalidating the cache.
+const recordSuccessfulPutResponse = (
+  updated: unknown,
+  changes: Partial<DesktopSettings>,
+  context: SettingsRuntimeContext
+): void => {
+  if (isFullSettingsResponse(updated)) {
+    _lastSyncedSettings = cloneSettingsSnapshot(updated);
+    _settingsCache = {
+      value: sanitizeWebSettings(updated),
+      at: Date.now(),
+      context,
+    };
+    _settingsRawCache = { value: toRawSettingsDocument(updated), context };
+    _settingsInitialLoadSucceeded = true;
+    return;
+  }
+  recordAcknowledgedSettings(changes);
+  _settingsCache = null;
+  _settingsRawCache = null;
+};
+
+// Await one authoritative load for a flush that has no synced image to diff
+// against. Goes through `fetchWebSettings` — never `syncDesktopSettings`,
+// whose migration path can itself enqueue a flush — so the load cannot
+// depend on this flush. Resolves (without throwing) when the load succeeds,
+// fails, or hits the timeout cap; callers fall through and send on anything
+// but a usable image.
+const awaitInitialSettingsForFlush = async (
+  context: SettingsRuntimeContext
+): Promise<void> => {
+  const timeout = new Promise<null>((resolve) => {
+    setTimeout(() => resolve(null), SETTINGS_INITIAL_LOAD_TIMEOUT_MS);
+  });
+  await Promise.race([fetchWebSettings(context).then(() => undefined), timeout]);
+};
+
 // Coalesce rapid updateDesktopSettings calls into a single PUT
-async function _flushSettingsUpdate(): Promise<void> {
-  const changes = _pendingSettingsChanges;
+async function _flushSettingsUpdate(
+  options: { skipInitialLoadGate?: boolean } = {}
+): Promise<void> {
+  // Initial-load gating (see the contract above): without a synced image a
+  // pending patch cannot be distinguished from an echo of server state (the
+  // startup double-PUT). Await one authoritative load first — reusing the
+  // in-flight boot GET when there is one, starting it early when none has
+  // run yet — then snapshot and diff against its image. Failure, timeout, or
+  // a runtime switch while waiting falls through to sending as today.
+  // Gating runs before snapshotting so a runtime switch while waiting
+  // strands nothing: everything stays queued for the endpoint-change drain.
+  if (
+    !options.skipInitialLoadGate &&
+    _pendingSettingsChanges &&
+    Object.keys(_pendingSettingsChanges).length > 0 &&
+    !_lastSyncedSettings &&
+    !_isStartingSettingsLoad
+  ) {
+    const gateContext =
+      _pendingSettingsContext ?? captureSettingsRuntimeContext();
+    const inflightForContext =
+      !!_settingsInflight &&
+      isSameSettingsRuntimeContext(_settingsInflight.context, gateContext);
+    if (
+      isSettingsRuntimeContextCurrent(gateContext) &&
+      (inflightForContext || !_settingsInitialLoadSucceeded)
+    ) {
+      await awaitInitialSettingsForFlush(gateContext);
+    }
+  }
+
+  const snapshot = _pendingSettingsChanges;
   const context = _pendingSettingsContext;
   const waiters = _settingsFlushWaiters;
   _pendingSettingsChanges = null;
@@ -321,11 +583,22 @@ async function _flushSettingsUpdate(): Promise<void> {
   _settingsFlushWaiters = [];
   try {
     if (
-      !changes ||
+      !snapshot ||
       !context ||
-      Object.keys(changes).length === 0 ||
+      Object.keys(snapshot).length === 0 ||
       !isSettingsRuntimeContextCurrent(context)
     ) {
+      dispatchSettingsSaveState('saved');
+      return;
+    }
+    const changes: Partial<DesktopSettings> = snapshot;
+    // Snapshotting after the initial-load wait already includes every patch
+    // that arrived while waiting, preserving write order like the debounce
+    // does — no separate merge step.
+
+    // Drop the network round trip when the whole patch echoes the last
+    // synced image, but resolve/dispatch exactly as a successful save would.
+    if (isPendingSettingsNoop(changes)) {
       dispatchSettingsSaveState('saved');
       return;
     }
@@ -336,9 +609,11 @@ async function _flushSettingsUpdate(): Promise<void> {
         const updated = await runtimeSettings.save(changes);
         if (!isSettingsRuntimeContextCurrent(context)) return;
         if (updated) {
+          // Snapshot the pristine response first: `applyDesktopUiPreferences`
+          // mutates it in place (drops the starter-migration sentinel).
+          recordSuccessfulPutResponse(updated, changes, context);
           applyDesktopUiPreferences(updated);
           dispatchSettingsSynced(updated);
-          _settingsCache = null;
         }
         dispatchSettingsSaveState(updated ? 'saved' : 'error');
         return;
@@ -382,11 +657,17 @@ async function _flushSettingsUpdate(): Promise<void> {
       )) as DesktopSettings | null;
       if (!isSettingsRuntimeContextCurrent(context)) return;
       if (updated) {
+        // Snapshot the pristine response first: `applyDesktopUiPreferences`
+        // mutates it in place (drops the starter-migration sentinel).
+        recordSuccessfulPutResponse(updated, changes, context);
         applyDesktopUiPreferences(updated);
         dispatchSettingsSynced(updated);
         dispatchSettingsSaveState('saved');
-        _settingsCache = null;
       } else {
+        // The write succeeded (HTTP 200) but the body is missing: merge the
+        // acknowledged patch and force a refetch, matching the
+        // invalid-body fallback. Dispatch stays 'error' as before.
+        recordSuccessfulPutResponse(updated, changes, context);
         dispatchSettingsSaveState('error');
       }
     } catch (error) {
@@ -415,7 +696,9 @@ export const updateDesktopSettings = async (
     !isSameSettingsRuntimeContext(_pendingSettingsContext, context)
   ) {
     if (_settingsFlushTimer) clearTimeout(_settingsFlushTimer);
-    void _flushSettingsUpdate();
+    // Owner change: drain against the captured context now, never park it
+    // behind the initial-load gate.
+    void _flushSettingsUpdate({ skipInitialLoadGate: true });
   }
 
   _pendingSettingsChanges = { ...(_pendingSettingsChanges ?? {}), ...changes };
@@ -429,7 +712,9 @@ export const updateDesktopSettings = async (
     _settingsFlushWaiters.push(resolve);
   });
   if (options.immediate) {
-    void _flushSettingsUpdate();
+    // Immediate writes (lifecycle stop, explicit saves) must go out now;
+    // only debounced background flushes wait for the initial load.
+    void _flushSettingsUpdate({ skipInitialLoadGate: true });
   } else {
     _settingsFlushTimer = setTimeout(
       () => void _flushSettingsUpdate(),
