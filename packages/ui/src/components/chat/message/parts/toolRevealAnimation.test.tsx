@@ -72,13 +72,23 @@ describe('tool arrival animation', () => {
     );
     expect(running).toContain('oc-shimmer-verb');
     expect(running).not.toContain('opacity-70');
-    // CSS owns the transparent fill — no inline transparent that could
-    // outlive the gradient (reduced-motion) or flash invisible on remount.
+    // CSS owns the base color — no inline transparent that could
+    // outlive the shimmer (reduced-motion) or flash invisible on remount.
     expect(running).not.toContain('color:transparent');
     const settled = renderToStaticMarkup(
       <MinDurationShineText active={false}>Read</MinDurationShineText>,
     );
     expect(settled).not.toContain('oc-shimmer-verb');
+    expect(settled).not.toContain('oc-shimmer-clip');
+  });
+
+  test('running verb highlight is a hidden CSS-drawn copy, never a second text node', () => {
+    const running = renderToStaticMarkup(
+      <MinDurationShineText active={true}>Read</MinDurationShineText>,
+    );
+    expect(running).toContain('<span aria-hidden="true" class="oc-shimmer-clip"><span class="oc-shimmer-band" data-shimmer-text="Read"></span></span>');
+    // The visible text appears exactly once, so copy/export/innerText are unchanged.
+    expect(running.replace(/<[^>]*>/g, '')).toBe('Read');
   });
 
   test('remount continuity: same running tool keeps the shimmer without flashing invisible', () => {
