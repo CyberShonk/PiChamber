@@ -29,6 +29,8 @@ import {
   getDirectoryCacheKey,
   getStatusCacheKey,
   getStatusCacheVersion,
+  getRepoCheckCacheVersion,
+  getWorktreesCacheVersion,
   invalidateGitStatusCache,
   invalidateGitRepoCheckCache,
   invalidateGitWorktreesCache,
@@ -49,6 +51,7 @@ export async function checkIsGitRepository(directory: string): Promise<boolean> 
   }
 
   const task = (async () => {
+    const cacheVersion = getRepoCheckCacheVersion(key);
     const response = await runtimeFetch(buildUrl(`${API_BASE}/check`, directory));
     if (!response.ok) {
       throw new Error(`Failed to check git repository: ${response.statusText}`);
@@ -57,10 +60,12 @@ export async function checkIsGitRepository(directory: string): Promise<boolean> 
     const isGitRepository = Boolean(data.isGitRepository);
     // Failures throw above and are never cached; a thrown `response.json()`
     // likewise leaves no entry, so failure never becomes "not a repo".
-    gitRepoCache.set(key, {
-      value: isGitRepository,
-      expiresAt: Date.now() + (isGitRepository ? GIT_REPO_CHECK_POSITIVE_TTL_MS : GIT_REPO_CHECK_NEGATIVE_TTL_MS),
-    });
+    if (getRepoCheckCacheVersion(key) === cacheVersion) {
+      gitRepoCache.set(key, {
+        value: isGitRepository,
+        expiresAt: Date.now() + (isGitRepository ? GIT_REPO_CHECK_POSITIVE_TTL_MS : GIT_REPO_CHECK_NEGATIVE_TTL_MS),
+      });
+    }
     return isGitRepository;
   })();
 
@@ -134,15 +139,20 @@ export async function listGitWorktrees(directory: string): Promise<GitWorktree[]
   }
 
   const task = (async () => {
+    const cacheVersion = getWorktreesCacheVersion(key);
     const response = await runtimeFetch(buildUrl(`${API_BASE}/worktrees`, directory));
     if (!response.ok) throw await readGitError(response, 'Failed to list git worktrees');
     const payload = await response.json() as { worktrees?: GitWorktree[] };
     if (!Array.isArray(payload.worktrees)) throw new Error('Git worktree response is invalid');
     // Failure throws above and is never cached as an empty topology.
-    gitWorktreesCache.set(key, {
-      value: payload.worktrees,
-      expiresAt: Date.now() + GIT_WORKTREES_CACHE_TTL_MS,
-    });
+    // A listing that raced a create/delete returns its topology to its own
+    // caller but must not cache it past the mutation's invalidation.
+    if (getWorktreesCacheVersion(key) === cacheVersion) {
+      gitWorktreesCache.set(key, {
+        value: payload.worktrees,
+        expiresAt: Date.now() + GIT_WORKTREES_CACHE_TTL_MS,
+      });
+    }
     return payload.worktrees;
   })();
 

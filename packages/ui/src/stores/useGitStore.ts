@@ -536,7 +536,9 @@ export const useGitStore = create<GitStore>()(
         const existing = inFlightLogQueryFetches.get(requestKey);
         if (existing) return existing;
 
-        const token = startRequest(directory, 'log-query');
+        // Channel per query: overlapping different queries for one directory
+        // (branch divider, graph) must not supersede each other's results.
+        const token = startRequest(directory, `log-query:${queryKey}`);
         const pending: Promise<GitLogResponse | null> = (async () => {
           try {
             const log = await git.getGitLog(directory, {

@@ -120,7 +120,7 @@ describe('modelMetadata idle scheduling', () => {
         expect(fetchCalls).toBe(1);
     });
 
-    test('failure does not masquerade as authoritative metadata and allows retry', async () => {
+    test('failure does not masquerade as authoritative metadata and retries after the cooldown', async () => {
         globalThis.fetch = (async () => {
             fetchCalls += 1;
             throw new Error('network down');
@@ -138,18 +138,51 @@ describe('modelMetadata idle scheduling', () => {
         expect(fetchCalls).toBe(1);
         expect(box.current).toBeNull();
 
-        // Retry allowed after failure.
+        // Render-driven triggers inside the cooldown do not restart the download.
+        ensureModelMetadataLoaded(get, set);
+        ensureModelMetadataLoaded(get, set);
+        await flush();
+        expect(fetchCalls).toBe(1);
+
+        // Retry allowed once the cooldown has passed.
         globalThis.fetch = (async () => {
             fetchCalls += 1;
             return new Response(JSON.stringify(MODELS_DEV_PAYLOAD), {
                 headers: { 'Content-Type': 'application/json' },
             });
         }) as typeof fetch;
-        ensureModelMetadataLoaded(get, set);
+        const originalNow = Date.now;
+        const failedAt = originalNow();
+        Date.now = () => failedAt + 30_001;
+        try {
+            ensureModelMetadataLoaded(get, set);
+        } finally {
+            Date.now = originalNow;
+        }
         await flush();
         await flush();
         expect(fetchCalls).toBe(2);
         expect(box.current?.size).toBe(1);
+    });
+
+    test('an empty models.dev response also starts the cooldown', async () => {
+        globalThis.fetch = (async () => {
+            fetchCalls += 1;
+            return new Response('{}', { headers: { 'Content-Type': 'application/json' } });
+        }) as typeof fetch;
+        const get = () => new Map<string, import('@/types').ModelMetadata>();
+        let setCalls = 0;
+        const set = () => {
+            setCalls += 1;
+        };
+
+        ensureModelMetadataLoaded(get, set);
+        await flush();
+        await flush();
+        ensureModelMetadataLoaded(get, set);
+        await flush();
+        expect(fetchCalls).toBe(1);
+        expect(setCalls).toBe(0);
     });
 
     test('falls back to setTimeout when requestIdleCallback is unavailable (Safari/WKWebView)', async () => {

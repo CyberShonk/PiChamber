@@ -185,6 +185,12 @@ const fetchModelsDevMetadata = async (): Promise<Map<string, ModelMetadata>> => 
 };
 
 let inFlight: Promise<Map<string, ModelMetadata>> | null = null;
+// Metadata reads during render (`getModelMetadata`) trigger the load, so a
+// failed download (offline, CSP/CORS block, 8 s abort) must not restart on
+// every render. After a failure, further triggers wait out this cooldown;
+// an explicit cache invalidation clears it.
+const MODEL_METADATA_FAILURE_COOLDOWN_MS = 30_000;
+let lastFailureAt: number | null = null;
 
 // Idle-deferred trigger so the ~424 KB models.dev download starts after
 // first paint instead of competing with startup requests and main-thread
@@ -235,16 +241,23 @@ export const ensureModelMetadataLoaded = (
   setMetadata: (metadata: Map<string, ModelMetadata>) => void,
 ): void => {
   if (getMetadata().size > 0 || inFlight) return;
+  if (lastFailureAt !== null && Date.now() - lastFailureAt < MODEL_METADATA_FAILURE_COOLDOWN_MS) return;
   markStartupTrace('modelsMetadata:queued');
   inFlight = measureStartupTrace('modelsMetadata', fetchModelsDevMetadata)
     .then((metadata) => {
       if (metadata.size > 0) {
+        lastFailureAt = null;
         markStartupTrace('modelsMetadata:set', { entries: metadata.size });
         setMetadata(metadata);
+      } else {
+        lastFailureAt = Date.now();
       }
       return metadata;
     })
-    .catch(() => new Map<string, ModelMetadata>())
+    .catch(() => {
+      lastFailureAt = Date.now();
+      return new Map<string, ModelMetadata>();
+    })
     .finally(() => {
       inFlight = null;
     });
@@ -252,6 +265,7 @@ export const ensureModelMetadataLoaded = (
 
 export const invalidateModelMetadataLoad = (): void => {
   inFlight = null;
+  lastFailureAt = null;
 };
 
 export const scheduleModelMetadataLoad = (
@@ -281,6 +295,7 @@ export const cancelScheduledModelMetadataLoadForTests = (): void => {
 /** Test-only: reset in-flight and scheduled state between suites. */
 export const resetModelMetadataForTests = (): void => {
   inFlight = null;
+  lastFailureAt = null;
   clearScheduledIdle();
 };
 

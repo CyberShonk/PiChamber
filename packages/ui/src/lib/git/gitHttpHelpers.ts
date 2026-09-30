@@ -17,8 +17,10 @@ export const gitStatusInFlight = new Map<string, Promise<GitStatus>>();
 export const gitStatusCacheVersions = new Map<string, number>();
 export const gitRepoCache = new Map<string, { value: boolean; expiresAt: number }>();
 export const gitRepoInFlight = new Map<string, Promise<boolean>>();
+export const gitRepoCacheVersions = new Map<string, number>();
 export const gitWorktreesCache = new Map<string, { value: GitWorktree[]; expiresAt: number }>();
 export const gitWorktreesInFlight = new Map<string, Promise<GitWorktree[]>>();
+export const gitWorktreesCacheVersions = new Map<string, number>();
 
 export const normalizeDirectoryKey = (directory: string): string => directory.trim();
 export const getDirectoryCacheKey = (runtimeKey: string, directory: string): string =>
@@ -40,14 +42,22 @@ export const invalidateGitStatusCache = (directory: string): void => {
   }
 };
 
+// Invalidation cannot cancel a running request, so each directory carries a
+// version: a request that started before an invalidation must not write its
+// pre-mutation answer back into the cache when it resolves.
+export const getRepoCheckCacheVersion = (key: string): number => gitRepoCacheVersions.get(key) ?? 0;
+export const getWorktreesCacheVersion = (key: string): number => gitWorktreesCacheVersions.get(key) ?? 0;
+
 export const invalidateGitRepoCheckCache = (directory: string): void => {
   const key = getDirectoryCacheKey(getRuntimeKey(), directory);
+  gitRepoCacheVersions.set(key, getRepoCheckCacheVersion(key) + 1);
   gitRepoCache.delete(key);
   gitRepoInFlight.delete(key);
 };
 
 export const invalidateGitWorktreesCache = (directory: string): void => {
   const key = getDirectoryCacheKey(getRuntimeKey(), directory);
+  gitWorktreesCacheVersions.set(key, getWorktreesCacheVersion(key) + 1);
   gitWorktreesCache.delete(key);
   gitWorktreesInFlight.delete(key);
 };
@@ -60,8 +70,10 @@ export const resetGitHttpCachesForRuntimeSwitch = (): void => {
   gitStatusCacheVersions.clear();
   gitRepoCache.clear();
   gitRepoInFlight.clear();
+  gitRepoCacheVersions.clear();
   gitWorktreesCache.clear();
   gitWorktreesInFlight.clear();
+  gitWorktreesCacheVersions.clear();
 };
 
 export function buildUrl(

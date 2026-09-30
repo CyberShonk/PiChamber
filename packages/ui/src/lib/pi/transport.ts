@@ -194,12 +194,9 @@ export interface PiRuntimeHealthResult {
  * - Recovery/reconnect probing inside this module bypasses with
  *   `{ fresh: true }`: the stream-epoch verification probes and the
  *   EventSource auth-classifier probe all pass it, because a stale `ready`
- *   would mask a restarted or unreachable daemon. Boot callers use the
- *   default memoized path. Note: the reconnect owner (`reconnect.ts`) still
- *   calls without `fresh` (outside this change's scope); its health check
- *   can observe a <=3 s old `ready`, but its follow-up `getSession` is
- *   authoritative and epoch-checked, and stream-epoch transitions are still
- *   verified by the fresh probes here, so recovery self-heals.
+ *   would mask a restarted or unreachable daemon. The reconnect owner
+ *   (`reconnect.ts`) also passes `{ fresh: true }`. Boot callers use the
+ *   default memoized path.
  */
 const PI_RUNTIME_HEALTH_MEMO_TTL_MS = 3_000;
 

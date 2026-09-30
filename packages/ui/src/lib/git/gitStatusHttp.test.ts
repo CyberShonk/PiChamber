@@ -300,3 +300,56 @@ describe('listGitWorktrees cache', () => {
     }
   });
 });
+
+describe('in-flight reads racing a mutation', () => {
+  const deferredFetch = () => {
+    const pending: Array<{ url: string; resolve: (response: Response) => void }> = [];
+    globalThis.fetch = ((input: RequestInfo | URL) =>
+      new Promise<Response>((resolve) => {
+        pending.push({ url: String(input), resolve });
+      })) as typeof fetch;
+    return pending;
+  };
+  // `runtimeFetch` resolves its URL asynchronously before calling fetch.
+  const waitForRequests = async (pending: unknown[], count: number) => {
+    for (let attempt = 0; attempt < 50 && pending.length < count; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    expect(pending).toHaveLength(count);
+  };
+
+  test('a listing that started before create does not cache the pre-create topology', async () => {
+    const pending = deferredFetch();
+    try {
+      const staleListing = listGitWorktrees('/repo-wt-race');
+      await waitForRequests(pending, 1);
+      invalidateGitWorktreesCache('/repo-wt-race');
+      pending[0]!.resolve(jsonResponse({ worktrees: [] }));
+      // The stale caller still receives its own answer.
+      expect(await staleListing).toEqual([]);
+      expect(gitWorktreesCache.has(getDirectoryCacheKey(getRuntimeKey(), '/repo-wt-race'))).toBe(false);
+
+      const fresh = listGitWorktrees('/repo-wt-race');
+      await waitForRequests(pending, 2);
+      const created = [{ path: '/work/new', branch: 'feature' }];
+      pending[1]!.resolve(jsonResponse({ worktrees: created }));
+      expect(await fresh).toEqual(created);
+    } finally {
+      afterEachRestore();
+    }
+  });
+
+  test('a repository check that started before invalidation is not cached', async () => {
+    const pending = deferredFetch();
+    try {
+      const staleCheck = checkIsGitRepository('/repo-check-race');
+      await waitForRequests(pending, 1);
+      invalidateGitRepoCheckCache('/repo-check-race');
+      pending[0]!.resolve(jsonResponse({ isGitRepository: false }));
+      expect(await staleCheck).toBe(false);
+      expect(gitRepoCache.has(getDirectoryCacheKey(getRuntimeKey(), '/repo-check-race'))).toBe(false);
+    } finally {
+      afterEachRestore();
+    }
+  });
+});

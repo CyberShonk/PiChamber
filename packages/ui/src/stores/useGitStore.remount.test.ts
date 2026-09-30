@@ -551,6 +551,26 @@ describe('useGitStore git remount costs', () => {
     expect(missing).toBeNull();
   });
 
+  test('overlapping different log queries for one directory both keep their results', async () => {
+    seedDirectory('/repo', { isGitRepo: true, status: createStatus() });
+    const rangeRequest = createDeferred<GitLogResponse>();
+    const graphRequest = createDeferred<GitLogResponse>();
+    const { git } = createCountingGit({
+      getGitLog: (_directory, options) => (options?.all ? graphRequest.promise : rangeRequest.promise),
+    });
+    const state = useGitStore.getState();
+
+    const range = state.fetchLogQuery('/repo', git, { from: 'main', to: 'HEAD', maxCount: 25 });
+    const graph = state.fetchLogQuery('/repo', git, { all: true, maxCount: 100 });
+    await tick();
+    // The earlier query resolves after the later one started.
+    const rangeLog = createLog(['range']);
+    rangeRequest.resolve(rangeLog);
+    graphRequest.resolve(createLog(['graph']));
+    expect(await range).toBe(rangeLog);
+    expect((await graph)?.total).toBe(1);
+  });
+
   test('runtime switch resets remotes and log query caches', async () => {
     const now = Date.now();
     seedDirectory('/repo', {

@@ -120,21 +120,7 @@ export const fetchPiChamberDefaults = async (): Promise<PiChamberDefaults> => {
                 const result = await runtimeSettings.load();
                 const data = result?.settings;
                 if (data) {
-                    const defaultModel = typeof data?.defaultModel === 'string' ? data.defaultModel.trim() : '';
-                    const defaultVariant = typeof data?.defaultVariant === 'string' ? data.defaultVariant.trim() : '';
-                    const zenModel = typeof data?.zenModel === 'string' ? data.zenModel.trim() : '';
-                    const messageStreamTransport =
-                        data?.messageStreamTransport === 'ws' || data?.messageStreamTransport === 'sse' || data?.messageStreamTransport === 'auto'
-                            ? data.messageStreamTransport
-                            : undefined;
-
-                    return withSidecarModel('runtime-settings', {
-                        defaultModel: defaultModel.length > 0 ? defaultModel : undefined,
-                        defaultVariant: defaultVariant.length > 0 ? defaultVariant : undefined,
-                        autoCreateWorktree: typeof data?.autoCreateWorktree === 'boolean' ? data.autoCreateWorktree : undefined,
-                        zenModel: zenModel.length > 0 ? zenModel : undefined,
-                        messageStreamTransport,
-                    });
+                    return withSidecarModel('runtime-settings', parseSettingsDefaults(data as Record<string, unknown>));
                 }
             } catch {
                 // Fall through to fetch
@@ -149,22 +135,11 @@ export const fetchPiChamberDefaults = async (): Promise<PiChamberDefaults> => {
         if (!response.ok) {
             return withSidecarModel('settings-route-not-ok', {});
         }
-        const data = await response.json();
-        const defaultModel = typeof data?.defaultModel === 'string' ? data.defaultModel.trim() : '';
-        const defaultVariant = typeof data?.defaultVariant === 'string' ? data.defaultVariant.trim() : '';
-        const zenModel = typeof data?.zenModel === 'string' ? data.zenModel.trim() : '';
-        const messageStreamTransport =
-            data?.messageStreamTransport === 'ws' || data?.messageStreamTransport === 'sse' || data?.messageStreamTransport === 'auto'
-                ? data.messageStreamTransport
-                : undefined;
-
-        return withSidecarModel('settings-route', {
-            defaultModel: defaultModel.length > 0 ? defaultModel : undefined,
-            defaultVariant: defaultVariant.length > 0 ? defaultVariant : undefined,
-            autoCreateWorktree: typeof data?.autoCreateWorktree === 'boolean' ? data.autoCreateWorktree : undefined,
-            zenModel: zenModel.length > 0 ? zenModel : undefined,
-            messageStreamTransport,
-        });
+        const data: unknown = await response.json();
+        return withSidecarModel(
+            'settings-route',
+            data && typeof data === 'object' && !Array.isArray(data) ? parseSettingsDefaults(data as Record<string, unknown>) : {},
+        );
     } catch (error) {
         markStartupTrace('config.defaults:error', { error: error instanceof Error ? error.message : String(error) });
         return finish('error', {});
