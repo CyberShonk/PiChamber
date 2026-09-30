@@ -32,7 +32,7 @@ import {
   type PiReducerState,
 } from './event-reducer';
 import type { PiSessionId, PiSessionLifecycleState } from './types';
-import type { PiSessionEvent, PiSessionListItem } from './protocol';
+import type { PiSessionEvent, PiSessionDetailResponse, PiSessionListItem } from './protocol';
 
 export type PiBootstrapPhase =
   | 'idle'
@@ -123,6 +123,12 @@ export interface PiBootstrapOptions {
   initialHealth?: Extract<PiBootstrapHealth, { state: 'ready' }>;
   /** Reuse a session list already obtained by the first-attach caller. */
   initialSessions?: readonly PiSessionListItem[];
+  /** Reuse an already-fetched session detail for `selectedSessionId`
+   *  instead of issuing `getSession`. Only the first-attach transcript
+   *  prefetch (or the existence-lookup detail for the same id) may supply
+   *  this; it runs through the same stamp validation as a fresh read, so
+   *  a stale-epoch response falls back to a fresh request below. */
+  initialDetail?: PiSessionDetailResponse;
   /** Optional bounded retry helper; defaults to no retry. */
   retry?: <T>(task: () => Promise<T>) => Promise<T>;
 }
@@ -249,7 +255,8 @@ export const bootstrapPiDirectory = async (
   if (options.selectedSessionId) {
     result.phase = 'session-hydrate';
     try {
-      const detail = await task(() => piClient.getSession(options.selectedSessionId as PiSessionId, {
+      const detail = options.initialDetail
+        ?? await task(() => piClient.getSession(options.selectedSessionId as PiSessionId, {
         ...options.scope,
         directory: options.directory,
         ...(options.runtimeKey ? { runtimeKey: options.runtimeKey } : {}),

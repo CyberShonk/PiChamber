@@ -220,6 +220,25 @@ export class PiSessionStore {
    *  ChatContainer `ensureHydrated`, and Strict Mode remounts share one
    *  request so overlapping opens cannot race the daemon runtime registry. */
   private hydrateInflightById = new Map<PiSessionId, Promise<void>>();
+  /** First-attach transcript prefetch, owned by the store. `open()` starts
+   *  one `getSession` for its known preferred session id up front, in
+   *  flight while `selectProject` → health → `listSessions` resolve, so
+   *  the existence lookup and the first hydrate can share that single
+   *  response instead of issuing their own requests. Single-use: every take
+   *  clears the field, and the entry is valid only for its recorded
+   *  session id, directory, runtime key, and runtime generation. Cleared
+   *  on runtime reset/switch, epoch change, focus change, and disposal.
+   *  Only `open()` starts or consumes it; every other caller keeps its
+   *  current fetch behavior. Reusing the response never skips validation:
+   *  generation, deletion-tombstone, and stream-epoch checks run at each
+   *  consumption point exactly as they would for a fresh request. */
+  private transcriptPrefetch: {
+    sessionId: PiSessionId;
+    directory: string;
+    runtimeKey: string;
+    generation: number;
+    promise: Promise<Awaited<ReturnType<typeof piClient.getSession>>>;
+  } | null = null;
   /** Older-message page requests share one in-flight request per session. */
   private historyInflightById = new Map<PiSessionId, Promise<boolean>>();
   /** Per-session navigation generation. Bumped on every `navigate` so a stale
@@ -400,6 +419,9 @@ export class PiSessionStore {
     this.restoringTranscriptById.clear();
     this.hydrateInflightById.clear();
     this.historyInflightById.clear();
+    // A pre-epoch response belongs to a retired sequence space; it must
+    // not be consumed by the recovery reads on the new lifetime.
+    this.clearTranscriptPrefetch();
     // Stale history completions reject through navigation generation too.
     for (const [id, gen] of this.navigationGenerationById) this.navigationGenerationById.set(id, gen + 1);
     this.settleCarriedOverActivity();
@@ -856,6 +878,10 @@ export class PiSessionStore {
     this.restoringTranscriptById.clear();
     this.hydrateInflightById.clear();
     this.historyInflightById.clear();
+    // The outgoing runtime's daemon (and its stream lifetime) no longer
+    // applies; the incoming runtime establishes a fresh epoch. Its
+    // prefetched transcript must not survive the switch either.
+    this.clearTranscriptPrefetch();
     this.cadence.dispose();
     this.stream?.dispose();
     this.stream = null;
@@ -1208,6 +1234,8 @@ export class PiSessionStore {
     this.focusGeneration = expected;
     this.pendingFocus = null;
     this.pendingPreferredSessionId = null;
+    // No session is in flight here, so no prefetch may survive either.
+    this.clearTranscriptPrefetch();
     this.state = {
       ...this.state,
       directory: null,
@@ -1331,6 +1359,10 @@ export class PiSessionStore {
     const selectionAtStart = this.selectionRevision;
     this.pendingFocus = { directory: nextDirectory, expected, preferredSessionId: desiredSessionId };
     this.pendingPreferredSessionId = desiredSessionId;
+    // Folder focus never consumes the first-attach prefetch: an entry
+    // from a previous `open()` generation belongs to another attach and
+    // must not survive the focus change.
+    this.clearTranscriptPrefetch();
     const warmAlready = !!desiredSessionId && this.hydratedSessionIds.has(desiredSessionId);
     this.state = {
       ...this.state,
@@ -1554,6 +1586,61 @@ export class PiSessionStore {
     }
   }
 
+  /** Start the first-attach transcript prefetch for a known preferred
+   *  session id. The request runs while `selectProject` → health →
+   *  `listSessions` resolve; later `open()` steps reuse the in-flight
+   *  response instead of issuing a second `getSession`. A sidecar no-op
+   *  catch keeps an unconsumed rejection from surfacing as an unhandled
+   *  promise rejection; consumers still observe the original outcome. */
+  private startTranscriptPrefetch(sessionId: PiSessionId, directory: string, runtimeKey: string, generation: number): void {
+    if (!sessionId || this.isDeleted(sessionId)) return;
+    const promise = piClient.getSession(sessionId, { directory, runtimeKey });
+    void promise.catch(() => undefined);
+    this.transcriptPrefetch = { sessionId, directory, runtimeKey, generation, promise };
+  }
+  private clearTranscriptPrefetch(): void {
+    this.transcriptPrefetch = null;
+  }
+  /** Take the prefetch for single-use consumption. Returns the in-flight
+   *  promise only when every recorded coordinate still matches; clears
+   *  the field on every call so a second consumer always falls back to a
+   *  fresh request. Rejection propagates to the taker, which handles it
+   *  exactly as if its own request had failed there. */
+  private takeTranscriptPrefetch(
+    sessionId: PiSessionId,
+    directory: string,
+    runtimeKey: string,
+    generation: number,
+  ): Promise<Awaited<ReturnType<typeof piClient.getSession>>> | null {
+    const current = this.transcriptPrefetch;
+    this.transcriptPrefetch = null;
+    if (!current) return null;
+    if (current.generation !== generation) return null;
+    if (current.sessionId !== sessionId) return null;
+    if (current.directory !== directory || current.runtimeKey !== runtimeKey) return null;
+    if (this.isDeleted(sessionId)) return null;
+    return current.promise;
+  }
+  /** Await the prefetch for hydrate. A rejection or stale generation
+   *  yields `undefined` so hydrate falls back to a fresh request exactly
+   *  as it would had its own fetch failed. */
+  private async consumeTranscriptPrefetch(
+    sessionId: PiSessionId,
+    directory: string,
+    runtimeKey: string,
+    generation: number,
+  ): Promise<Awaited<ReturnType<typeof piClient.getSession>> | undefined> {
+    const pending = this.takeTranscriptPrefetch(sessionId, directory, runtimeKey, generation);
+    if (!pending) return undefined;
+    try {
+      const detail = await pending;
+      if (generation !== this.runtimeGeneration) return undefined;
+      return detail;
+    } catch {
+      return undefined;
+    }
+  }
+
   async open(directory: string, preferredSessionId?: PiSessionId | null): Promise<void> {
     // First-attach / runtime-switch bootstrap path. If the cluster already
     // covers the connected runtime (stream up OR `connection: 'ready'`
@@ -1615,6 +1702,10 @@ export class PiSessionStore {
     this.restoringTranscriptById.clear();
     this.hydrateInflightById.clear();
     this.historyInflightById.clear();
+    // A newer first attach supersedes any prefetch the previous
+    // generation left unconsumed; the take-time generation check would
+    // reject it, but drop it here so no stale entry lingers.
+    this.clearTranscriptPrefetch();
     this.cadence.dispose();
     this.stream?.dispose(); this.stream = null;
     this.state = {
@@ -1634,6 +1725,13 @@ export class PiSessionStore {
     this.emitChrome();
     const runtimeKey = getRuntimeKey();
     const baseline = this.state.catalog;
+    // The transcript fetch does not depend on project selection, health,
+    // or the list when the preferred session id is already known: start
+    // it now so it flies while the serial bootstrap below resolves. The
+    // existence lookup and hydrate consume this same in-flight response.
+    if (this.pendingPreferredSessionId) {
+      this.startTranscriptPrefetch(this.pendingPreferredSessionId, directory, runtimeKey, expected);
+    }
     try {
       const selected = await piClient.selectProject(directory, { runtimeKey });
       if (expected !== this.runtimeGeneration) return;
@@ -1675,9 +1773,14 @@ export class PiSessionStore {
       const desiredSessionId = this.newerSelection(selectionAtStart, selected.directory)
         ?? this.pendingPreferredSessionId ?? preferredSessionId;
       let matchedSession = desiredSessionId ? listedSessions.find((item) => item.session.id === desiredSessionId) : undefined;
+      // A lookup detail for the finally selected id is forwarded to
+      // hydrate as `initialDetail`, where bootstrap validates it exactly
+      // like a fresh read — so lookup and hydrate share one request.
+      let lookupDetail: Awaited<ReturnType<typeof piClient.getSession>> | null = null;
       if (desiredSessionId && !matchedSession && !this.isDeleted(desiredSessionId)) {
         try {
-          const detail = await piClient.getSession(desiredSessionId, { directory, runtimeKey });
+          const detail = await (this.takeTranscriptPrefetch(desiredSessionId, directory, runtimeKey, expected)
+            ?? piClient.getSession(desiredSessionId, { directory, runtimeKey }));
           if (expected !== this.runtimeGeneration) return;
           if (detail?.session?.directory && detail.session.directory !== directory) {
             if (expected !== this.runtimeGeneration) return;
@@ -1688,6 +1791,7 @@ export class PiSessionStore {
           } else if (detail?.session?.id) {
             listedSessions.unshift({ session: detail.session, updatedAt: detail.session.updatedAt });
             matchedSession = { session: detail.session, updatedAt: detail.session.updatedAt };
+            lookupDetail = detail;
           }
         } catch (lookupError) {
           if (expected !== this.runtimeGeneration) return;
@@ -1733,9 +1837,22 @@ export class PiSessionStore {
       this.emit(openTopics);
       if (catalogChanged) this.raiseOrderingBaselinesForDirectory(selected.directory);
       if (selectedSessionId) {
+        // The prefetch (or the lookup detail above) already carries this
+        // id's transcript when it won selection: reuse it instead of a
+        // second request. A different winner means the prefetch belongs
+        // to another id and must not survive. A rejected prefetch yields
+        // `undefined` so hydrate fetches fresh, exactly as today.
+        let initialDetail: Awaited<ReturnType<typeof piClient.getSession>> | undefined;
+        if (selectedSessionId === desiredSessionId) {
+          initialDetail = lookupDetail
+            ?? await this.consumeTranscriptPrefetch(selectedSessionId, directory, runtimeKey, expected);
+        } else {
+          this.clearTranscriptPrefetch();
+        }
         await this.hydrate(selectedSessionId, expected, undefined, {
           initialHealth,
           initialSessions: listedSessions,
+          ...(initialDetail ? { initialDetail } : {}),
         });
       }
     } catch (error) { if (expected === this.runtimeGeneration) this.reportError(error); }
@@ -2567,6 +2684,11 @@ export class PiSessionStore {
       force?: boolean;
       initialHealth?: Extract<PiBootstrapHealth, { state: 'ready' }>;
       initialSessions?: readonly PiSessionListItem[];
+      /** First-attach transcript prefetch (or existence-lookup detail)
+       *  for this id. Forwarded to bootstrap, which validates it exactly
+       *  like a fresh `getSession` read. Unlike `known` (a trusted create
+       *  response), this skips no validation. */
+      initialDetail?: Awaited<ReturnType<typeof piClient.getSession>>;
     },
   ) {
     if (expected !== this.runtimeGeneration) return;
@@ -2590,6 +2712,7 @@ export class PiSessionStore {
       force?: boolean;
       initialHealth?: Extract<PiBootstrapHealth, { state: 'ready' }>;
       initialSessions?: readonly PiSessionListItem[];
+      initialDetail?: Awaited<ReturnType<typeof piClient.getSession>>;
     },
   ) {
     if (expected !== this.runtimeGeneration) return;
@@ -2653,6 +2776,7 @@ export class PiSessionStore {
         runtimeKey,
         ...(options?.initialHealth ? { initialHealth: options.initialHealth } : {}),
         ...(options?.initialSessions ? { initialSessions: options.initialSessions } : {}),
+        ...(options?.initialDetail ? { initialDetail: options.initialDetail } : {}),
         onEvent,
         onStreamDisconnect: () => {
           if (bootstrapCallbackIsCurrent()) void this.reconnect(this.state.selectedSessionId ?? sessionId, expected, runtimeKey);
