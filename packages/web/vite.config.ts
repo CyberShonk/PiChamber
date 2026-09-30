@@ -112,6 +112,12 @@ export default defineConfig({
   },
   server: {
     port: 5173,
+    // Dev-only: pre-transform the app graph while the server idles. The shared
+    // UI entry is dynamically imported by main.tsx, so it must be listed
+    // explicitly or the first page load compiles ~900 modules on demand.
+    warmup: {
+      clientFiles: ['./src/main.tsx', '../ui/src/main.tsx'],
+    },
     proxy: {
       '/auth': {
         target: `http://127.0.0.1:${process.env.PICHAMBER_PORT || 3001}`,

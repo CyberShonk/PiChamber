@@ -39,6 +39,7 @@ import {
 import { createTunnelAuth } from './lib/server/tunnel-auth.js';
 import { createUiAuth } from './lib/ui-auth/ui-auth.js';
 import { assertCurrentRuntimeSupported as defaultAssertCurrentRuntimeSupported } from './lib/server/runtime-requirements.js';
+import { resolveStaticCacheControl } from './lib/static-cache-control.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -85,7 +86,8 @@ const registerStaticRoutes = (app, { apiOnly }) => {
   }
   app.use(express.static(distPath, {
     setHeaders(res, filePath) {
-      if (filePath.endsWith(`${path.sep}sw.js`)) res.setHeader('Cache-Control', 'no-store');
+      const cacheControl = resolveStaticCacheControl(distPath, filePath);
+      if (cacheControl) res.setHeader('Cache-Control', cacheControl);
     },
   }));
   app.get(/^(?!\/api|\/auth|\/health|.*\.(js|css|svg|png|jpg|jpeg|gif|ico|woff|woff2|ttf|eot|map)).*$/, (_req, res) => {
