@@ -25,6 +25,7 @@ import { useDeviceInfo } from '@/lib/device';
 import { useConfigStore } from '@/stores/useConfigStore';
 import { useSelectionStore } from '@/sync/selection-store';
 import { useSessionMessageRecords } from '@/sync/sync-context';
+import { usePiSessionSnapshot } from '@/sync/pi-session-context';
 import { useSessionUIStore } from '@/sync/session-ui-store';
 import { computeCacheHitRate, computePiContextWindowTokens, extractSessionMessageBreakdown, type PiUsageLike } from '@/stores/utils/tokenUtils';
 import {
@@ -449,6 +450,38 @@ export const ContextPanelRail: React.FC = () => {
     };
   }, [railBreakdown, railCacheHitPercent, railContextLimit, railContextMessage, railOutputLimit, railPercentage, railTotalTokens]);
 
+  // The Extensions surface shows Pi-native `ctx.ui.setWidget` content only.
+  // The reducer replaces the widget map copy-on-write, so selecting the
+  // reference is cheap during streaming; the signature is recomputed only when
+  // it changes, which lets in-place widget updates raise the activity dot.
+  const extensionWidgets = usePiSessionSnapshot(
+    (state) => (currentSessionId ? state.reducer.bySession.get(currentSessionId)?.extensionWidgets : undefined),
+    (a, b) => a === b,
+    currentSessionId ? `session:${currentSessionId}` : '*',
+  );
+  const extensionSignature = React.useMemo(() => {
+    if (!extensionWidgets?.size) return '';
+    return [...extensionWidgets.entries()]
+      .map(([key, widget]) => `${key}:${widget.lines.join('\n')}`)
+      .join(';');
+  }, [extensionWidgets]);
+
+  const hasExtensionContent = extensionSignature !== '';
+  const lastSeenExtSigRef = React.useRef<Record<string, string>>({});
+
+  React.useEffect(() => {
+    if (activeMode === 'extensions' && currentSessionId && extensionSignature) {
+      lastSeenExtSigRef.current[currentSessionId] = extensionSignature;
+    }
+  }, [activeMode, currentSessionId, extensionSignature]);
+
+  const lastSeenSig = currentSessionId ? (lastSeenExtSigRef.current[currentSessionId] ?? '') : '';
+  const showExtActivityDot = Boolean(
+    activeMode !== 'extensions' &&
+    extensionSignature !== '' &&
+    lastSeenSig !== extensionSignature
+  );
+
   const githubScopeEntry = useGitHubScopeStore((state) => (directoryKey ? state.entriesByDirectory[directoryKey] ?? null : null));
   const githubScope = React.useMemo(() => {
     if (!githubScopeEntry) return { isLoading: true, hasResult: false, hasGitHubRepo: false, hasError: false };
@@ -467,8 +500,9 @@ export const ContextPanelRail: React.FC = () => {
       screenWidth,
       tabs,
       githubScope,
+      hasExtensionContent,
     });
-  }, [contextRailOrder, screenWidth, tabs, githubScope]);
+  }, [contextRailOrder, screenWidth, tabs, githubScope, hasExtensionContent]);
 
   const handleDragEnd = React.useCallback((event: DragEndEvent) => {
     const { active, over } = event;
@@ -504,12 +538,13 @@ export const ContextPanelRail: React.FC = () => {
             const gitChangedCount = surface.id === 'git' && isGitRepo === true ? changedFilesCount : 0;
             const badgeCount = gitChangedCount > 0 ? gitChangedCount : null;
             const isContextSurface = surface.id === 'context';
+            const showActivityDot = surface.id === 'extensions' ? showExtActivityDot : false;
             return (
               <ContextPanelRailItem
                 key={surface.id}
                 surface={railSurface}
                 isActive={activeMode === surface.mode}
-                showActivityDot={false}
+                showActivityDot={showActivityDot}
                 label={label}
                 description={railSurface.description}
                 badgeCount={badgeCount}

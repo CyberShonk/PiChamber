@@ -26,6 +26,7 @@ import { useUIStore, type ContextPanelMode, type PendingDiffScope } from '@/stor
 import { getGitRailPresentation } from '@/lib/surfaces/registry';
 import { useIsGitRepo } from '@/stores/useGitStore';
 import { ContextPanelContent } from './ContextSidebarTab';
+import { ExtensionsSurface } from '@/components/chat/extension/ExtensionsSurface';
 import { Icon } from "@/components/icon/Icon";
 import { CONTEXT_SURFACE_DEFAULT_WIDTH_FRACTION } from '@/lib/surfaces/registry';
 import { isTerminalEventTarget } from '@/lib/terminalFocus';
@@ -75,6 +76,7 @@ const getModeLabel = (mode: ContextPanelMode, isGitRepo: boolean | null = null):
   if (mode === 'terminal') return "Terminal";
   if (mode === 'pull-requests') return "Pull requests";
   if (mode === 'issues') return "Issues";
+  if (mode === 'extensions') return "Extensions";
   return "Context";
 };
 
@@ -167,6 +169,10 @@ const getTabIcon = (tab: { mode: ContextPanelMode; targetPath: string | null }, 
 
   if (tab.mode === 'issues') {
     return <Icon name="task" className="h-3.5 w-3.5" />;
+  }
+
+  if (tab.mode === 'extensions') {
+    return <Icon name="plug-2" className="h-3.5 w-3.5" />;
   }
 
   return undefined;
@@ -468,8 +474,10 @@ export const ContextPanel: React.FC = () => {
 
   const activeContent = activeTab?.mode === 'context'
         ? <ContextPanelContent />
-        : activeTab?.mode === 'git'
-            ? <React.Suspense fallback={null}><GitView isActive={isOpen} gitHeaderSlot={activeTab?.mode === 'git' ? gitHeaderSlot : null} /></React.Suspense>
+        : activeTab?.mode === 'extensions'
+            ? <ExtensionsSurface />
+            : activeTab?.mode === 'git'
+                ? <React.Suspense fallback={null}><GitView isActive={isOpen} gitHeaderSlot={activeTab?.mode === 'git' ? gitHeaderSlot : null} /></React.Suspense>
             : activeTab?.mode === 'pull-requests'
                 ? <React.Suspense fallback={null}><PullRequestsSurface key={`pull-requests:${directoryKey}`} headerActionsSlot={isPullRequestsPanelActive ? githubHeaderSlot : null} headerActionsPresentation="desktop" /></React.Suspense>
                 : activeTab?.mode === 'issues'
