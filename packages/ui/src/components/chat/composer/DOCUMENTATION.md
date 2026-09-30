@@ -104,6 +104,17 @@ composer holds a prompt, not a source file: it is short enough that a full pass
 is cheaper and far simpler than incremental mapping, and it keeps the editor
 and the send path reading the same grammar.
 
+Fenced-code syntax (`../composerCodeHighlight.ts`) loads CodeMirror language
+packs on demand via `language/fencedCodeLanguages.ts` (one dynamic `import()`
+per pack: javascript, json, css, html, markdown, python, shell). `highlight-
+FencedCode` highlights only packs already cached and falls back to uniform
+`codeFence` styling until a pack arrives; `preloadFencedCodeLanguages` starts
+missing packs and the editor's view plugin dispatches `codeLanguagesChanged`
+to re-highlight the same text (deduped, no flicker loop). No pack — including
+markdown, which the composer editor never uses as a base language — is in the
+eager startup graph; `lib/codemirror/languageByExtension.ts` keeps its
+synchronous packs only for the lazy file viewer.
+
 ## Ordering rules worth knowing
 
 - A live standard-RPC `ctx.ui.setEditorText()` or `pasteToEditor()` event replaces the owning session's draft only while that session is the visible composer. The event is sequence-gated and applied once; reconnect snapshots never replay editor text over a newer local draft.
