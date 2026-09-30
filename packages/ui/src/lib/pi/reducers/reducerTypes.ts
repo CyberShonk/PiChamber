@@ -153,6 +153,8 @@ export interface PiReducerSessionState {
   extensionTitle?: string;
   /** Live extension working message/visibility. */
   extensionWorking?: { message?: string; visible?: boolean };
+  /** Whether the session daemon is tracking editor draft text for extensions. */
+  extensionDraftTracked?: boolean;
   /**
    * Last message a part-level or structural write touched. Live-tail freeze
    * uses this instead of walking every historical part on each token.

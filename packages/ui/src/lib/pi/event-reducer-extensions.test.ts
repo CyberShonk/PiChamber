@@ -41,6 +41,7 @@ describe("extension event protocol", () => {
       baseEvent("extension.ui", 11, { id: "panel-1", title: "Panel", component: "progress", props: { value: 10 } }),
       baseEvent("extension.app", 12, { appId: "app-1", title: "App", html: "<p>hi</p>" }),
       baseEvent("extension.working", 13, { message: "thinking", visible: true }),
+      baseEvent("extension.editor.track", 14, { enabled: true }),
       baseEvent("extension.error", 15, { source: "/ext.ts", message: "boom" }),
       baseEvent("session.tree.updated", 16, {}),
     ]
@@ -400,6 +401,56 @@ describe("hydrateSessionFromDetail with extension content", () => {
       extensionWorking: { message: "Executing command...", visible: false },
     })
     expect(session.extensionWorking).toEqual({ message: "Executing command...", visible: false })
+  })
+
+  test("tracks extensionDraftTracked via extension.editor.track event, snapshot, and detail hydration", () => {
+    let state = applyPiEvent(createReducerState(), baseEvent("extension.editor.track", 1, {
+      enabled: true,
+    })).state
+    const session = state.bySession.get("sess-1")!
+    expect(session.extensionDraftTracked).toBe(true)
+
+    // enabled: false (daemon cleared the session's extension state) stops sync
+    const disabled = applyPiEvent(state, baseEvent("extension.editor.track", 2, {
+      enabled: false,
+    })).state
+    expect(disabled.bySession.get("sess-1")!.extensionDraftTracked).toBeUndefined()
+
+    // Snapshot with extensionDraftTracked = true
+    state = applyPiEvent(state, baseEvent("session.snapshot", 2, {
+      snapshot: {
+        sessionId: "sess-1",
+        directory: "/work",
+        isStreaming: false,
+        lifecycle: "idle",
+        queue: { steering: 0, followUp: 0 },
+        lastSequence: 2,
+        extensionDraftTracked: true,
+      },
+    } as never)).state
+    expect(state.bySession.get("sess-1")!.extensionDraftTracked).toBe(true)
+
+    // Snapshot without extensionDraftTracked clears it
+    state = applyPiEvent(state, baseEvent("session.snapshot", 3, {
+      snapshot: {
+        sessionId: "sess-1",
+        directory: "/work",
+        isStreaming: false,
+        lifecycle: "idle",
+        queue: { steering: 0, followUp: 0 },
+        lastSequence: 3,
+      },
+    } as never)).state
+    expect(state.bySession.get("sess-1")!.extensionDraftTracked).toBeUndefined()
+
+    // Hydration from detail
+    const { session: hydratedSession } = hydrateSessionFromDetail({
+      session: { id: "sess-3", directory: "/work" },
+      lastSequence: 1,
+      messages: [],
+      extensionDraftTracked: true,
+    })
+    expect(hydratedSession.extensionDraftTracked).toBe(true)
   })
 })
 

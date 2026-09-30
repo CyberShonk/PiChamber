@@ -215,6 +215,11 @@ export const applyPiEvent = (
         } else {
           delete session.extensionWorking;
         }
+        if (event.payload.snapshot.extensionDraftTracked === true) {
+          session.extensionDraftTracked = true;
+        } else {
+          delete session.extensionDraftTracked;
+        }
         markHydratedLiveActivity(session, {
           isStreaming: event.payload.snapshot.isStreaming,
           lifecycle: session.lifecycle,
@@ -373,6 +378,9 @@ export const applyPiEvent = (
     case 'extension.working':
       reduceExtensionWorking(session, event.payload);
       break;
+    case 'extension.editor.track':
+      if (event.payload.enabled) session.extensionDraftTracked = true;
+      else delete session.extensionDraftTracked;
       break;
     case 'extension.error':
       reduceExtensionError(session, event.payload);

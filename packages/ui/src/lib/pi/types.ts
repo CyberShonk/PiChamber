@@ -307,6 +307,8 @@ export interface PiSessionSnapshot {
   extensionTitle?: string;
   /** Live extension working message/visibility at snapshot time. */
   extensionWorking?: { message?: string; visible?: boolean };
+  /** Whether the session daemon is tracking editor draft text for extensions. */
+  extensionDraftTracked?: boolean;
   /** Retry countdown/error context while `lifecycle` is `retry`. */
   retry?: PiRetryInfo;
   /** Latest active or completed compaction state. */

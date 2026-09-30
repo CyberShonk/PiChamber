@@ -189,6 +189,7 @@ export const mergeHydratedSession = (
           extensionApps: existing.extensionApps,
           extensionTitle: existing.extensionTitle,
           ...(existing.extensionWorking ? { extensionWorking: existing.extensionWorking } : {}),
+          ...(existing.extensionDraftTracked ? { extensionDraftTracked: true } : {}),
         }
       : {}),
     // These fields are local live state rather than part of the session detail

@@ -70,6 +70,8 @@ export const createExtensionBridge = ({
   const extensionAppsBySession = new Map();
   const extensionTitlesBySession = new Map();
   const extensionWorkingBySession = new Map();
+  const extensionDraftBySession = new Map();
+  const extensionDraftTrackedSessions = new Set();
   // --- Extension bridging -------------------------------------------------
   // Pi extensions run inside each session runtime. Their user-interaction
   // surface (dialogs, notifications, statuses, widgets) is translated here
@@ -244,12 +246,16 @@ export const createExtensionBridge = ({
     if (apps) for (const appId of apps.keys()) publishForSession('extension.app', { appId, removed: true }, sessionId);
     if (extensionTitlesBySession.has(sessionId)) publishForSession('extension.title', {}, sessionId);
     if (extensionWorkingBySession.has(sessionId)) publishForSession('extension.working', {}, sessionId);
+    // Stop browser draft sync; a later getEditorText() call re-enables it.
+    if (extensionDraftTrackedSessions.has(sessionId)) publishForSession('extension.editor.track', { enabled: false }, sessionId);
     extensionStatusesBySession.delete(sessionId);
     extensionWidgetsBySession.delete(sessionId);
     extensionPanelsBySession.delete(sessionId);
     extensionAppsBySession.delete(sessionId);
     extensionTitlesBySession.delete(sessionId);
     extensionWorkingBySession.delete(sessionId);
+    extensionDraftBySession.delete(sessionId);
+    extensionDraftTrackedSessions.delete(sessionId);
     cancelPendingExtensionDialogs(sessionId, 'session-closed');
   };
 
@@ -266,6 +272,8 @@ export const createExtensionBridge = ({
       ...extensionAppsBySession.keys(),
       ...extensionTitlesBySession.keys(),
       ...extensionWorkingBySession.keys(),
+      ...extensionDraftBySession.keys(),
+      ...extensionDraftTrackedSessions.keys(),
     ]);
     for (const id of sessionIds) clearOneExtensionState(id);
     cancelPendingExtensionDialogs(undefined, 'daemon-stopped');
@@ -508,6 +516,13 @@ export const createExtensionBridge = ({
       custom: async () => undefined,
       pasteToEditor: (value) => {
         const text = String(value ?? '').slice(0, MAX_EXTENSION_EDITOR_TEXT_CHARS);
+        const current = extensionDraftBySession.get(sessionId);
+        const currentText = current?.text ?? '';
+        const nextText = (currentText + text).slice(0, MAX_EXTENSION_EDITOR_TEXT_CHARS);
+        extensionDraftBySession.set(sessionId, {
+          text: nextText,
+          revision: current?.revision ?? 0,
+        });
         publishForSession('extension.editor', {
           text,
           mode: 'paste',
@@ -515,12 +530,23 @@ export const createExtensionBridge = ({
       },
       setEditorText: (value) => {
         const text = String(value ?? '').slice(0, MAX_EXTENSION_EDITOR_TEXT_CHARS);
+        const current = extensionDraftBySession.get(sessionId);
+        extensionDraftBySession.set(sessionId, {
+          text,
+          revision: current?.revision ?? 0,
+        });
         publishForSession('extension.editor', {
           text,
           mode: 'set',
         }, sessionId);
       },
-      getEditorText: () => '',
+      getEditorText: () => {
+        if (!extensionDraftTrackedSessions.has(sessionId)) {
+          extensionDraftTrackedSessions.add(sessionId);
+          publishForSession('extension.editor.track', { enabled: true }, sessionId);
+        }
+        return extensionDraftBySession.get(sessionId)?.text ?? '';
+      },
       addAutocompleteProvider: () => {},
       setEditorComponent: () => {},
       getEditorComponent: () => undefined,
@@ -758,6 +784,27 @@ export const createExtensionBridge = ({
     }
   };
 
+  const updateExtensionDraft = (sessionId, text, revision) => {
+    if (typeof sessionId !== 'string' || !sessionId) return { accepted: false };
+    if (!extensionDraftTrackedSessions.has(sessionId)) return { accepted: false };
+    if (typeof text !== 'string' || text.length > MAX_EXTENSION_EDITOR_TEXT_CHARS) return { accepted: false };
+    if (!Number.isSafeInteger(revision) || revision < 0) return { accepted: false };
+    const current = extensionDraftBySession.get(sessionId);
+    if (current && Number.isSafeInteger(current.revision) && revision <= current.revision) {
+      return { accepted: false };
+    }
+    extensionDraftBySession.set(sessionId, { text, revision });
+    return { accepted: true };
+  };
+
+  const resetExtensionDraft = (sessionId) => {
+    if (!sessionId) return;
+    // Untracked sessions without a mirror stay untouched, so ordinary prompts
+    // never allocate draft state.
+    const current = extensionDraftBySession.get(sessionId);
+    if (current) extensionDraftBySession.set(sessionId, { text: '', revision: current.revision });
+  };
+
   const getSnapshotState = (sessionId) => {
     if (!sessionId) return {};
     const statuses = extensionStatusesBySession.get(sessionId);
@@ -769,6 +816,7 @@ export const createExtensionBridge = ({
       .filter((pending) => pending.sessionId === sessionId)
       .map((pending) => pending.payload);
     const working = extensionWorkingBySession.get(sessionId);
+    const draftTracked = extensionDraftTrackedSessions.has(sessionId);
     return {
       ...(statuses?.size ? { statuses: [...statuses.entries()].map(([key, text]) => ({ key, text })) } : {}),
       ...(widgets?.size ? { widgets: [...widgets.entries()].map(([key, widget]) => ({ key, ...widget })) } : {}),
@@ -777,6 +825,7 @@ export const createExtensionBridge = ({
       ...(apps?.size ? { apps: [...apps.values()] } : {}),
       ...(title ? { title } : {}),
       ...(working ? { working: { ...working } } : {}),
+      ...(draftTracked ? { draftTracked: true } : {}),
     };
   };
 
@@ -789,6 +838,8 @@ export const createExtensionBridge = ({
     rebuildSessionPanelsAndApps,
     publishExtensionCustomMessage,
     reloadSession,
+    resetExtensionDraft,
     resolveExtensionDialog,
+    updateExtensionDraft,
   };
 };

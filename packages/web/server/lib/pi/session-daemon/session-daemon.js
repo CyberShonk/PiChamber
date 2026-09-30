@@ -579,6 +579,8 @@ export function createSessionDaemon({
     publishExtensionCustomMessage,
     reloadSession,
     resolveExtensionDialog,
+    updateExtensionDraft,
+    resetExtensionDraft,
   } = extensionBridge;
 
   const rebuildSessionExtensionState = (activeRuntime) => {
@@ -687,6 +689,7 @@ export function createSessionDaemon({
         ...(extensionSnapshot.apps ? { extensionApps: extensionSnapshot.apps } : {}),
         ...(extensionSnapshot.title ? { extensionTitle: extensionSnapshot.title } : {}),
         ...(extensionSnapshot.working ? { extensionWorking: extensionSnapshot.working } : {}),
+        ...(extensionSnapshot.draftTracked ? { extensionDraftTracked: true } : {}),
       },
     });
   };
@@ -1118,6 +1121,7 @@ export function createSessionDaemon({
 
   const sessionIdForIdleGuard = (message) => {
     switch (message?.command) {
+      case 'extensions.draft':
       case 'sessions.open':
       case 'sessions.messages':
       case 'sessions.tree':
@@ -1784,6 +1788,7 @@ export function createSessionDaemon({
       ...(extensionSnapshot.apps ? { extensionApps: extensionSnapshot.apps } : {}),
       ...(extensionSnapshot.title ? { extensionTitle: extensionSnapshot.title } : {}),
       ...(extensionSnapshot.working ? { extensionWorking: extensionSnapshot.working } : {}),
+      ...(extensionSnapshot.draftTracked ? { extensionDraftTracked: true } : {}),
     };
   };
 
@@ -3099,6 +3104,7 @@ export function createSessionDaemon({
       || typeof payload.text !== 'string' || payload.text.length === 0 || Buffer.byteLength(payload.text) > 64 * 1024) {
       throw new SessionDaemonProtocolError('INVALID_PROMPT', 'The session prompt is invalid.');
     }
+    resetExtensionDraft(payload.sessionId);
     if (payload.thinking !== undefined) validateThinking(payload.thinking);
     // Idle protection is owned by the request-dispatch guard: it holds the
     // session refcount across activation/acceptance, agent_start clears once
@@ -3769,7 +3775,7 @@ export function createSessionDaemon({
               'sessions.setThinking', 'sessions.compact', 'providers.list', 'providers.refresh', 'providers.config.get', 'providers.models.set', 'providers.models.add', 'providers.status', 'providers.login',
               'providers.login.respond', 'providers.login.status', 'providers.logout', 'settings.get', 'settings.set',
               'resources.list', 'resources.update', 'resources.prompts.create', 'resources.prompts.update', 'resources.prompts.delete',
-              'extensions.list', 'extensions.respond',
+              'extensions.list', 'extensions.respond', 'extensions.draft',
             ],
             ...(Number.isInteger(healthMetadata.daemonPid) ? { daemonPid: healthMetadata.daemonPid } : {}),
             ...(typeof profileKey === 'string' && profileKey.length > 0 ? { profileKey } : {}),
@@ -3943,6 +3949,17 @@ export function createSessionDaemon({
       case 'extensions.respond': {
         const resolution = await resolveExtensionDialog(message.payload);
         writeFrame(socket, { protocolVersion: PROTOCOL_VERSION, kind: 'response', requestId: message.requestId, result: resolution });
+        return;
+      }
+      case 'extensions.draft': {
+        const sessionId = message.payload?.sessionId;
+        const text = message.payload?.text;
+        const revision = message.payload?.revision;
+        if (typeof sessionId !== 'string' || sessionId.length === 0 || typeof text !== 'string' || !Number.isSafeInteger(revision) || revision < 0) {
+          throw new SessionDaemonProtocolError('INVALID_ARGUMENT', 'The draft payload is invalid.');
+        }
+        const result = updateExtensionDraft(sessionId, text, revision);
+        writeFrame(socket, { protocolVersion: PROTOCOL_VERSION, kind: 'response', requestId: message.requestId, result });
         return;
       }
       case 'extensions.list': {

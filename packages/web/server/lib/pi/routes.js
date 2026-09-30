@@ -577,6 +577,7 @@ function projectExtensionSnapshotState(snapshot) {
       ? { extensionTitle: snapshot.extensionTitle.replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, 256) }
       : {}),
     ...(extensionWorking && (extensionWorking.message !== undefined || extensionWorking.visible !== undefined) ? { extensionWorking } : {}),
+    ...(snapshot.extensionDraftTracked === true ? { extensionDraftTracked: true } : {}),
   };
 }
 
@@ -723,6 +724,10 @@ export const projectEventFrame = (frame) => {
       if (typeof frame.payload.text !== 'string' || frame.payload.text.length > 100_000) return null;
       const mode = frame.payload.mode === 'paste' ? 'paste' : 'set';
       return { ...common, payload: { text: frame.payload.text, mode } };
+    }
+    case 'extension.editor.track': {
+      if (typeof frame.payload.enabled !== 'boolean') return null;
+      return { ...common, payload: { enabled: frame.payload.enabled } };
     }
     case 'extension.title': {
       if (frame.payload.title !== undefined && typeof frame.payload.title !== 'string') return null;
@@ -1758,6 +1763,20 @@ export const registerPiRuntimeRoutes = (app, {
       res.status(204).end();
     } catch (error) {
       writeDaemonError(res, error);
+    }
+  });
+
+  app.post('/api/pi/sessions/:sessionId/editor-draft', async (req, res) => {
+    const text = req.body?.text;
+    const revision = req.body?.revision;
+    const directory = req.body?.directory;
+    if (typeof text !== 'string' || text.length > 100_000 || !Number.isSafeInteger(revision) || revision < 0 || (directory !== undefined && typeof directory !== 'string')) {
+      res.status(400).json({ error: { code: 'INVALID_ARGUMENT' } });
+      return;
+    }
+    const result = await requestSessionOperation(req, res, getPiSessionDaemonRuntime, 'extensions.draft', { text, revision });
+    if (result !== undefined) {
+      res.status(204).end();
     }
   });
 

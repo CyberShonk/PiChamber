@@ -189,6 +189,7 @@ export interface PiSessionDetailResponse extends Pick<
   | 'extensionApps'
   | 'extensionTitle'
   | 'extensionWorking'
+  | 'extensionDraftTracked'
 > {
   session: PiSession;
   messages: PiMessageView[];
@@ -691,6 +692,7 @@ export type PiEventName =
   | 'extension.ui'
   | 'extension.app'
   | 'extension.working'
+  | 'extension.editor.track'
   | 'extension.error';
 
 /** Common envelope for every public event. */
@@ -1049,6 +1051,14 @@ export type PiExtensionWorkingEvent = PiEventEnvelope<
   }
 >;
 
+/** Session-scoped notification that an extension is reading editor text and requires draft tracking. */
+export type PiExtensionEditorTrackEvent = PiEventEnvelope<
+  'extension.editor.track',
+  {
+    enabled: boolean;
+  }
+>;
+
 /** Extensions loaded for a directory plus the slash commands they register. */
 export interface PiExtensionListResponse {
   directory?: string;
@@ -1104,6 +1114,7 @@ export type PiSessionEvent =
   | PiExtensionUiEvent
   | PiExtensionAppEvent
   | PiExtensionWorkingEvent
+  | PiExtensionEditorTrackEvent
   | PiExtensionErrorEvent;
 
 // ---------------------------------------------------------------------------
@@ -1143,6 +1154,7 @@ export const PI_EVENT_KINDS = [
   'extension.ui',
   'extension.app',
   'extension.working',
+  'extension.editor.track',
   'extension.error',
 ] as const satisfies readonly PiEventName[];
 

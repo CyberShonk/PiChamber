@@ -270,6 +270,7 @@ export const hydrateSessionFromDetail = (
     extensionApps?: PiExtensionAppPayload[];
     extensionTitle?: string;
     extensionWorking?: { message?: string; visible?: boolean };
+    extensionDraftTracked?: boolean;
     messages: Array<{
       message: PiUserMessage | PiAssistantMessage | {
         id: string;
@@ -339,6 +340,9 @@ export const hydrateSessionFromDetail = (
   session.extensionTitle = detail.extensionTitle;
   if (detail.extensionWorking) {
     session.extensionWorking = { ...detail.extensionWorking };
+  }
+  if (detail.extensionDraftTracked === true) {
+    session.extensionDraftTracked = true;
   }
 
   for (const { message, parts } of (detail.messages ?? [])) {

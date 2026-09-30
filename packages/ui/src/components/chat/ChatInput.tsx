@@ -57,6 +57,7 @@ import { AttachedFilesList } from "./FileAttachment";
 import { lazyWithChunkRecovery } from "@/lib/chunkLoadRecovery";
 import type { ToolPopupContent } from "./message/types";
 import { QueuedMessageChips } from "./QueuedMessageChips";
+import { useExtensionDraftSync } from "./hooks/useExtensionDraftSync";
 import type { FileMentionHandle } from "./FileMentionAutocomplete";
 import type {
   CommandAutocompleteHandle,
@@ -410,6 +411,12 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     ),
   );
   const activeRuntimeKey = getRuntimeKey();
+
+  useExtensionDraftSync({
+    sessionId: currentSessionId,
+    directory: currentSessionDirectoryForSync ?? currentDirectory,
+    text: message,
+  });
 
   // Keep the skill catalog warm for the active runtime/directory. The store
   // is not persisted and previously only filled on demand (autocomplete open

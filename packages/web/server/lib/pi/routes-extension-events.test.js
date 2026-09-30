@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
+import express from 'express';
 
-import { projectEventFrame, projectExtensionList } from './routes.js';
+import { projectEventFrame, projectExtensionList, registerPiRuntimeRoutes } from './routes.js';
 
 const frame = (event, payload, sequence = 1) => ({
   protocolVersion: 1,
@@ -145,7 +146,20 @@ describe('extension public projections', () => {
     expect(projectEventFrame(frame('extension.working', { message: 123, visible: 'yes' }))).toBeNull();
   });
 
-  it('projects snapshot extensionPanels/extensionApps for reconnect', () => {
+  it('projects extension.editor.track events and ignores invalid frames', () => {
+    expect(projectEventFrame(frame('extension.editor.track', { enabled: true }))).toMatchObject({
+      name: 'extension.editor.track',
+      payload: { enabled: true },
+    });
+    expect(projectEventFrame(frame('extension.editor.track', { enabled: false }))).toMatchObject({
+      name: 'extension.editor.track',
+      payload: { enabled: false },
+    });
+    expect(projectEventFrame(frame('extension.editor.track', { enabled: 'true' }))).toBeNull();
+    expect(projectEventFrame(frame('extension.editor.track', {}))).toBeNull();
+  });
+
+  it('projects snapshot extensionPanels/extensionApps/extensionDraftTracked for reconnect', () => {
     const projected = projectEventFrame(frame('session.snapshot', {
       isStreaming: false,
       lifecycle: 'idle',
@@ -156,6 +170,7 @@ describe('extension public projections', () => {
       extensionApps: [{ appId: 'app-1', html: '<p>x</p>' }],
       extensionTitle: 'Build mode',
       extensionWorking: { message: 'Indexing...', visible: true },
+      extensionDraftTracked: true,
       extensionDialogs: [{
         requestId: 'form-1',
         method: 'form',
@@ -169,5 +184,100 @@ describe('extension public projections', () => {
     expect(snapshot.extensionDialogs[0].fields).toHaveLength(1);
     expect(snapshot.extensionTitle).toBe('Build mode');
     expect(snapshot.extensionWorking).toEqual({ message: 'Indexing...', visible: true });
+    expect(snapshot.extensionDraftTracked).toBe(true);
+
+    const projectedUntracked = projectEventFrame(frame('session.snapshot', {
+      isStreaming: false,
+      lifecycle: 'idle',
+      queue: { steering: 0, followUp: 0 },
+      lastSequence: 5,
+      extensionDraftTracked: false,
+    }));
+    expect(projectedUntracked?.payload.snapshot.extensionDraftTracked).toBeUndefined();
+  });
+});
+
+describe('POST /api/pi/sessions/:sessionId/editor-draft', () => {
+  let server;
+
+  const listen = (app) => new Promise((resolve, reject) => {
+    const s = app.listen(0, '127.0.0.1', () => resolve(s));
+    s.once('error', reject);
+  });
+
+  const close = (s) => new Promise((resolve, reject) => {
+    if (!s) return resolve();
+    s.close((err) => (err && err.code !== 'ERR_SERVER_NOT_RUNNING' ? reject(err) : resolve()));
+  });
+
+  afterEach(async () => {
+    await close(server);
+    server = undefined;
+  });
+
+  it('validates payload and forwards valid drafts to daemon runtime returning 204', async () => {
+    const calls = [];
+    const runtime = {
+      request: async (command, payload) => {
+        calls.push({ command, payload });
+        return { accepted: true };
+      },
+    };
+
+    const app = express();
+    app.use(express.json());
+    registerPiRuntimeRoutes(app, { getPiSessionDaemonRuntime: () => runtime });
+    server = await listen(app);
+    const base = `http://127.0.0.1:${server.address().port}/api/pi/sessions/sess-123/editor-draft`;
+
+    // 1. Valid request
+    const validRes = await fetch(base, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: 'draft content', revision: 5, directory: '/work' }),
+    });
+    expect(validRes.status).toBe(204);
+    expect(calls).toEqual([
+      { command: 'extensions.draft', payload: { sessionId: 'sess-123', text: 'draft content', revision: 5, directory: '/work' } },
+    ]);
+
+    // 2. Text not a string
+    const badTextRes = await fetch(base, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: 123, revision: 1 }),
+    });
+    expect(badTextRes.status).toBe(400);
+    await expect(badTextRes.json()).resolves.toEqual({ error: { code: 'INVALID_ARGUMENT' } });
+
+    // 3. Text exceeds 100,000 chars
+    const oversizedRes = await fetch(base, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: 'a'.repeat(100_001), revision: 1 }),
+    });
+    expect(oversizedRes.status).toBe(400);
+    await expect(oversizedRes.json()).resolves.toEqual({ error: { code: 'INVALID_ARGUMENT' } });
+
+    // 4. Invalid revision (negative, float, string, missing)
+    const badRevisions = [-1, 1.5, '5', null, undefined, NaN, Number.MAX_SAFE_INTEGER + 1];
+    for (const rev of badRevisions) {
+      const res = await fetch(base, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: 'hello', revision: rev }),
+      });
+      expect(res.status).toBe(400);
+      await expect(res.json()).resolves.toEqual({ error: { code: 'INVALID_ARGUMENT' } });
+    }
+
+    // 5. Invalid directory (non-string)
+    const badDirRes = await fetch(base, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: 'hello', revision: 1, directory: 123 }),
+    });
+    expect(badDirRes.status).toBe(400);
+    await expect(badDirRes.json()).resolves.toEqual({ error: { code: 'INVALID_ARGUMENT' } });
   });
 });

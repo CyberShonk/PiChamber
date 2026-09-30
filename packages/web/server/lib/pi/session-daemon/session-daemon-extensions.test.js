@@ -750,4 +750,82 @@ describe('Pi session daemon extension panels, apps, and forms', () => {
     const workingEvent3 = await client.next((message) => message.event === 'extension.working' && message.payload?.message === undefined);
     expect(workingEvent3.payload).toMatchObject({ visible: false });
   });
+
+  it('supports ctx.ui.getEditorText lazy draft mirror end-to-end', async () => {
+    const { client, session } = await startWithExtensibleSession();
+    const ui = session.boundBindings.uiContext;
+
+    // 1. First getEditorText() call returns '' and publishes extension.editor.track exactly once
+    const firstText = ui.getEditorText();
+    expect(firstText).toBe('');
+    const trackEvent = await client.next((message) => message.event === 'extension.editor.track');
+    expect(trackEvent.payload).toMatchObject({
+      sessionId: session.sessionId,
+      enabled: true,
+    });
+
+    // Subsequent calls return current mirror and do not publish tracking again
+    expect(ui.getEditorText()).toBe('');
+
+    // Snapshot reflects extensionDraftTracked: true
+    const snapshotRes1 = await client.request('sessions.open', { sessionId: session.sessionId });
+    expect(snapshotRes1.result.extensionDraftTracked).toBe(true);
+
+    // 2. extensions.draft with revision 1 updates the mirror
+    const draftRes1 = await client.request('extensions.draft', {
+      sessionId: session.sessionId,
+      text: 'Draft content from composer',
+      revision: 1,
+    });
+    expect(draftRes1.result).toEqual({ accepted: true });
+    expect(ui.getEditorText()).toBe('Draft content from composer');
+
+    // 3. Stale revision is rejected/ignored
+    const staleRes = await client.request('extensions.draft', {
+      sessionId: session.sessionId,
+      text: 'Stale draft',
+      revision: 1,
+    });
+    expect(staleRes.result).toEqual({ accepted: false });
+    expect(ui.getEditorText()).toBe('Draft content from composer');
+
+    // 4. Untracked session draft update is rejected
+    const untrackedRes = await client.request('extensions.draft', {
+      sessionId: 'untracked-session-xyz',
+      text: 'Some text',
+      revision: 10,
+    });
+    expect(untrackedRes.result).toEqual({ accepted: false });
+
+    // 5. setEditorText and pasteToEditor update the mirror
+    ui.setEditorText('Replaced by extension');
+    expect(ui.getEditorText()).toBe('Replaced by extension');
+    ui.pasteToEditor(' - appended');
+    expect(ui.getEditorText()).toBe('Replaced by extension - appended');
+
+    // 6. Next newer revision updates the mirror
+    const draftRes2 = await client.request('extensions.draft', {
+      sessionId: session.sessionId,
+      text: 'Fresh user typing',
+      revision: 2,
+    });
+    expect(draftRes2.result).toEqual({ accepted: true });
+    expect(ui.getEditorText()).toBe('Fresh user typing');
+
+    // 7. Prompt submission resets the mirror text (keeps tracking)
+    await client.request('sessions.prompt', {
+      sessionId: session.sessionId,
+      text: 'User prompt',
+    });
+    expect(ui.getEditorText()).toBe('');
+
+    // Can still send new draft after prompt
+    const draftRes3 = await client.request('extensions.draft', {
+      sessionId: session.sessionId,
+      text: 'Typing next turn',
+      revision: 3,
+    });
+    expect(draftRes3.result).toEqual({ accepted: true });
+    expect(ui.getEditorText()).toBe('Typing next turn');
+  });
 });
