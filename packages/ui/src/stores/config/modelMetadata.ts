@@ -186,6 +186,50 @@ const fetchModelsDevMetadata = async (): Promise<Map<string, ModelMetadata>> => 
 
 let inFlight: Promise<Map<string, ModelMetadata>> | null = null;
 
+// Idle-deferred trigger so the ~424 KB models.dev download starts after
+// first paint instead of competing with startup requests and main-thread
+// work inside `loadProviders`. Single scheduled trigger (deduped); the idle
+// callback itself calls `ensureModelMetadataLoaded`, which dedupes against
+// an in-flight or completed load, so an on-demand load before idle fires
+// means the later idle trigger does not refetch.
+//
+// Runtime intent: `requestIdleCallback` exists in Chromium (web, desktop
+// Electron) and Firefox, but not in Safari/WKWebView (hosted mobile,
+// Capacitor iOS) — those fall back to `setTimeout(…, 1500)`. The timeout
+// option on the idle path guarantees the load still fires on a busy tab.
+const IDLE_FALLBACK_MS = 1500;
+type ScheduledIdle = { kind: 'idle'; handle: number } | { kind: 'timeout'; handle: ReturnType<typeof setTimeout> };
+let scheduledIdle: ScheduledIdle | null = null;
+
+const getRequestIdleCallback = (): ((cb: () => void, opts?: { timeout: number }) => number) | null => {
+    if (typeof window !== 'undefined' && typeof window.requestIdleCallback === 'function') {
+        return window.requestIdleCallback.bind(window);
+    }
+    const globalIdle = (globalThis as { requestIdleCallback?: unknown }).requestIdleCallback;
+    return typeof globalIdle === 'function'
+        ? (globalIdle as (cb: () => void, opts?: { timeout: number }) => number)
+        : null;
+};
+
+const clearScheduledIdle = (): void => {
+    if (!scheduledIdle) return;
+    if (scheduledIdle.kind === 'idle') {
+        if (typeof window !== 'undefined' && typeof window.cancelIdleCallback === 'function') {
+            window.cancelIdleCallback(scheduledIdle.handle);
+        } else {
+            const cancelIdle = (globalThis as { cancelIdleCallback?: unknown }).cancelIdleCallback;
+            if (typeof cancelIdle === 'function') {
+                (cancelIdle as (handle: number) => void)(scheduledIdle.handle);
+            } else {
+                clearTimeout(scheduledIdle.handle as unknown as ReturnType<typeof setTimeout>);
+            }
+        }
+    } else {
+        clearTimeout(scheduledIdle.handle);
+    }
+    scheduledIdle = null;
+};
+
 export const ensureModelMetadataLoaded = (
   getMetadata: () => Map<string, ModelMetadata>,
   setMetadata: (metadata: Map<string, ModelMetadata>) => void,
@@ -208,6 +252,36 @@ export const ensureModelMetadataLoaded = (
 
 export const invalidateModelMetadataLoad = (): void => {
   inFlight = null;
+};
+
+export const scheduleModelMetadataLoad = (
+  getMetadata: () => Map<string, ModelMetadata>,
+  setMetadata: (metadata: Map<string, ModelMetadata>) => void,
+): void => {
+  if (getMetadata().size > 0 || inFlight || scheduledIdle) return;
+  markStartupTrace('modelsMetadata:scheduledIdle');
+  const run = (): void => {
+    scheduledIdle = null;
+    markStartupTrace('modelsMetadata:idleFired');
+    ensureModelMetadataLoaded(getMetadata, setMetadata);
+  };
+  const requestIdle = getRequestIdleCallback();
+  if (requestIdle) {
+    scheduledIdle = { kind: 'idle', handle: requestIdle(run, { timeout: 5000 }) };
+    return;
+  }
+  scheduledIdle = { kind: 'timeout', handle: setTimeout(run, IDLE_FALLBACK_MS) };
+};
+
+/** Test-only: clear the pending idle trigger without firing it. */
+export const cancelScheduledModelMetadataLoadForTests = (): void => {
+  clearScheduledIdle();
+};
+
+/** Test-only: reset in-flight and scheduled state between suites. */
+export const resetModelMetadataForTests = (): void => {
+  inFlight = null;
+  clearScheduledIdle();
 };
 
 export const resolveModelMetadata = (

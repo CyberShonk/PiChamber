@@ -8,7 +8,7 @@ import { useProjectsStore } from "@/stores/useProjectsStore";
 import { resolveProjectForSessionDirectory } from "@/lib/projectResolution";
 import { streamDebugEnabled } from "@/stores/utils/streamDebug";
 import { configurableThinkingLevels, cycleThinkingLevel } from "@/lib/pi/thinking";
-import { ensureModelMetadataLoaded, invalidateModelMetadataLoad, resolveModelMetadata } from "./config/modelMetadata";
+import { ensureModelMetadataLoaded, invalidateModelMetadataLoad, resolveModelMetadata, scheduleModelMetadataLoad } from "./config/modelMetadata";
 import { fetchPiChamberDefaults } from "./config/defaults";
 import {
     fromDirectoryKey,
@@ -209,10 +209,6 @@ export const useConfigStore = create<ConfigStore>()(
 
                     for (let attempt = 0; attempt < 3; attempt++) {
                         try {
-                            ensureModelMetadataLoaded(
-                                () => get().modelsMetadata,
-                                (metadata) => set({ modelsMetadata: metadata }),
-                            );
                             const apiResult = await measureStartupTrace(
                                 'loadProviders:api',
                                 async () => fetchAndProcessProviders(),
@@ -520,6 +516,13 @@ export const useConfigStore = create<ConfigStore>()(
                     invalidateModelMetadataLoad();
                     set({ modelsMetadata: new Map<string, ModelMetadata>() });
                 },
+
+                ensureModelMetadata: () => {
+                    ensureModelMetadataLoaded(
+                        () => get().modelsMetadata,
+                        (metadata) => set({ modelsMetadata: metadata }),
+                    );
+                },
                  setSettingsDefaultModel: (model: string | undefined) => {
                      set({ settingsDefaultModel: model });
                  },
@@ -716,6 +719,15 @@ export const useConfigStore = create<ConfigStore>()(
                             }
 
                             set({ isInitialized: true, isConnected: true, hasEverConnected: true, connectionPhase: "connected" });
+                            // Model metadata (~424 KB) starts after first paint via
+                            // requestIdleCallback (fallback setTimeout 1500 for
+                            // Safari/WKWebView), not inside the startup provider
+                            // load. Any earlier metadata read triggers it
+                            // immediately via getModelMetadata/ensureModelMetadata.
+                            scheduleModelMetadataLoad(
+                                () => get().modelsMetadata,
+                                (metadata) => set({ modelsMetadata: metadata }),
+                            );
                             void get().prewarmProjectConfigs(configDirectory);
                             const initEnded = typeof performance !== 'undefined' ? performance.now() : Date.now();
                             markStartupTrace('initializeApp:end', {
@@ -802,6 +814,15 @@ export const useConfigStore = create<ConfigStore>()(
                 },
 
                 getModelMetadata: (providerId: string, modelId: string) => {
+                    // On-demand trigger: a metadata read before the idle
+                    // scheduler fires starts the load immediately (deduped),
+                    // so pickers/badges never wait for idle. Failure leaves
+                    // the map empty and retryable; live-provider derivation
+                    // in resolveModelMetadata already tolerates it arriving later.
+                    ensureModelMetadataLoaded(
+                        () => get().modelsMetadata,
+                        (metadata) => set({ modelsMetadata: metadata }),
+                    );
                     const { modelsMetadata, providers } = get();
                     const model = providers
                         .find((provider) => provider.id === providerId)
