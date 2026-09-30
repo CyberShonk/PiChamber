@@ -15,7 +15,14 @@
  * key is left untouched as a read-only recovery backup; it is not a live
  * fallback.
  *
- * Retention is intentionally unbounded, matching the legacy store.
+ * Retention is bounded: the most recently touched SELECTION_STORE_SESSION_CAP
+ * (500) sessions are kept, ordered by the persisted `sessionRecency` id list
+ * (oldest first). Any write for a session refreshes its recency; reads never
+ * do, keeping render selectors free of retention work. Eviction runs on write
+ * and once on hydration, removes that session's entries from every
+ * per-session map (plus its variant-clear tombstones) together, and never
+ * touches global state such as `lastUsedProvider`. Authoritative session
+ * deletion calls `forgetSession`; archive does not.
  */
 
 import { create } from "zustand"
@@ -26,9 +33,12 @@ type ModelSelection = { providerId: string; modelId: string }
 type LastUsedProvider = { providerID: string; modelID: string }
 
 export const SELECTION_STORE_KEY = "selection-store"
-export const SELECTION_STORE_VERSION = 2
+export const SELECTION_STORE_VERSION = 3
 export const LEGACY_CONTEXT_STORE_KEY = "context-store"
 export const CONTEXT_STORE_MIGRATION_VERSION = 1
+
+/** Maximum number of sessions retained across the per-session selection maps. */
+export const SELECTION_STORE_SESSION_CAP = 500
 
 export type SelectionState = {
   sessionModelSelections: Map<string, ModelSelection>
@@ -39,6 +49,8 @@ export type SelectionState = {
   hasHydrated: boolean
   contextStoreMigrationVersion?: number
   clearedVariantKeys: string[]
+  /** Persisted LRU order (oldest first) backing the session retention cap. */
+  sessionRecency: string[]
 
   saveSessionModelSelection: (sessionId: string, providerId: string, modelId: string) => void
   getSessionModelSelection: (sessionId: string) => { providerId: string; modelId: string } | null
@@ -48,6 +60,11 @@ export type SelectionState = {
   getAgentModelForSession: (sessionId: string, agentName: string) => { providerId: string; modelId: string } | null
   saveAgentModelVariantForSession: (sessionId: string, agentName: string, providerId: string, modelId: string, variant: string | undefined) => void
   getAgentModelVariantForSession: (sessionId: string, agentName: string, providerId: string, modelId: string) => string | undefined
+  /**
+   * Drop every selection entry for an authoritatively deleted session.
+   * No-op (no store notification) when the session holds nothing.
+   */
+  forgetSession: (sessionId: string) => void
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -109,6 +126,209 @@ const clearDirty = () => {
 
 /** Test-only: drop in-memory dirty keys simulating a fresh process. */
 export const __clearSelectionDirtyForTests = () => clearDirty()
+
+type SelectionRetentionMaps = {
+  sessionModelSelections: Map<string, ModelSelection>
+  sessionAgentSelections: Map<string, string>
+  sessionAgentModelSelections: Map<string, Map<string, ModelSelection>>
+  sessionAgentModelVariantSelections: Map<string, Map<string, Map<string, string>>>
+  clearedVariantKeys: string[]
+  sessionRecency: string[]
+}
+
+const sanitizeSessionRecency = (raw: unknown): string[] => {
+  if (!Array.isArray(raw)) return []
+  const seen = new Set<string>()
+  const ordered: string[] = []
+  for (const entry of raw) {
+    if (typeof entry !== "string" || seen.has(entry)) continue
+    seen.add(entry)
+    ordered.push(entry)
+  }
+  return ordered
+}
+
+// Deterministic session order: persisted recency first, then any session the
+// recency list does not cover (legacy imports, unversioned payloads) appended
+// in map order. Corrupt tombstone keys cannot be attributed and are ignored.
+const orderSessionsByRecency = (maps: SelectionRetentionMaps): string[] => {
+  const ordered = sanitizeSessionRecency(maps.sessionRecency)
+  const known = new Set(ordered)
+  const appendMissing = (sessionId: string) => {
+    if (!known.has(sessionId)) {
+      known.add(sessionId)
+      ordered.push(sessionId)
+    }
+  }
+  for (const sessionId of maps.sessionModelSelections.keys()) appendMissing(sessionId)
+  for (const sessionId of maps.sessionAgentSelections.keys()) appendMissing(sessionId)
+  for (const sessionId of maps.sessionAgentModelSelections.keys()) appendMissing(sessionId)
+  for (const sessionId of maps.sessionAgentModelVariantSelections.keys()) appendMissing(sessionId)
+  for (const key of maps.clearedVariantKeys) {
+    const parsed = typeof key === "string" ? parseTombstoneKey(key) : null
+    if (parsed) appendMissing(parsed[0])
+  }
+  return ordered
+}
+
+// Drop evicted ids from one per-session map, preserving the reference when
+// none of the evicted sessions are present.
+const dropEvictedSessions = <V>(map: Map<string, V>, evicted: ReadonlySet<string>): Map<string, V> => {
+  let next: Map<string, V> | null = null
+  for (const sessionId of evicted) {
+    if ((next ?? map).has(sessionId)) {
+      if (!next) next = new Map(map)
+      next.delete(sessionId)
+    }
+  }
+  return next ?? map
+}
+
+const dropSessionKey = <V>(map: Map<string, V>, sessionId: string): Map<string, V> => {
+  if (!map.has(sessionId)) return map
+  const next = new Map(map)
+  next.delete(sessionId)
+  return next
+}
+
+// Enforce the session cap: touch the given sessions (most-recent last), then
+// evict the least-recently-touched overflow from every per-session map and
+// the tombstone list together. Under the cap the maps keep their references;
+// only a changed recency allocates. Both passes are bounded by the session
+// union (<= cap + overflow on the write path), never a scan per render.
+const enforceSelectionRetention = (
+  maps: SelectionRetentionMaps,
+  touchedSessionIds: readonly string[] = [],
+): SelectionRetentionMaps => {
+  const ordered = orderSessionsByRecency(maps)
+  for (const sessionId of touchedSessionIds) {
+    const index = ordered.indexOf(sessionId)
+    if (index !== -1) ordered.splice(index, 1)
+    ordered.push(sessionId)
+  }
+  if (ordered.length <= SELECTION_STORE_SESSION_CAP) {
+    const current = maps.sessionRecency
+    const unchanged = current.length === ordered.length
+      && current.every((sessionId, index) => sessionId === ordered[index])
+    if (unchanged) return maps
+    return { ...maps, sessionRecency: ordered }
+  }
+  const evicted = new Set(ordered.slice(0, ordered.length - SELECTION_STORE_SESSION_CAP))
+  let clearedVariantKeys = maps.clearedVariantKeys
+  if (clearedVariantKeys.some((key) => {
+    const parsed = typeof key === "string" ? parseTombstoneKey(key) : null
+    return parsed !== null && evicted.has(parsed[0])
+  })) {
+    clearedVariantKeys = clearedVariantKeys.filter((key) => {
+      const parsed = typeof key === "string" ? parseTombstoneKey(key) : null
+      return parsed === null || !evicted.has(parsed[0])
+    })
+  }
+  return {
+    sessionModelSelections: dropEvictedSessions(maps.sessionModelSelections, evicted),
+    sessionAgentSelections: dropEvictedSessions(maps.sessionAgentSelections, evicted),
+    sessionAgentModelSelections: dropEvictedSessions(maps.sessionAgentModelSelections, evicted),
+    sessionAgentModelVariantSelections: dropEvictedSessions(maps.sessionAgentModelVariantSelections, evicted),
+    clearedVariantKeys,
+    sessionRecency: ordered.slice(ordered.length - SELECTION_STORE_SESSION_CAP),
+  }
+}
+
+const hasSessionSelection = (maps: SelectionRetentionMaps, sessionId: string): boolean => {
+  if (maps.sessionModelSelections.has(sessionId)) return true
+  if (maps.sessionAgentSelections.has(sessionId)) return true
+  if (maps.sessionAgentModelSelections.has(sessionId)) return true
+  if (maps.sessionAgentModelVariantSelections.has(sessionId)) return true
+  if (maps.sessionRecency.includes(sessionId)) return true
+  return maps.clearedVariantKeys.some((key) => parseTombstoneKey(key)?.[0] === sessionId)
+}
+
+// Raw-payload recency seeding for `migrate`: persisted recency first, then
+// union leftovers in persisted array order (which already reflects
+// most-recent-last writes). Invalid entries are skipped, never fatal.
+const seedRecencyForRawPayload = (record: Record<string, unknown>): string[] => {
+  const ordered = sanitizeSessionRecency(record.sessionRecency)
+  const known = new Set(ordered)
+  const append = (sessionId: unknown) => {
+    if (typeof sessionId === "string" && !known.has(sessionId)) {
+      known.add(sessionId)
+      ordered.push(sessionId)
+    }
+  }
+  const appendPairKeys = (raw: unknown) => {
+    if (!Array.isArray(raw)) return
+    for (const entry of raw) {
+      if (Array.isArray(entry) && entry.length > 0) append(entry[0])
+    }
+  }
+  appendPairKeys(record.sessionModelSelections)
+  appendPairKeys(record.sessionAgentSelections)
+  appendPairKeys(record.sessionAgentModelSelections)
+  appendPairKeys(record.sessionAgentModelVariantSelections)
+  if (Array.isArray(record.clearedVariantKeys)) {
+    for (const key of record.clearedVariantKeys) {
+      if (typeof key === "string") {
+        const parsed = parseTombstoneKey(key)
+        if (parsed) append(parsed[0])
+      }
+    }
+  }
+  return ordered
+}
+
+// Trim raw persisted arrays to the kept sessions. Entries that cannot be
+// attributed to a session (malformed) are preserved so `merge` still reports
+// them as failure instead of silently dropping evidence.
+const trimRawPairsToSessions = (raw: unknown, kept: ReadonlySet<string>): unknown => {
+  if (!Array.isArray(raw)) return raw
+  return raw.filter((entry) => {
+    const sessionId = Array.isArray(entry) && entry.length > 0 && typeof entry[0] === "string"
+      ? entry[0]
+      : null
+    return sessionId === null || kept.has(sessionId)
+  })
+}
+
+const trimRawTombstonesToSessions = (raw: unknown, kept: ReadonlySet<string>): unknown => {
+  if (!Array.isArray(raw)) return raw
+  return raw.filter((key) => {
+    if (typeof key !== "string") return true
+    const parsed = parseTombstoneKey(key)
+    return parsed === null || kept.has(parsed[0])
+  })
+}
+
+// Version migration: seed `sessionRecency` deterministically and trim
+// oversized payloads to the cap, keeping the most recent sessions. Malformed
+// payloads pass through untouched for `merge` to classify; this never throws.
+const migrateSelectionRetention = (persistedState: unknown): unknown => {
+  if (!isRecord(persistedState)) return persistedState
+  try {
+    const ordered = seedRecencyForRawPayload(persistedState)
+    const current = sanitizeSessionRecency(persistedState.sessionRecency)
+    const recencyIntact = current.length === ordered.length
+      && current.every((sessionId, index) => sessionId === ordered[index])
+      && Array.isArray(persistedState.sessionRecency)
+      && (persistedState.sessionRecency as unknown[]).length === current.length
+    if (ordered.length <= SELECTION_STORE_SESSION_CAP) {
+      if (recencyIntact) return persistedState
+      return { ...persistedState, sessionRecency: ordered }
+    }
+    const kept = new Set(ordered.slice(ordered.length - SELECTION_STORE_SESSION_CAP))
+    return {
+      ...persistedState,
+      sessionModelSelections: trimRawPairsToSessions(persistedState.sessionModelSelections, kept),
+      sessionAgentSelections: trimRawPairsToSessions(persistedState.sessionAgentSelections, kept),
+      sessionAgentModelSelections: trimRawPairsToSessions(persistedState.sessionAgentModelSelections, kept),
+      sessionAgentModelVariantSelections: trimRawPairsToSessions(persistedState.sessionAgentModelVariantSelections, kept),
+      clearedVariantKeys: trimRawTombstonesToSessions(persistedState.clearedVariantKeys, kept),
+      sessionRecency: ordered.slice(ordered.length - SELECTION_STORE_SESSION_CAP),
+    }
+  } catch {
+    // A malformed payload must never crash hydration; `merge` classifies it.
+    return persistedState
+  }
+}
 
 const mruSet = <K, V>(map: Map<K, V>, key: K, value: V) => {
   map.delete(key)
@@ -280,15 +500,17 @@ export const useSelectionStore = create<SelectionState>()(
       hasHydrated: typeof window === "undefined",
       contextStoreMigrationVersion: undefined,
       clearedVariantKeys: [],
+      sessionRecency: [],
 
       saveSessionModelSelection: (sessionId, providerId, modelId) => {
         dirtyFlatSessions.add(sessionId)
         dirtyLastUsedProvider = true
         set((s) => {
-          const map = new Map(s.sessionModelSelections)
-          map.delete(sessionId)
-          map.set(sessionId, { providerId, modelId })
-          return { sessionModelSelections: map, lastUsedProvider: { providerID: providerId, modelID: modelId } }
+          const sessionModelSelections = new Map(s.sessionModelSelections)
+          sessionModelSelections.delete(sessionId)
+          sessionModelSelections.set(sessionId, { providerId, modelId })
+          const retained = enforceSelectionRetention({ ...s, sessionModelSelections }, [sessionId])
+          return { ...retained, lastUsedProvider: { providerID: providerId, modelID: modelId } }
         })
       },
 
@@ -299,10 +521,10 @@ export const useSelectionStore = create<SelectionState>()(
         dirtyFlatSessions.add(sessionId)
         set((s) => {
           if (s.sessionAgentSelections.get(sessionId) === agentName) return s
-          const map = new Map(s.sessionAgentSelections)
-          map.delete(sessionId)
-          map.set(sessionId, agentName)
-          return { sessionAgentSelections: map }
+          const sessionAgentSelections = new Map(s.sessionAgentSelections)
+          sessionAgentSelections.delete(sessionId)
+          sessionAgentSelections.set(sessionId, agentName)
+          return enforceSelectionRetention({ ...s, sessionAgentSelections }, [sessionId])
         })
       },
 
@@ -320,7 +542,7 @@ export const useSelectionStore = create<SelectionState>()(
           outer.delete(sessionId)
           inner.set(agentName, { providerId, modelId })
           outer.set(sessionId, inner)
-          return { sessionAgentModelSelections: outer }
+          return enforceSelectionRetention({ ...s, sessionAgentModelSelections: outer }, [sessionId])
         })
       },
 
@@ -339,7 +561,10 @@ export const useSelectionStore = create<SelectionState>()(
               dirtyVariantKeys.add(tombstone)
               set((s) => {
                 if (s.clearedVariantKeys.includes(tombstone)) return s
-                return { clearedVariantKeys: [...s.clearedVariantKeys, tombstone] } as Partial<SelectionState>
+                return enforceSelectionRetention(
+                  { ...s, clearedVariantKeys: [...s.clearedVariantKeys, tombstone] },
+                  [sessionId],
+                )
               })
             }
             return
@@ -363,7 +588,10 @@ export const useSelectionStore = create<SelectionState>()(
             const tombstones = s.clearedVariantKeys.includes(tombstone)
               ? s.clearedVariantKeys
               : [...s.clearedVariantKeys, tombstone]
-            return { sessionAgentModelVariantSelections: outer, clearedVariantKeys: tombstones }
+            return enforceSelectionRetention(
+              { ...s, sessionAgentModelVariantSelections: outer, clearedVariantKeys: tombstones },
+              [sessionId],
+            )
           })
           return
         }
@@ -378,13 +606,45 @@ export const useSelectionStore = create<SelectionState>()(
           modelMap.set(modelKey, variant)
           agentMap.set(agentName, modelMap)
           outer.set(sessionId, agentMap)
-          return { sessionAgentModelVariantSelections: outer }
+          return enforceSelectionRetention({ ...s, sessionAgentModelVariantSelections: outer }, [sessionId])
         })
       },
 
       getAgentModelVariantForSession: (sessionId, agentName, providerId, modelId) => {
         const key = buildVariantModelKey(providerId, modelId)
         return get().sessionAgentModelVariantSelections.get(sessionId)?.get(agentName)?.get(key)
+      },
+
+      forgetSession: (sessionId: string) => {
+        if (!sessionId || !hasSessionSelection(get(), sessionId)) return
+        // Drop pending dirty overlays for the deleted session so a later
+        // rehydrate cannot resurrect its selections over the tombstone.
+        dirtyFlatSessions.delete(sessionId)
+        for (const key of Array.from(dirtyAgentModelKeys)) {
+          if (parseAgentModelDirtyKey(key)?.[0] === sessionId) dirtyAgentModelKeys.delete(key)
+        }
+        for (const key of Array.from(dirtyVariantKeys)) {
+          if (parseTombstoneKey(key)?.[0] === sessionId) dirtyVariantKeys.delete(key)
+        }
+        set((s) => {
+          if (!hasSessionSelection(s, sessionId)) return s
+          let clearedVariantKeys = s.clearedVariantKeys
+          if (clearedVariantKeys.some((key) => parseTombstoneKey(key)?.[0] === sessionId)) {
+            clearedVariantKeys = clearedVariantKeys.filter((key) => parseTombstoneKey(key)?.[0] !== sessionId)
+          }
+          let sessionRecency = s.sessionRecency
+          if (sessionRecency.includes(sessionId)) {
+            sessionRecency = sessionRecency.filter((id) => id !== sessionId)
+          }
+          return {
+            sessionModelSelections: dropSessionKey(s.sessionModelSelections, sessionId),
+            sessionAgentSelections: dropSessionKey(s.sessionAgentSelections, sessionId),
+            sessionAgentModelSelections: dropSessionKey(s.sessionAgentModelSelections, sessionId),
+            sessionAgentModelVariantSelections: dropSessionKey(s.sessionAgentModelVariantSelections, sessionId),
+            clearedVariantKeys,
+            sessionRecency,
+          }
+        })
       },
     }),
     {
@@ -404,6 +664,7 @@ export const useSelectionStore = create<SelectionState>()(
         lastUsedProvider: state.lastUsedProvider,
         contextStoreMigrationVersion: state.contextStoreMigrationVersion,
         clearedVariantKeys: state.clearedVariantKeys,
+        sessionRecency: state.sessionRecency,
       }),
       merge: (persistedState: unknown, currentState) => {
         // Malformed canonical roots are failure, not empty success. Missing
@@ -558,22 +819,49 @@ export const useSelectionStore = create<SelectionState>()(
           lastUsedProvider = currentState.lastUsedProvider
         }
 
+        // Seed recency deterministically (persisted order first, union
+        // leftovers in map order) and trim once so oversized disk state is
+        // bounded on hydration. Live dirty sessions sort most-recent; an
+        // invalid recency rebuilds silently from insertion order.
+        const dirtyTouched = new Set<string>()
+        for (const sessionId of dirtyFlatSessions) dirtyTouched.add(sessionId)
+        for (const key of dirtyAgentModelKeys) {
+          const parsed = parseAgentModelDirtyKey(key)
+          if (parsed) dirtyTouched.add(parsed[0])
+        }
+        for (const key of dirtyVariantKeys) {
+          const parsed = parseTombstoneKey(key)
+          if (parsed) dirtyTouched.add(parsed[0])
+        }
+        const retained = enforceSelectionRetention(
+          {
+            sessionModelSelections: models,
+            sessionAgentSelections: agents,
+            sessionAgentModelSelections: agentModels,
+            sessionAgentModelVariantSelections: variants,
+            clearedVariantKeys: Array.from(tombstones),
+            sessionRecency: sanitizeSessionRecency(persistedRecord?.sessionRecency),
+          },
+          Array.from(dirtyTouched),
+        )
+
         const migrationComplete = alreadyMigrated || (!canonicalFailed && !legacyFailed)
         clearDirty()
 
         return {
           ...currentState,
-          sessionModelSelections: models,
-          sessionAgentSelections: agents,
-          sessionAgentModelSelections: agentModels,
-          sessionAgentModelVariantSelections: variants,
+          sessionModelSelections: retained.sessionModelSelections,
+          sessionAgentSelections: retained.sessionAgentSelections,
+          sessionAgentModelSelections: retained.sessionAgentModelSelections,
+          sessionAgentModelVariantSelections: retained.sessionAgentModelVariantSelections,
           lastUsedProvider,
           hasHydrated: true,
-          clearedVariantKeys: migrationComplete ? [] : Array.from(tombstones),
+          clearedVariantKeys: migrationComplete ? [] : retained.clearedVariantKeys,
+          sessionRecency: retained.sessionRecency,
           contextStoreMigrationVersion: migrationComplete ? CONTEXT_STORE_MIGRATION_VERSION : currentState.contextStoreMigrationVersion,
         }
       },
-      migrate: (persistedState: unknown) => persistedState,
+      migrate: (persistedState: unknown) => migrateSelectionRetention(persistedState),
     }
   )
 )

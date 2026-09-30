@@ -71,7 +71,7 @@ import {
 } from './sidebar/utils';
 import { SidebarSessionLikeButton } from './sidebar/sidebarRowChrome';
 import {
-  compareSessionsByLifecycleOrder,
+  createSessionLifecycleComparator,
   EMPTY_SESSION_ORDER_RANKS,
   orderSessionsByLifecycleScopes,
   useSessionOrderingStore,
@@ -464,7 +464,8 @@ const SessionSidebarComponent: React.FC<SessionSidebarProps> = ({
       collection.push(session);
       map.set(parentID, collection);
     });
-    map.forEach((list) => list.sort((a, b) => compareSessionsByLifecycleOrder(a, b, pinnedSessionIds, sessionOrderRanks)));
+    const compare = createSessionLifecycleComparator(pinnedSessionIds, sessionOrderRanks);
+    map.forEach((list) => list.sort(compare));
     return map;
   }, [orderedSessions, pinnedSessionIds, sessionOrderRanks]);
 

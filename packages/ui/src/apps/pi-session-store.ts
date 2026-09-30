@@ -32,6 +32,7 @@ import { adoptServerRunTiming, observeSessionActivityTiming, removeSessionActivi
 import { observeSessionActivityEvent, raiseSessionOrderingBaselines, removeSessionOrdering } from '@/sync/session-ordering';
 import { dispatchSessionNotification, notifySessionTurnComplete } from '@/sync/notification-store';
 import { cleanupPersistedSessionState } from '@/sync/session-deletion-cleanup';
+import { useSelectionStore } from '@/sync/selection-store';
 import { clearAllRevertNavigations, clearRevertNavigation, getRevertNavigation, setRevertNavigation } from '@/sync/revert-navigation-store';
 import {
   applyArchiveChange,
@@ -191,6 +192,12 @@ export class PiSessionStore {
    *  refresh has begun, or after a runtime switch) commit nothing. Cleared
    *  on `dispose` / `clear` / `resetForRuntime`. */
   private directoryRefreshGenerationByDirectory = new Map<string, number>();
+  // Directories queued or in flight in a `refreshAllDirectoryCatalogs` pass,
+  // keyed by runtime generation + directory. A concurrent pass (feeder,
+  // retention cleanup) joins the existing listing instead of issuing a
+  // duplicate `listSessions`; explicit `refreshDirectoryCatalog` calls are
+  // unaffected and still supersede.
+  private pendingCatalogPassByKey = new Map<string, Promise<void>>();
   /** Committed deletions for the active runtime. A tombstone survives its
    *  echo so an in-flight list, detail, or history response started before
    *  the deletion cannot resurrect the session. Archive and directory moves
@@ -668,6 +675,15 @@ export class PiSessionStore {
         // Persisted cleanup is best-effort; the in-memory tombstone still guards resurrection.
       }
     }
+    // Selection preferences are keyed by session id only (no runtime or
+    // directory scope), so they are forgotten for every authoritative
+    // deletion — including directory-unknown ids the scoped cleanup skips.
+    // Archive never reaches this commit, so restorable sessions keep theirs.
+    try {
+      useSelectionStore.getState().forgetSession(sessionId);
+    } catch {
+      // Selection cleanup is best-effort; the in-memory tombstone still guards resurrection.
+    }
     removeSessionActivityTiming(sessionId);
     removeSessionOrdering(sessionId);
     clearRevertNavigation(sessionId);
@@ -1066,7 +1082,47 @@ export class PiSessionStore {
   async refreshAllDirectoryCatalogs(directories: Iterable<string>): Promise<void> {
     const ordered = [...new Set(directories)].map((directory) => normalizePath(directory)).filter((directory): directory is string => Boolean(directory));
     if (ordered.length === 0) return;
-    await mapDirectoriesWithRefreshSlot(ordered, (directory) => this.refreshDirectoryCatalog(directory));
+    const generation = this.runtimeGeneration;
+    const joined: Promise<void>[] = [];
+    const owned: string[] = [];
+    const settle = new Map<string, () => void>();
+    const ownedPromises = new Map<string, Promise<void>>();
+    for (const directory of ordered) {
+      const key = `${generation}\0${directory}`;
+      const pending = this.pendingCatalogPassByKey.get(key);
+      if (pending) {
+        joined.push(pending);
+        continue;
+      }
+      owned.push(directory);
+      const promise = new Promise<void>((resolve) => settle.set(directory, resolve));
+      ownedPromises.set(directory, promise);
+      this.pendingCatalogPassByKey.set(key, promise);
+    }
+    const run = mapDirectoriesWithRefreshSlot(owned, async (directory) => {
+      const key = `${generation}\0${directory}`;
+      try {
+        return await this.refreshDirectoryCatalog(directory);
+      } finally {
+        if (this.pendingCatalogPassByKey.get(key) === ownedPromises.get(directory)) {
+          this.pendingCatalogPassByKey.delete(key);
+        }
+        settle.get(directory)?.();
+      }
+    });
+    try {
+      await Promise.all([run, ...joined]);
+    } finally {
+      // A pass that ends early must not strand joiners on directories it
+      // never started.
+      for (const directory of owned) {
+        const key = `${generation}\0${directory}`;
+        if (this.pendingCatalogPassByKey.get(key) === ownedPromises.get(directory)) {
+          this.pendingCatalogPassByKey.delete(key);
+        }
+        settle.get(directory)?.();
+      }
+    }
   }
 
   async start(options: {

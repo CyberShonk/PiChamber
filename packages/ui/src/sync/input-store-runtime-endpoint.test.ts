@@ -7,6 +7,8 @@ import { useInputStore } from "./input-store"
 const originalUploadAttachment = piClient.uploadAttachment
 const originalDeleteAttachment = piClient.deleteAttachment
 const originalFetch = globalThis.fetch
+const originalCreateObjectURL = URL.createObjectURL
+const originalRevokeObjectURL = URL.revokeObjectURL
 const stubFetch = (async () => new Response(null, { status: 404 })) as typeof fetch
 
 const waitFor = async (predicate: () => boolean) => {
@@ -117,5 +119,48 @@ describe("input-store runtime endpoint change while uploading", () => {
     useInputStore.getState().retryAttachmentUpload(settled[0].id)
     await waitFor(() => useInputStore.getState().attachedFiles[0]?.uploadState?.status === "ready")
     expect(useInputStore.getState().attachedFiles[0]?.uploadState?.status).toBe("ready")
+  })
+
+  test("retains image preview URLs across a runtime switch so the retryable failure still renders", async () => {
+    const revoked: string[] = []
+    URL.createObjectURL = ((() => "blob:runtime-preview") as unknown) as typeof URL.createObjectURL
+    URL.revokeObjectURL = (((url: string) => {
+      revoked.push(url)
+    }) as unknown) as typeof URL.revokeObjectURL
+    try {
+      piClient.uploadAttachment = (_file, input) => new Promise((resolve) => {
+        input.signal?.addEventListener("abort", () => {
+          resolve({
+            id: "late-image-upload",
+            name: input.filename,
+            mime: input.mime,
+            size: _file.size,
+            expiresAt: Date.now() + 60_000,
+          })
+        }, { once: true })
+      })
+
+      useInputStore.getState().activateAttachmentsDraft("draft-a")
+      await useInputStore.getState().addAttachedFile(new File(["img"], "img.png", { type: "image/png" }))
+      await waitFor(() => useInputStore.getState().attachedFiles.some(
+        (file) => file.uploadState?.status === "uploading",
+      ))
+      expect(useInputStore.getState().attachedFiles[0].previewUrl).toBe("blob:runtime-preview")
+
+      switchRuntimeEndpoint({ apiBaseUrl: "https://runtime-b.example", runtimeKey: "runtime-b" })
+      const failed = useInputStore.getState().attachedFiles
+      expect(failed).toHaveLength(1)
+      expect(failed[0].uploadState).toEqual({
+        status: "failed",
+        error: "The runtime changed. Retry the upload.",
+      })
+      // The file stays rendered as a retryable failure: its preview URL
+      // must survive the switch (transport abort only, no revoke).
+      expect(failed[0].previewUrl).toBe("blob:runtime-preview")
+      expect(revoked).toEqual([])
+    } finally {
+      URL.createObjectURL = originalCreateObjectURL
+      URL.revokeObjectURL = originalRevokeObjectURL
+    }
   })
 })

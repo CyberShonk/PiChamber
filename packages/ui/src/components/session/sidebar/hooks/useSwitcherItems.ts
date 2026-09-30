@@ -4,7 +4,7 @@ import { useCatalogUiSessions } from '@/sync/sync-context';
 import { resolveGlobalSessionDirectory } from '@/lib/chat/sessionDirectory';
 import { useProjectsStore } from '@/stores/useProjectsStore';
 import { useSessionPinnedStore } from '@/stores/useSessionPinnedStore';
-import { compareSessionsByLifecycleOrder, useSessionOrderingStore } from '@/sync/session-ordering';
+import { createSessionLifecycleComparator, useSessionOrderingStore } from '@/sync/session-ordering';
 import { useGitAllBranches } from '@/stores/useGitStore';
 import type { SessionNode } from '../types';
 
@@ -87,8 +87,9 @@ export const useSwitcherItems = (enabled: boolean, options: SwitcherItemsOptions
         childrenByParent.set(parentId, [session]);
       }
     }
+    const compareChildren = createSessionLifecycleComparator(pinnedSessionIds, sessionOrderRanks);
     childrenByParent.forEach((list) => {
-      list.sort((a, b) => compareSessionsByLifecycleOrder(a, b, pinnedSessionIds, sessionOrderRanks));
+      list.sort(compareChildren);
     });
 
     const parents = activeSessions
@@ -99,7 +100,7 @@ export const useSwitcherItems = (enabled: boolean, options: SwitcherItemsOptions
         const directory = resolveGlobalSessionDirectory(session);
         return findProjectForDirectory(directory)?.id === scopeProjectId;
       })
-      .sort((a, b) => compareSessionsByLifecycleOrder(a, b, pinnedSessionIds, sessionOrderRanks))
+      .sort(createSessionLifecycleComparator(pinnedSessionIds, sessionOrderRanks))
       .slice(0, maxParents);
 
     const buildNode = (session: Session): SessionNode => {
