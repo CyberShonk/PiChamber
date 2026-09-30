@@ -305,6 +305,8 @@ export interface PiSessionSnapshot {
   extensionApps?: Array<import('./protocol').PiExtensionAppPayload>;
   /** Session-scoped window/tab title set by an extension. */
   extensionTitle?: string;
+  /** Live extension working message/visibility at snapshot time. */
+  extensionWorking?: { message?: string; visible?: boolean };
   /** Retry countdown/error context while `lifecycle` is `retry`. */
   retry?: PiRetryInfo;
   /** Latest active or completed compaction state. */

@@ -4,7 +4,9 @@ import { useAssistantStatus } from '@/hooks/useAssistantStatus';
 import { getProviderModelDisplayName } from '@/lib/modelDisplay';
 import { useConfigStore } from '@/stores/useConfigStore';
 import { useSessionUIStore } from '@/sync/session-ui-store';
+import { usePiSessionSnapshot } from '@/sync/pi-session-context';
 import { useSessionActivityStartedAt } from '@/sync/session-activity-timing';
+import { stripAnsi } from '@/lib/pi/ansi';
 import { Button } from '@/components/ui/button';
 import { Icon } from '@/components/icon/Icon';
 import { cn } from '@/lib/utils';
@@ -33,6 +35,14 @@ const LiveTurnStatus: React.FC<{
     statusText?: string;
 }> = React.memo(({ isWorking, startedAt, statusText }) => {
     const currentSessionId = useSessionUIStore((state) => state.currentSessionId);
+    const extensionWorking = usePiSessionSnapshot(
+        React.useCallback((state) => {
+            const session = currentSessionId ? state.reducer.bySession.get(currentSessionId) : undefined;
+            return session?.extensionWorking;
+        }, [currentSessionId]),
+        (a, b) => a?.message === b?.message && a?.visible === b?.visible,
+        currentSessionId ? `session:${currentSessionId}` : 'chrome',
+    );
     const { activeModel, working } = useAssistantStatus();
     const authoritativeStartedAt = useSessionActivityStartedAt(currentSessionId ?? '');
     const providers = useConfigStore((state) => state.providers);
@@ -45,11 +55,22 @@ const LiveTurnStatus: React.FC<{
         return getProviderModelDisplayName(provider, activeModel.modelId) || null;
     }, [activeModel, providers]);
 
+    if (extensionWorking?.visible === false) {
+        return null;
+    }
+
+    const effectiveStatusText = extensionWorking?.message
+        ? stripAnsi(extensionWorking.message)
+        : (statusText ?? working.statusText);
+    const isGeneric = extensionWorking?.message
+        ? false
+        : (statusText ? false : working.isGenericStatus);
+
     return (
         <WorkingPlaceholder
             isWorking={isWorking || working.isWorking}
-            statusText={statusText ?? working.statusText}
-            isGenericStatus={statusText ? false : working.isGenericStatus}
+            statusText={effectiveStatusText}
+            isGenericStatus={isGeneric}
             isWaitingForPermission={working.isWaitingForPermission}
             retryInfo={working.retryInfo}
             modelName={modelDisplayName}

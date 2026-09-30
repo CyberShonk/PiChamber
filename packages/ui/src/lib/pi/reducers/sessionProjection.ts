@@ -269,6 +269,7 @@ export const hydrateSessionFromDetail = (
     extensionPanels?: PiExtensionPanelPayload[];
     extensionApps?: PiExtensionAppPayload[];
     extensionTitle?: string;
+    extensionWorking?: { message?: string; visible?: boolean };
     messages: Array<{
       message: PiUserMessage | PiAssistantMessage | {
         id: string;
@@ -336,8 +337,11 @@ export const hydrateSessionFromDetail = (
       .map((app) => [app.appId, app]));
   }
   session.extensionTitle = detail.extensionTitle;
+  if (detail.extensionWorking) {
+    session.extensionWorking = { ...detail.extensionWorking };
+  }
 
-  for (const { message, parts } of detail.messages) {
+  for (const { message, parts } of (detail.messages ?? [])) {
     const isExtension = message.role === 'extension';
     const reducerMessage: PiReducerMessage = {
       id: message.id,

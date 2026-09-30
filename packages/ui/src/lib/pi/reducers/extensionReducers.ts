@@ -6,6 +6,7 @@ import type {
   PiExtensionPanelPayload,
 } from '../protocol';
 import type {
+  PiExtensionEditorOp,
   PiReducerMessage,
   PiReducerSessionState,
   PiReducerState,
@@ -133,10 +134,22 @@ export const reduceExtensionCatalog = (
 
 export const reduceExtensionEditor = (
   session: PiReducerSessionState,
-  payload: { text: string },
+  payload: { text: string; mode?: 'set' | 'paste' },
   sequence: number,
 ): void => {
-  session.extensionEditor = { text: payload.text, sequence };
+  const mode = payload.mode === 'paste' ? 'paste' : 'set';
+  const op: PiExtensionEditorOp = { text: payload.text, mode, sequence };
+  if (mode === 'set') {
+    session.extensionEditorOps = [op];
+  } else {
+    const existing = session.extensionEditorOps ?? (session.extensionEditor ? [session.extensionEditor] : []);
+    const nextOps = [...existing, op];
+    if (nextOps.length > 32) {
+      nextOps.splice(0, nextOps.length - 32);
+    }
+    session.extensionEditorOps = nextOps;
+  }
+  session.extensionEditor = op;
 };
 
 export const reduceExtensionTitle = (
@@ -182,6 +195,23 @@ export const reduceExtensionError = (
     message: payload.message,
     createdAt: Date.now(),
   });
+};
+
+export const reduceExtensionWorking = (
+  session: PiReducerSessionState,
+  payload: { message?: string; visible?: boolean },
+): void => {
+  const current = session.extensionWorking;
+  const nextMessage = 'message' in payload ? (payload.message || undefined) : current?.message;
+  const nextVisible = 'visible' in payload ? payload.visible : current?.visible;
+  if (nextMessage === undefined && nextVisible === undefined) {
+    delete session.extensionWorking;
+  } else {
+    session.extensionWorking = {
+      ...(nextMessage !== undefined ? { message: nextMessage } : {}),
+      ...(nextVisible !== undefined ? { visible: nextVisible } : {}),
+    };
+  }
 };
 
 /**

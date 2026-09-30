@@ -188,6 +188,7 @@ export interface PiSessionDetailResponse extends Pick<
   | 'extensionPanels'
   | 'extensionApps'
   | 'extensionTitle'
+  | 'extensionWorking'
 > {
   session: PiSession;
   messages: PiMessageView[];
@@ -689,6 +690,7 @@ export type PiEventName =
   | 'extension.dialog.dismiss'
   | 'extension.ui'
   | 'extension.app'
+  | 'extension.working'
   | 'extension.error';
 
 /** Common envelope for every public event. */
@@ -934,8 +936,8 @@ export type PiExtensionCatalogEvent = PiEventEnvelope<
   { providers?: true; resources?: true; commands?: true }
 >;
 
-/** Standard Pi RPC editor replacement for the owning session composer. */
-export type PiExtensionEditorEvent = PiEventEnvelope<'extension.editor', { text: string }>;
+/** Standard Pi RPC editor replacement or insertion for the owning session composer. */
+export type PiExtensionEditorEvent = PiEventEnvelope<'extension.editor', { text: string; mode?: 'set' | 'paste' }>;
 
 /** Standard Pi RPC window/tab title; no title clears the session override. */
 export type PiExtensionTitleEvent = PiEventEnvelope<'extension.title', { title?: string }>;
@@ -1038,6 +1040,15 @@ export interface PiExtensionAppPayload {
 
 export type PiExtensionAppEvent = PiEventEnvelope<'extension.app', PiExtensionAppPayload>;
 
+/** Session-scoped working indicator message or visibility set via `ctx.ui.setWorkingMessage` / `setWorkingVisible`. */
+export type PiExtensionWorkingEvent = PiEventEnvelope<
+  'extension.working',
+  {
+    message?: string;
+    visible?: boolean;
+  }
+>;
+
 /** Extensions loaded for a directory plus the slash commands they register. */
 export interface PiExtensionListResponse {
   directory?: string;
@@ -1092,6 +1103,7 @@ export type PiSessionEvent =
   | PiExtensionDialogDismissEvent
   | PiExtensionUiEvent
   | PiExtensionAppEvent
+  | PiExtensionWorkingEvent
   | PiExtensionErrorEvent;
 
 // ---------------------------------------------------------------------------
@@ -1130,6 +1142,7 @@ export const PI_EVENT_KINDS = [
   'extension.dialog.dismiss',
   'extension.ui',
   'extension.app',
+  'extension.working',
   'extension.error',
 ] as const satisfies readonly PiEventName[];
 

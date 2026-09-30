@@ -337,34 +337,69 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     currentSessionId ? `session:${currentSessionId}` : "chrome",
   );
   const isSessionInUse = sessionLoadErrorCode === "SESSION_IN_USE";
-  const extensionEditor = usePiSessionSnapshot(
-    (state) =>
-      currentSessionId
-        ? state.reducer.bySession.get(currentSessionId)?.extensionEditor
-        : undefined,
-    (previous, next) => previous?.sequence === next?.sequence,
+  const extensionEditorOps = usePiSessionSnapshot(
+    (state) => {
+      if (!currentSessionId) return undefined;
+      const session = state.reducer.bySession.get(currentSessionId);
+      if (!session) return undefined;
+      return (
+        session.extensionEditorOps ??
+        (session.extensionEditor ? [session.extensionEditor] : undefined)
+      );
+    },
+    (previous, next) => {
+      if (previous === next) return true;
+      if (!previous || !next) return false;
+      if (previous.length !== next.length) return false;
+      return previous.every(
+        (op, idx) =>
+          op.sequence === next[idx]?.sequence &&
+          op.text === next[idx]?.text &&
+          op.mode === next[idx]?.mode,
+      );
+    },
     currentSessionId ? `session:${currentSessionId}` : "chrome",
   );
   const appliedExtensionEditorBySessionRef = React.useRef(
     new Map<string, number>(),
   );
   React.useEffect(() => {
-    if (!currentSessionId || !extensionEditor) return;
+    if (!currentSessionId || !extensionEditorOps || extensionEditorOps.length === 0) return;
     const previousSequence =
       appliedExtensionEditorBySessionRef.current.get(currentSessionId) ?? -1;
-    if (extensionEditor.sequence <= previousSequence) return;
+    const pendingOps = extensionEditorOps.filter(
+      (op) => op.sequence > previousSequence,
+    );
+    if (pendingOps.length === 0) return;
+
+    let maxSequence = previousSequence;
+    for (const op of pendingOps) {
+      if (op.sequence > maxSequence) {
+        maxSequence = op.sequence;
+      }
+      if (op.mode === "paste") {
+        const editor = composerRef.current;
+        if (editor) {
+          editor.insertText(op.text);
+          editor.focus({ preventScroll: true });
+        } else {
+          setMessage((prev) => prev + op.text);
+        }
+      } else {
+        confirmedMentionsRef.current.clear();
+        setMessage(op.text);
+        closeAutocomplete();
+      }
+    }
     appliedExtensionEditorBySessionRef.current.set(
       currentSessionId,
-      extensionEditor.sequence,
+      maxSequence,
     );
-    confirmedMentionsRef.current.clear();
-    setMessage(extensionEditor.text);
-    closeAutocomplete();
     getPiSessionStore().consumeExtensionEditor(
       currentSessionId,
-      extensionEditor.sequence,
+      maxSequence,
     );
-  }, [closeAutocomplete, currentSessionId, extensionEditor]);
+  }, [closeAutocomplete, currentSessionId, extensionEditorOps]);
   const fallbackDirectory = useDirectoryStore((s) => s.currentDirectory);
   const currentDirectory = useEffectiveDirectory() ?? fallbackDirectory;
   const currentSessionDirectoryForSync = useSessionUIStore(

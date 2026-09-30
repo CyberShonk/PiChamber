@@ -2437,12 +2437,20 @@ export class PiSessionStore {
   deleteUpload = (id: string) => piClient.deleteAttachment(id, this.scope());
   selected(): PiProjectedSession | null { const id = this.state.selectedSessionId; const session = id ? this.state.reducer.bySession.get(id) : undefined; return session ? projectSession(session) : null; }
 
-  /** Consume a live editor replacement once so remount/revisit cannot replay it. */
+  /** Consume live editor operations once so remount/revisit cannot replay them. */
   consumeExtensionEditor(sessionId: PiSessionId, sequence: number): void {
     const current = this.state.reducer.bySession.get(sessionId);
-    if (current?.extensionEditor?.sequence !== sequence) return;
+    if (!current) return;
+    const existingOps = current.extensionEditorOps ?? (current.extensionEditor ? [current.extensionEditor] : []);
+    const remainingOps = existingOps.filter((op) => op.sequence > sequence);
+    const nextOp = remainingOps.length > 0 ? remainingOps[remainingOps.length - 1] : undefined;
+    if (current.extensionEditor === undefined && current.extensionEditorOps === undefined && remainingOps.length === 0) return;
     const bySession = new Map(this.state.reducer.bySession);
-    bySession.set(sessionId, { ...current, extensionEditor: undefined });
+    bySession.set(sessionId, {
+      ...current,
+      extensionEditorOps: remainingOps.length > 0 ? remainingOps : undefined,
+      extensionEditor: nextOp,
+    });
     this.state = { ...this.state, reducer: { ...this.state.reducer, bySession } };
     this.emit([`session:${sessionId}`]);
   }
