@@ -78,7 +78,13 @@ describe('extension public projections', () => {
 
   it('projects bounded editor/title/catalog and tree invalidation events', () => {
     expect(projectEventFrame(frame('extension.editor', { text: 'draft' }))).toMatchObject({
-      name: 'extension.editor', payload: { text: 'draft' },
+      name: 'extension.editor', payload: { text: 'draft', mode: 'set' },
+    });
+    expect(projectEventFrame(frame('extension.editor', { text: 'inserted', mode: 'paste' }))).toMatchObject({
+      name: 'extension.editor', payload: { text: 'inserted', mode: 'paste' },
+    });
+    expect(projectEventFrame(frame('extension.editor', { text: 'replacement', mode: 'set' }))).toMatchObject({
+      name: 'extension.editor', payload: { text: 'replacement', mode: 'set' },
     });
     expect(projectEventFrame(frame('extension.editor', { text: 'x'.repeat(100_001) }))).toBeNull();
     expect(projectEventFrame(frame('extension.title', { title: 'Mode\u0000 Picker' }))).toMatchObject({
@@ -126,6 +132,19 @@ describe('extension public projections', () => {
     }))).toBeNull();
   });
 
+  it('projects extension.working events and sanitizes/bounds payloads', () => {
+    expect(projectEventFrame(frame('extension.working', { message: 'Thinking\u0000 deeply', visible: true }))).toMatchObject({
+      name: 'extension.working',
+      payload: { message: 'Thinking  deeply', visible: true },
+    });
+    expect(projectEventFrame(frame('extension.working', { visible: false }))).toMatchObject({
+      name: 'extension.working',
+      payload: { visible: false },
+    });
+    expect(projectEventFrame(frame('extension.working', { message: 'x'.repeat(250) }))?.payload.message).toHaveLength(200);
+    expect(projectEventFrame(frame('extension.working', { message: 123, visible: 'yes' }))).toBeNull();
+  });
+
   it('projects snapshot extensionPanels/extensionApps for reconnect', () => {
     const projected = projectEventFrame(frame('session.snapshot', {
       isStreaming: false,
@@ -136,6 +155,7 @@ describe('extension public projections', () => {
       extensionPanels: [{ id: 'panel-1', component: 'progress', props: { value: 50 } }],
       extensionApps: [{ appId: 'app-1', html: '<p>x</p>' }],
       extensionTitle: 'Build mode',
+      extensionWorking: { message: 'Indexing...', visible: true },
       extensionDialogs: [{
         requestId: 'form-1',
         method: 'form',
@@ -148,5 +168,6 @@ describe('extension public projections', () => {
     expect(snapshot.extensionApps).toHaveLength(1);
     expect(snapshot.extensionDialogs[0].fields).toHaveLength(1);
     expect(snapshot.extensionTitle).toBe('Build mode');
+    expect(snapshot.extensionWorking).toEqual({ message: 'Indexing...', visible: true });
   });
 });

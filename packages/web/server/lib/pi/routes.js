@@ -559,6 +559,14 @@ function projectExtensionSnapshotState(snapshot) {
   const extensionApps = Array.isArray(snapshot.extensionApps)
     ? snapshot.extensionApps.filter((entry) => entry && typeof entry.appId === 'string' && entry.appId.length > 0 && typeof entry.html === 'string' && entry.html.length > 0).slice(0, 8).map(projectExtensionAppPayload)
     : undefined;
+  const extensionWorking = snapshot.extensionWorking && typeof snapshot.extensionWorking === 'object'
+    ? {
+        ...(typeof snapshot.extensionWorking.message === 'string'
+          ? { message: snapshot.extensionWorking.message.replace(/[\u0000-\u001a\u001c-\u001f\u007f-\u009f]/g, ' ').trim().slice(0, 200) }
+          : {}),
+        ...(typeof snapshot.extensionWorking.visible === 'boolean' ? { visible: snapshot.extensionWorking.visible } : {}),
+      }
+    : undefined;
   return {
     ...(extensionStatuses ? { extensionStatuses } : {}),
     ...(extensionWidgets ? { extensionWidgets } : {}),
@@ -568,6 +576,7 @@ function projectExtensionSnapshotState(snapshot) {
     ...(typeof snapshot.extensionTitle === 'string' && snapshot.extensionTitle.length > 0
       ? { extensionTitle: snapshot.extensionTitle.replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, 256) }
       : {}),
+    ...(extensionWorking && (extensionWorking.message !== undefined || extensionWorking.visible !== undefined) ? { extensionWorking } : {}),
   };
 }
 
@@ -712,7 +721,8 @@ export const projectEventFrame = (frame) => {
     }
     case 'extension.editor': {
       if (typeof frame.payload.text !== 'string' || frame.payload.text.length > 100_000) return null;
-      return { ...common, payload: { text: frame.payload.text } };
+      const mode = frame.payload.mode === 'paste' ? 'paste' : 'set';
+      return { ...common, payload: { text: frame.payload.text, mode } };
     }
     case 'extension.title': {
       if (frame.payload.title !== undefined && typeof frame.payload.title !== 'string') return null;
@@ -792,6 +802,20 @@ export const projectEventFrame = (frame) => {
       if (html.length === 0) return { ...common, payload: { appId: frame.payload.appId.slice(0, 128), removed: true } };
       if (html.length > MAX_EXTENSION_APP_HTML_CHARS) return null;
       return { ...common, payload: projectExtensionAppPayload({ ...frame.payload, html }) };
+    }
+    case 'extension.working': {
+      if (frame.payload.message !== undefined && typeof frame.payload.message !== 'string') return null;
+      if (frame.payload.visible !== undefined && typeof frame.payload.visible !== 'boolean') return null;
+      const message = typeof frame.payload.message === 'string'
+        ? frame.payload.message.replace(/[\u0000-\u001a\u001c-\u001f\u007f-\u009f]/g, ' ').trim().slice(0, 200)
+        : undefined;
+      return {
+        ...common,
+        payload: {
+          ...(message !== undefined ? { message } : {}),
+          ...(typeof frame.payload.visible === 'boolean' ? { visible: frame.payload.visible } : {}),
+        },
+      };
     }
     case 'extension.error': {
       if (typeof frame.payload.source !== 'string' || frame.payload.source.length === 0 || frame.payload.source.length > 512) return null;

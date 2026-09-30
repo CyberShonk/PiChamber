@@ -25,7 +25,12 @@ import {
 } from '../extension-protocol.js';
 import { createPiModelConfigStore } from '../model-config-store.js';
 import { clampThinkingLevel, getSupportedThinkingLevels, isPiThinkingLevel } from '../thinking-levels.js';
-import { createExtensionBridge } from './extension-bridge.js';
+import {
+  createExtensionBridge,
+  extractExtensionDescriptor,
+  isDisplayedExtensionEntryType,
+  isIddExtensionEntry,
+} from './extension-bridge.js';
 import {
   SESSION_DAEMON_DEFAULT_MESSAGE_PAGE_LIMIT,
   SESSION_DAEMON_MAX_FRAME_BYTES as MAX_FRAME_BYTES,
@@ -570,10 +575,18 @@ export function createSessionDaemon({
     clearExtensionState,
     mirrorExtensionApp,
     mirrorExtensionPanel,
+    rebuildSessionPanelsAndApps,
     publishExtensionCustomMessage,
     reloadSession,
     resolveExtensionDialog,
   } = extensionBridge;
+
+  const rebuildSessionExtensionState = (activeRuntime) => {
+    const session = activeRuntime?.session;
+    if (!session?.sessionId) return;
+    const entries = session.sessionManager?.getBranch?.() ?? session.sessionManager?.getEntries?.();
+    rebuildSessionPanelsAndApps(session.sessionId, Array.isArray(entries) ? entries : []);
+  };
 
   // Thread extension hooks through our own default factory. Injected test or
   // host factories keep their single-argument contract and ignore the hooks.
@@ -635,8 +648,8 @@ export function createSessionDaemon({
     const model = activeSession?.model;
     const snapshotSequence = ++sequence;
     // Snapshot must carry enough extension live state for a reconnect that
-    // missed the gap: statuses, widgets, and pending blocking dialogs per
-    // session. Without it, a phone that reconnects after the 1k replay
+    // missed the gap: statuses, widgets, panels, apps, and pending blocking dialogs
+    // per session. Without it, a phone that reconnects after the 1k replay
     // window would lose its sub-agent panel or approval prompt.
     const extensionSnapshot = extensionBridge.getSnapshotState(session.sessionId);
     writeFrame(socket, {
@@ -673,6 +686,7 @@ export function createSessionDaemon({
         ...(extensionSnapshot.panels ? { extensionPanels: extensionSnapshot.panels } : {}),
         ...(extensionSnapshot.apps ? { extensionApps: extensionSnapshot.apps } : {}),
         ...(extensionSnapshot.title ? { extensionTitle: extensionSnapshot.title } : {}),
+        ...(extensionSnapshot.working ? { extensionWorking: extensionSnapshot.working } : {}),
       },
     });
   };
@@ -786,6 +800,7 @@ export function createSessionDaemon({
     runtimeRegistry.register(newRuntime, { cwd: canonicalRuntimeCwd });
     runtime = newRuntime;
     activeDirectory = canonicalRuntimeCwd;
+    rebuildSessionExtensionState(newRuntime);
     rememberRuntimeSession();
     return newRuntime;
   };
@@ -1417,6 +1432,7 @@ export function createSessionDaemon({
     }
     runtime = newRuntime;
     activeDirectory = directory;
+    rebuildSessionExtensionState(newRuntime);
     rememberRuntimeSession();
     return newRuntime;
   };
@@ -1510,11 +1526,15 @@ export function createSessionDaemon({
     }
     let latestUserMessageId;
     return entries.flatMap((entry) => {
-      // Extension-authored content: custom entries (`appendEntry`) and custom
-      // messages (`sendMessage`) both surface as extension-role items so the
-      // UI can render them through its extension renderer registry.
+      // Extension-authored content: displayed custom messages (`sendMessage`)
+      // and PiChamber GUI entries (`appendEntry('pichamber.*')`) without a stable
+      // id surface as one-off extension-role transcript items. Other custom entries
+      // are private extension state that Pi never displays, and entries with a
+      // stable id are mirrored into live panels/apps instead, so they stay out of the
+      // transcript.
       if (entry?.type === 'custom') {
-        if (typeof entry.customType !== 'string' || entry.customType.length === 0 || typeof entry.id !== 'string') return [];
+        if (!isDisplayedExtensionEntryType(entry.customType) || typeof entry.id !== 'string') return [];
+        if (isIddExtensionEntry(entry)) return [];
         const timestamp = Date.parse(entry.timestamp);
         return [{
           message: {
@@ -1763,6 +1783,7 @@ export function createSessionDaemon({
       ...(extensionSnapshot.panels ? { extensionPanels: extensionSnapshot.panels } : {}),
       ...(extensionSnapshot.apps ? { extensionApps: extensionSnapshot.apps } : {}),
       ...(extensionSnapshot.title ? { extensionTitle: extensionSnapshot.title } : {}),
+      ...(extensionSnapshot.working ? { extensionWorking: extensionSnapshot.working } : {}),
     };
   };
 
@@ -1874,6 +1895,7 @@ export function createSessionDaemon({
     runtimeRegistry.register(newRuntime, { cwd: targetCwd });
     runtime = newRuntime;
     activeDirectory = targetCwd;
+    rebuildSessionExtensionState(newRuntime);
     rememberRuntimeSession();
     const created = projectActiveSession(newRuntime, targetCwd);
     const createdTitle = created.session.title
@@ -3477,26 +3499,25 @@ export function createSessionDaemon({
       }
       case 'entry_appended': {
         const entry = event.entry;
-        if (entry?.type !== 'custom' || typeof entry.customType !== 'string') break;
-        const timestamp = Date.parse(entry.timestamp);
-        publish('extension.entry', {
-          id: typeof entry.id === 'string' ? entry.id : `ext-${sessionId}-${sequence + 1}`,
-          customType: entry.customType,
-          ...(entry.data !== undefined ? { data: redactAttachmentValues(entry.data) } : {}),
-          createdAt: Number.isFinite(timestamp) ? timestamp : Date.now(),
-        }, sessionId, directory);
+        if (entry?.type !== 'custom' || !isDisplayedExtensionEntryType(entry.customType)) break;
+        const descriptor = extractExtensionDescriptor(entry);
+        const isIdd = isIddExtensionEntry(entry);
+        if (!isIdd) {
+          const timestamp = Date.parse(entry.timestamp);
+          publish('extension.entry', {
+            id: typeof entry.id === 'string' ? entry.id : `ext-${sessionId}-${sequence + 1}`,
+            customType: entry.customType,
+            ...(entry.data !== undefined ? { data: redactAttachmentValues(entry.data) } : {}),
+            createdAt: Number.isFinite(timestamp) ? timestamp : Date.now(),
+          }, sessionId, directory);
+        }
         // Declarative GUI payloads are additionally mirrored into normalized
         // live state so panels/apps update in place and survive reconnects.
-        if (entry.customType === 'pichamber.ui' || entry.customType.startsWith('pichamber.')) {
-          const descriptor = entry.data && typeof entry.data === 'object' && !Array.isArray(entry.data)
-            ? (entry.data.ui && typeof entry.data.ui === 'object' && !Array.isArray(entry.data.ui) ? entry.data.ui : entry.data)
-            : undefined;
-          if (descriptor) {
-            if (entry.customType === 'pichamber.app') {
-              mirrorExtensionApp(sessionId, descriptor, directory);
-            } else {
-              mirrorExtensionPanel(sessionId, descriptor, directory);
-            }
+        if (descriptor) {
+          if (entry.customType === 'pichamber.app') {
+            mirrorExtensionApp(sessionId, descriptor, directory);
+          } else {
+            mirrorExtensionPanel(sessionId, descriptor, directory);
           }
         }
         break;
@@ -3974,6 +3995,7 @@ export function createSessionDaemon({
       }
       case 'sessions.open': {
         const activeRuntime = await activateSession(message.payload?.sessionId, message.payload?.directory || message.payload?.cwd);
+        rebuildSessionExtensionState(activeRuntime);
         const detail = projectActiveSession(activeRuntime, activeRuntime.cwd, { limit: message.payload?.limit });
         writeDetailResponse(socket, message.requestId, detail);
         return;
@@ -4018,6 +4040,7 @@ export function createSessionDaemon({
         const previousLeafId = activeRuntime.session.sessionManager?.getLeafId?.() ?? null;
         const result = await activeRuntime.session.navigateTree(messageId);
         if (result?.cancelled) throw new SessionDaemonProtocolError('SESSION_TREE_NOT_FOUND', 'Pi cancelled tree navigation.');
+        rebuildSessionExtensionState(activeRuntime);
         const newLeafId = activeRuntime.session.sessionManager?.getLeafId?.() ?? null;
         const navigation = {
           targetEntryId: messageId,
@@ -4048,6 +4071,7 @@ export function createSessionDaemon({
           await acquireResidentLease({ cwd: activeRuntime.cwd, sessionId: activeRuntime.session.sessionId });
         }
         rememberRuntimeSession();
+        rebuildSessionExtensionState(activeRuntime);
         const forkedDetail = projectActiveSession(activeRuntime, activeRuntime.cwd);
         // The guard re-arms the source session on release; arm the forked
         // identity explicitly since it was created inside this dispatch.
