@@ -11,10 +11,11 @@ import {
   useGitStatus,
   useGitBranches,
   useGitLog,
-  useGitAuthor,
   useIsGitRepo,
   useGitLoadingStatus,
   useGitLoadingLog,
+  useGitRemotes,
+  useGitRemoteUrl,
 } from '@/stores/useGitStore';
 import { toast } from '@/components/ui';
 import { Icon } from "@/components/icon/Icon";
@@ -86,7 +87,9 @@ export const GitView: React.FC<GitViewProps> = ({
   const status = useGitStatus(currentDirectory ?? null);
   const branches = useGitBranches(currentDirectory ?? null);
   const log = useGitLog(currentDirectory ?? null);
-  const currentAuthor = useGitAuthor(currentDirectory ?? null);
+  const storedRemotes = useGitRemotes(currentDirectory ?? null);
+  const remotes = storedRemotes ?? [];
+  const remoteUrl = useGitRemoteUrl(currentDirectory ?? null);
   const isLoading = useGitLoadingStatus(currentDirectory ?? null);
   const isLogLoading = useGitLoadingLog(currentDirectory ?? null);
   const {
@@ -96,6 +99,7 @@ export const GitView: React.FC<GitViewProps> = ({
     fetchStatus,
     fetchBranches,
     fetchLog,
+    fetchLogQuery,
     setLogMaxCount,
     prefetchDiffs,
     clearDiffCache,
@@ -109,6 +113,7 @@ export const GitView: React.FC<GitViewProps> = ({
     fetchStatus: state.fetchStatus,
     fetchBranches: state.fetchBranches,
     fetchLog: state.fetchLog,
+    fetchLogQuery: state.fetchLogQuery,
     setLogMaxCount: state.setLogMaxCount,
     prefetchDiffs: state.prefetchDiffs,
     clearDiffCache: state.clearDiffCache,
@@ -276,15 +281,11 @@ export const GitView: React.FC<GitViewProps> = ({
     clearConflictState,
   } = useGitConflictState({ currentSessionId, currentDirectory });
 
-  const [remotes, setRemotes] = React.useState<GitRemote[]>([]);
-  const [remoteUrl, setRemoteUrl] = React.useState<string | null>(null);
-  const [removingRemoteName, setRemovingRemoteName] = React.useState<string | null>(null);
   const [branchOperation, setBranchOperation] = React.useState<BranchOperation>(null);
   const [operationLogs, setOperationLogs] = React.useState<OperationLogEntry[]>([]);
   const [graphLog, setGraphLog] = React.useState<import('@/lib/api/types').GitLogResponse | null>(null);
   const [graphLogLoading, setGraphLogLoading] = React.useState(false);
   const [graphLogMaxCount, setGraphLogMaxCount] = React.useState(100);
-  const [graphLogRefreshToken, setGraphLogRefreshToken] = React.useState(0);
   const [gitLogDialogMode, setGitLogDialogMode] = React.useState<GitLogDialogMode | null>(null);
   const [historyBranchDivider, setHistoryBranchDivider] = React.useState<HistoryBranchDivider>(null);
   const [stashDialogOpen, setStashDialogOpen] = React.useState(false);
@@ -299,42 +300,10 @@ export const GitView: React.FC<GitViewProps> = ({
     });
   }, [commitMessage, currentDirectory]);
 
-  React.useEffect(() => {
-    if (!isActive) return;
-    if (!currentDirectory || !git?.getRemoteUrl) {
-      setRemoteUrl(null);
-      return;
-    }
-    let cancelled = false;
-    git
-      .getRemoteUrl(currentDirectory)
-      .then((url) => { if (!cancelled) setRemoteUrl(url); })
-      .catch(() => { if (!cancelled) setRemoteUrl(null); });
-    return () => { cancelled = true; };
-  }, [isActive, currentDirectory, git]);
-
-  const refreshRemotes = React.useCallback(async () => {
-    if (!currentDirectory || !git?.getRemotes) {
-      setRemotes([]);
-      return;
-    }
-    try {
-      const remoteList = await git.getRemotes(currentDirectory);
-      if (mountedRef.current) {
-        setRemotes(remoteList);
-      }
-    } catch {
-      if (mountedRef.current) {
-        setRemotes([]);
-      }
-    }
-  }, [currentDirectory, git]);
-
-  React.useEffect(() => {
-    if (!isActive) return;
-    void refreshRemotes();
-  }, [isActive, refreshRemotes]);
-
+  // Remotes + remote URL live in useGitStore (5 min TTL, runtime-keyed) and
+  // are ensured by ensureAll below, so a remount serves cache with zero
+  // requests when fresh. Remote-changing mutations must call
+  // invalidateRemotes so the next ensure refetches.
   React.useEffect(() => {
     if (!isActive) return;
     if (currentDirectory) {
@@ -553,35 +522,6 @@ export const GitView: React.FC<GitViewProps> = ({
     };
   }, [currentDirectory, git]);
 
-  const handleRemoveRemote = React.useCallback(async (remote: GitRemote) => {
-    if (!currentDirectory) return;
-
-    const remoteName = remote.name.trim();
-    if (!remoteName) {
-      toast.error("Remote name is required");
-      return;
-    }
-    if (remoteName === 'origin') {
-      toast.error("Cannot remove the origin remote");
-      return;
-    }
-
-    setRemovingRemoteName(remoteName);
-    try {
-      await git.removeRemote(currentDirectory, { remote: remoteName });
-      toast.success(`Removed remote ${remoteName}`);
-      await Promise.all([
-        refreshStatusAndBranches(false),
-        refreshRemotes(),
-      ]);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : `Failed to remove ${remoteName}`;
-      toast.error(message);
-    } finally {
-      setRemovingRemoteName(null);
-    }
-  }, [currentDirectory, git, refreshRemotes, refreshStatusAndBranches]);
-
   const handleCommit = async (options: { pushAfter?: boolean } = {}) => {
     if (!currentDirectory) return;
     if (!commitMessage.trim()) {
@@ -775,7 +715,9 @@ export const GitView: React.FC<GitViewProps> = ({
 
     const resolveBranchDivider = async () => {
       try {
-        const branchOnlyLog = await git.getGitLog(currentDirectory, {
+        // Store-cached ranged query: remounts with unchanged inputs hit the
+        // cache (zero requests); failures resolve null and clear the divider.
+        const branchOnlyLog = await fetchLogQuery(currentDirectory, git, {
           from: baseBranch,
           to: 'HEAD',
           maxCount: logMaxCountLocal,
@@ -828,7 +770,7 @@ export const GitView: React.FC<GitViewProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [baseBranch, branchScopeAvailable, currentBranch, currentDirectory, git, log, logMaxCountLocal]);
+  }, [baseBranch, branchScopeAvailable, currentBranch, currentDirectory, fetchLogQuery, git, log, logMaxCountLocal]);
 
   // Clear graph log when directory changes
   React.useEffect(() => {
@@ -842,7 +784,9 @@ export const GitView: React.FC<GitViewProps> = ({
     }
     let cancelled = false;
     setGraphLogLoading(true);
-    git.getGitLog(currentDirectory, { maxCount: graphLogMaxCount, all: true })
+    // Store-cached graph query: opening the dialog serves a fresh cache entry
+    // with zero requests; explicit refresh below passes { force: true }.
+    void fetchLogQuery(currentDirectory, git, { maxCount: graphLogMaxCount, all: true })
       .then((result) => {
         if (!cancelled) setGraphLog(result);
       })
@@ -853,7 +797,7 @@ export const GitView: React.FC<GitViewProps> = ({
         if (!cancelled) setGraphLogLoading(false);
       });
     return () => { cancelled = true; };
-  }, [gitLogDialogMode, currentDirectory, graphLogMaxCount, graphLogRefreshToken, git]);
+  }, [gitLogDialogMode, currentDirectory, graphLogMaxCount, git, fetchLogQuery]);
 
   // Keep these sections stable in layout; individual cards render placeholders when unavailable.
 
@@ -1435,7 +1379,7 @@ export const GitView: React.FC<GitViewProps> = ({
     setDiffHeaderState(state);
   }, []);
 
-  // The one meaningful git header: branch, commit author, scope, sync, and every
+  // The one meaningful git header: branch, scope, sync, and every
   // repository/diff view action. Hosts with panel chrome portal it into
   // their header slot; all other hosts render it as a single local row.
   const headerControls = isGitRepo === true && status ? (
@@ -1448,12 +1392,9 @@ export const GitView: React.FC<GitViewProps> = ({
       remotes={effectiveRemotes}
       onFetch={(remote) => handleSyncAction('fetch', remote)}
       onSync={(remote) => handleSyncAction('sync', remote)}
-      onRemoveRemote={handleRemoveRemote}
-      removingRemoteName={removingRemoteName}
       onCheckoutBranch={handleCheckoutBranch}
       onCreateBranch={handleCreateBranch}
       onRenameBranch={handleRenameBranch}
-      currentAuthor={currentAuthor}
       isWorktreeMode={false}
       upstreamTarget={status.upstreamComparison ? `${status.upstreamComparison.remote}/${status.upstreamComparison.branch}` : null}
       onOpenHistory={() => setGitLogDialogMode('history')}
@@ -1494,6 +1435,13 @@ export const GitView: React.FC<GitViewProps> = ({
         unstagedChangeEntries={unstagedChangeEntries}
         effectiveRemotes={effectiveRemotes}
         syncAction={syncAction}
+        localBranches={localBranches}
+        remoteBranches={remoteBranches}
+        branchInfo={branches?.branches}
+        isWorktreeMode={false}
+        onCheckoutBranch={handleCheckoutBranch}
+        onCreateBranch={handleCreateBranch}
+        onRenameBranch={handleRenameBranch}
         commitAction={commitAction}
         commitMessage={commitMessage}
         hasPendingIndexMutation={hasPendingIndexMutation}
@@ -1639,7 +1587,18 @@ export const GitView: React.FC<GitViewProps> = ({
         setGitLogDialogMode={setGitLogDialogMode}
         onRefreshHistory={() => {
           if (gitLogDialogMode === 'graph') {
-            setGraphLogRefreshToken((token) => token + 1);
+            if (!currentDirectory) return;
+            setGraphLogLoading(true);
+            void fetchLogQuery(currentDirectory, git, { maxCount: graphLogMaxCount, all: true }, { force: true })
+              .then((result) => {
+                if (mountedRef.current && result) setGraphLog(result);
+              })
+              .catch((err) => {
+                console.error('Failed to refresh graph log:', err);
+              })
+              .finally(() => {
+                if (mountedRef.current) setGraphLogLoading(false);
+              });
             return;
           }
           if (!currentDirectory) return;

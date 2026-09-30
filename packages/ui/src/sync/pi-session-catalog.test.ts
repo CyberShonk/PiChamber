@@ -1079,6 +1079,71 @@ describe('PiSessionStore catalog', () => {
     }
   });
 
+  test('concurrent catalog passes share one listSessions per directory', async () => {
+    const gates = new Map<string, Deferred<{ sessions: ReturnType<typeof listItem>[] }>>();
+    const calls: string[] = [];
+    const stubs = stubDaemons({
+      listSessions: async (options) => {
+        const directory = String(options?.directory);
+        calls.push(directory);
+        const gate = deferred<{ sessions: ReturnType<typeof listItem>[] }>();
+        gates.set(directory, gate);
+        return await gate.promise;
+      },
+      getSession: async (id) => ({
+        session: { id, directory: '/repo-a', createdAt: 0, updatedAt: 0 },
+        lastSequence: 0,
+        messages: [],
+      }),
+    });
+    const store = new PiSessionStore();
+    try {
+      // Pass one queues three directories behind the two-slot limiter; pass
+      // two overlaps it (feeder + retention cleanup at boot) and adds one.
+      const first = store.refreshAllDirectoryCatalogs(['/repo-a', '/repo-b', '/repo-c']);
+      const second = store.refreshAllDirectoryCatalogs(['/repo-b', '/repo-c', '/repo-d']);
+      for (let round = 0; round < 6; round += 1) {
+        await tickMicrotasks();
+        for (const [directory, gate] of gates) {
+          gate.resolve({ sessions: [listItem(`${directory}-1`, directory)] });
+          gates.delete(directory);
+        }
+      }
+      await Promise.all([first, second]);
+      expect([...calls].sort()).toEqual(['/repo-a', '/repo-b', '/repo-c', '/repo-d']);
+      for (const directory of ['/repo-a', '/repo-b', '/repo-c', '/repo-d']) {
+        expect(store.getState().catalog.listStatusByDirectory.get(directory)).toBe('ready');
+      }
+    } finally {
+      stubs.restore();
+      store.dispose();
+    }
+  });
+
+  test('a settled catalog pass does not block a later pass for the same directory', async () => {
+    let listCalls = 0;
+    const stubs = stubDaemons({
+      listSessions: async () => {
+        listCalls += 1;
+        return { sessions: [listItem('a-1', '/repo-a')] };
+      },
+      getSession: async (id) => ({
+        session: { id, directory: '/repo-a', createdAt: 0, updatedAt: 0 },
+        lastSequence: 0,
+        messages: [],
+      }),
+    });
+    const store = new PiSessionStore();
+    try {
+      await store.refreshAllDirectoryCatalogs(['/repo-a']);
+      await store.refreshAllDirectoryCatalogs(['/repo-a']);
+      expect(listCalls).toBe(2);
+    } finally {
+      stubs.restore();
+      store.dispose();
+    }
+  });
+
   test('stale per-directory refresh is rejected when a newer call starts', async () => {
     const firstStarted = deferred<{ sessions: ReturnType<typeof listItem>[] }>();
     const secondStarted = deferred<{ sessions: ReturnType<typeof listItem>[] }>();

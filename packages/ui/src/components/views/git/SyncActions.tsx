@@ -10,6 +10,7 @@ import {
 import { Icon } from "@/components/icon/Icon";
 import type { GitRemote } from '@/lib/api/types';
 import { cn } from '@/lib/utils';
+import { useDeviceInfo } from '@/lib/device';
 
 type SyncAction = 'fetch' | 'pull' | 'push' | 'sync' | null;
 
@@ -18,9 +19,9 @@ interface SyncActionsProps {
   remotes: GitRemote[];
   onFetch: (remote: GitRemote) => void;
   onSync: (remote: GitRemote) => void;
-  onRemoveRemote?: (remote: GitRemote) => void;
   disabled: boolean;
-  removingRemoteName?: string | null;
+  /** Render the ⋯ fetch menu; hosts with their own overflow menu fold fetch into it instead. */
+  showFetchMenu?: boolean;
   /** Compact chrome for single-row headers: icon plus ahead/behind counts, no text label. */
   iconOnly?: boolean;
   aheadCount?: number;
@@ -36,9 +37,8 @@ export const SyncActions: React.FC<SyncActionsProps> = ({
   remotes = [],
   onFetch,
   onSync,
-  onRemoveRemote,
   disabled,
-  removingRemoteName = null,
+  showFetchMenu = true,
   aheadCount = 0,
   behindCount = 0,
   trackingRemoteName,
@@ -46,13 +46,12 @@ export const SyncActions: React.FC<SyncActionsProps> = ({
   iconOnly = false,
   upstreamTarget = null,
 }) => {
-  
-  const skipRemoteSelectRef = React.useRef(false);
-  const isRemovingRemote = Boolean(removingRemoteName);
+  const { isMobile, isTablet } = useDeviceInfo();
+  const isTouchSync = isMobile || isTablet;
   const trackingRemote = remotes.find((remote) => remote.name === trackingRemoteName) ?? remotes[0];
   const blocksRebaseSync = behindCount > 0 && hasUncommittedChanges;
-  const isPrimaryDisabled = disabled || syncAction !== null || isRemovingRemote || !trackingRemote || blocksRebaseSync;
-  const isDropdownDisabled = disabled || syncAction !== null || isRemovingRemote || remotes.length === 0;
+  const isPrimaryDisabled = disabled || syncAction !== null || !trackingRemote || blocksRebaseSync;
+  const isDropdownDisabled = disabled || syncAction !== null || remotes.length === 0;
   const hasKnownSyncWork = aheadCount > 0 || behindCount > 0;
   const primaryLabel = [
     "sync",
@@ -77,18 +76,25 @@ export const SyncActions: React.FC<SyncActionsProps> = ({
     onSync(trackingRemote);
   };
 
+  const iconButtonSize = isTouchSync ? 'h-9' : 'h-8';
+  const counts = [behindCount > 0 ? `↓${behindCount}` : null, aheadCount > 0 ? `↑${aheadCount}` : null].filter(Boolean).join(' ');
+  const syncText = iconOnly ? counts : primaryLabel;
+
   return (
-    <div className="inline-flex items-center rounded-[9px] [corner-shape:squircle] supports-[corner-shape:squircle]:rounded-[50px] border border-border/60 bg-[var(--surface-elevated)] overflow-hidden">
+    <div className="inline-flex items-center gap-1">
       <Tooltip>
         <TooltipTrigger asChild>
           <span className="inline-flex" tabIndex={blocksRebaseSync ? 0 : undefined}>
-            <button
+            <Button
               type="button"
+              variant="ghost"
+              size="sm"
               onClick={handleSync}
               disabled={isPrimaryDisabled}
               className={cn(
-                'inline-flex h-7 items-center gap-1.5 px-2 typography-ui-label font-medium text-foreground',
-                'transition-colors hover:bg-interactive-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:cursor-not-allowed disabled:opacity-50'
+                iconButtonSize,
+                'flex-shrink-0 gap-1.5 tabular-nums',
+                syncText ? 'px-2' : (isTouchSync ? 'w-9 p-0' : 'w-8 p-0'),
               )}
               aria-label={"Sync Changes"}
             >
@@ -97,93 +103,55 @@ export const SyncActions: React.FC<SyncActionsProps> = ({
               ) : (
                 <Icon name="refresh" className="size-4" />
               )}
-              {iconOnly ? (
-                hasKnownSyncWork ? (
-                  <span className="whitespace-nowrap tabular-nums">
-                    {[behindCount > 0 ? `↓${behindCount}` : null, aheadCount > 0 ? `↑${aheadCount}` : null].filter(Boolean).join(' ')}
-                  </span>
-                ) : null
-              ) : (
-                <span className="whitespace-nowrap tabular-nums">{primaryLabel}</span>
-              )}
-            </button>
+              {syncText ? <span className="whitespace-nowrap">{syncText}</span> : null}
+            </Button>
           </span>
         </TooltipTrigger>
         <TooltipContent sideOffset={8}>{tooltipLabel}</TooltipContent>
       </Tooltip>
 
+      {showFetchMenu ? (
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <button
+          <Button
             type="button"
-            className={cn(
-              'inline-flex h-7 w-6 items-center justify-center border-l border-[var(--interactive-border)] text-muted-foreground',
-              'transition-colors hover:bg-interactive-hover hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:cursor-not-allowed disabled:opacity-50'
-            )}
+            variant="ghost"
+            size="sm"
+            className={cn(iconButtonSize, isTouchSync ? 'w-9' : 'w-8', 'flex-shrink-0 p-0')}
             disabled={isDropdownDisabled}
             aria-label={"More sync actions"}
           >
-            <Icon name="arrow-down-s" className="size-4" />
-          </button>
+            <Icon name="more" className="size-4" />
+          </Button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="start" alignOffset={-40} className="w-[min(360px,calc(100vw-2rem))] max-h-[320px] overflow-y-auto">
+        <DropdownMenuContent align="end" className="w-[min(360px,calc(100vw-2rem))] max-h-[320px] overflow-y-auto">
           {remotes.map((remote) => (
-            <DropdownMenuItem
-              key={remote.name}
-              onSelect={(event) => {
-                if (skipRemoteSelectRef.current) {
-                  event.preventDefault();
-                  skipRemoteSelectRef.current = false;
-                  return;
-                }
-                onFetch(remote);
-              }}
-            >
-              <div className="flex w-full items-center gap-2">
-                <Icon name="refresh" className="size-4 text-muted-foreground" />
-                <div className="min-w-0 flex-1">
-                  <div className="flex flex-col">
-                    <span className="typography-ui-label text-foreground">
-                      {`Fetch from ${remote.name}`}
-                    </span>
-                    <span className="typography-meta text-muted-foreground truncate">
-                      {remote.fetchUrl}
-                    </span>
-                  </div>
-                </div>
-                {onRemoveRemote && remote.name !== trackingRemoteName ? (
-                  <Button
-                    type="button"
-                    variant="destructive"
-                    size="xs"
-                    className="h-6 w-6 px-0"
-                    disabled={syncAction !== null || isRemovingRemote}
-                    onPointerDown={(event) => {
-                      skipRemoteSelectRef.current = true;
-                      event.preventDefault();
-                      event.stopPropagation();
-                    }}
-                    onClick={(event) => {
-                      skipRemoteSelectRef.current = true;
-                      event.preventDefault();
-                      event.stopPropagation();
-                      onRemoveRemote(remote);
-                    }}
-                    aria-label={`Remove remote ${remote.name}`}
-                    title={`Remove remote ${remote.name}`}
-                  >
-                    {removingRemoteName === remote.name ? (
-                      <Icon name="loader-4" className="size-3.5 animate-spin" />
-                    ) : (
-                      <Icon name="close" className="size-3.5" />
-                    )}
-                  </Button>
-                ) : null}
-              </div>
-            </DropdownMenuItem>
+            <FetchRemoteMenuItem key={remote.name} remote={remote} onFetch={onFetch} />
           ))}
         </DropdownMenuContent>
       </DropdownMenu>
+      ) : null}
     </div>
   );
 };
+
+/** "Fetch from <remote>" menu row, shared with hosts that fold fetch into their own menu. */
+export const FetchRemoteMenuItem: React.FC<{
+  remote: GitRemote;
+  onFetch: (remote: GitRemote) => void;
+  disabled?: boolean;
+}> = ({ remote, onFetch, disabled = false }) => (
+  <DropdownMenuItem disabled={disabled} onSelect={() => onFetch(remote)}>
+    <div className="flex w-full min-w-0 items-center gap-2">
+      <Icon name="refresh" className="size-4 text-muted-foreground" />
+      <div className="flex min-w-0 flex-1 flex-col">
+        <span className="typography-ui-label text-foreground">
+          {`Fetch from ${remote.name}`}
+        </span>
+        <span className="typography-meta text-muted-foreground truncate">
+          {remote.fetchUrl}
+        </span>
+      </div>
+    </div>
+  </DropdownMenuItem>
+);

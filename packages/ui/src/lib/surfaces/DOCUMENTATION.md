@@ -43,6 +43,11 @@ edge (`components/layout/ContextPanelRail.tsx`) and rendered by
    sanitizer whitelist in `sanitizeContextPanelTabs`).
 2. Register a descriptor here (icon, label, availability).
 3. Render the mode in `ContextPanel.tsx` (content dispatch, label, icon).
+   Surfaces whose list actions belong in the panel top header (terminal,
+   git, diff, pull-requests/issues) portal them into a header slot there
+   (a div with a ref callback into state, passed down gated by visibility
+   as `isActive ? slot : null`); the surface `createPortal`s into it only
+   while its list route is shown, so detail routes leave the slot empty.
 4. Provide direct user-facing `label` and `description` in the descriptor.
 
 No new header buttons: the rail and `openContextSurface` are the only entry
@@ -60,7 +65,10 @@ the `openContext*` actions in `useUIStore`.
   remount on switch and must restore themselves from their stores/snapshots
   instead. Git embeds a stacked diff list of changed files, collapsed until
   the user expands a file. Pull requests / Issues restore list filters,
-  selection, and scroll from their stores.
+  selection, and scroll from their stores. A Git remount serves cached
+  status/branches/log/remotes/ranged-logs immediately and revalidates only
+  stale entries in the background (stale-while-revalidate, documented in
+  `packages/ui/src/stores/DOCUMENTATION.md`); it must not refetch fresh data.
 - Runtime scope: desktop/web `MainLayout` only. The dedicated Capacitor mobile
   shell has its own layout and does not consume this registry: phone drawer +
   tablet side panel/header tabs live in `apps/mobileWorkspaceTabs.ts` and

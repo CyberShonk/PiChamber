@@ -1,6 +1,7 @@
 import React from 'react';
 import { Icon } from '@/components/icon/Icon';
 import { Input } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -13,15 +14,28 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { dropdownTriggerVariants } from '@/components/ui/dropdown-trigger';
 import { cn } from '@/lib/utils';
 
 /**
  * List toolbar menus (t3code `PullRequestListFilters` contract, PiChamber
  * tokens): a single Filters menu button (icon + active-count pill) holding
- * State and Involvement radio submenus, plus a Sort menu. Triggers use
- * `dropdownTriggerVariants`; menus use the shared DropdownMenu primitive.
+ * State and Involvement radio submenus, plus a Sort menu. Triggers are
+ * borderless ghost Buttons matching the Git/Files header controls; menus use
+ * the shared DropdownMenu primitive.
+ *
+ * Filters/Sort always render inline in the list toolbar (second row) with
+ * ghost chrome (h-8 matching the search input). Only the action controls (Refresh + primary action)
+ * portal into a host header slot via `GitHubListView`; they never move
+ * Filters/Sort.
  */
+
+/**
+ * Which host header receives a portalled action button. `desktop` targets
+ * the ContextPanel `h-10` header (ghost `h-8 w-8` icon buttons matching
+ * the panel's own header buttons); `drawer` targets the mobile/tablet
+ * `MobileSurfaceHeader` actions (ghost 36px `size-9` touch targets).
+ */
+export type GitHubHeaderActionsPresentation = 'desktop' | 'drawer';
 
 type GitHubFilterOption = { id: string; label: string };
 
@@ -91,20 +105,22 @@ export const GitHubFiltersMenu: React.FC<{
   return (
     <DropdownMenu modal={false}>
       <DropdownMenuTrigger asChild>
-        <button
+        <Button
           type="button"
+          variant="ghost"
+          size="sm"
           aria-label="Filters"
           title="Filters"
-          className={cn(dropdownTriggerVariants({ size: 'sm' }), 'shrink-0')}
+          className="h-8 shrink-0 gap-1.5 px-2 normal-case"
         >
-          <Icon name="equalizer" className="size-3.5" aria-hidden="true" />
+          <Icon name="equalizer" className="size-4" aria-hidden="true" />
           <span>Filters</span>
           {activeCount > 0 ? (
             <span className="rounded-full bg-[var(--surface-muted)] px-1.5 typography-micro tabular-nums text-muted-foreground">
               {activeCount}
             </span>
           ) : null}
-        </button>
+        </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-64">
         <SubmenuRadioGroup
@@ -153,14 +169,16 @@ export const GitHubSortMenu: React.FC<{
   return (
     <DropdownMenu modal={false}>
       <DropdownMenuTrigger asChild>
-        <button
+        <Button
           type="button"
+          variant="ghost"
+          size="sm"
           aria-label={ariaLabel}
           title={ariaLabel}
-          className={cn(dropdownTriggerVariants({ size: 'sm' }), 'w-7 shrink-0 justify-center px-0')}
+          className="h-8 w-8 shrink-0 p-0"
         >
-          <Icon name="expand-up-down" className="size-3.5" aria-hidden="true" />
-        </button>
+          <Icon name="expand-up-down" className="size-4" aria-hidden="true" />
+        </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-52">
         <DropdownMenuRadioGroup
@@ -185,17 +203,58 @@ export const GitHubRefreshButton: React.FC<{
   isRefreshing: boolean;
   onRefresh: () => void;
   label?: string;
-}> = ({ isRefreshing, onRefresh, label }) => {
+  /**
+   * `toolbar` renders the bordered toolbar trigger inline; `desktop` renders
+   * a ghost `h-8 w-8` icon button for the ContextPanel header;
+   * `drawer` renders a ghost 36px (`size="icon"`) button for the
+   * mobile/tablet `MobileSurfaceHeader` actions.
+   */
+  presentation?: 'toolbar' | GitHubHeaderActionsPresentation;
+}> = ({ isRefreshing, onRefresh, label, presentation = 'toolbar' }) => {
+  if (presentation === 'desktop') {
+    return (
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        onClick={onRefresh}
+        disabled={isRefreshing}
+        title={label ?? 'Refresh'}
+        aria-label={label ?? 'Refresh GitHub data'}
+        className="h-8 w-8 shrink-0 p-0"
+      >
+        <Icon name="refresh" className={cn('size-4', isRefreshing && 'animate-spin')} aria-hidden="true" />
+      </Button>
+    );
+  }
+  if (presentation === 'drawer') {
+    return (
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon"
+        onClick={onRefresh}
+        disabled={isRefreshing}
+        title={label ?? 'Refresh'}
+        aria-label={label ?? 'Refresh GitHub data'}
+        className="shrink-0"
+      >
+        <Icon name="refresh" className={cn('size-4', isRefreshing && 'animate-spin')} aria-hidden="true" />
+      </Button>
+    );
+  }
   return (
-    <button
+    <Button
       type="button"
+      variant="ghost"
+      size="sm"
       onClick={onRefresh}
       disabled={isRefreshing}
       title={label ?? 'Refresh'}
       aria-label={label ?? 'Refresh GitHub data'}
-      className={cn(dropdownTriggerVariants({ size: 'sm' }), 'w-7 shrink-0 justify-center px-0')}
+      className="h-8 w-8 shrink-0 p-0"
     >
-      <Icon name="refresh" className={cn('size-3.5', isRefreshing && 'animate-spin')} aria-hidden="true" />
-    </button>
+      <Icon name="refresh" className={cn('size-4', isRefreshing && 'animate-spin')} aria-hidden="true" />
+    </Button>
   );
 };

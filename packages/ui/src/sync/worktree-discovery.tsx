@@ -1,10 +1,11 @@
 import React from 'react';
 
 import { useRuntimeAPIs } from '@/hooks/useRuntimeAPIs';
+import { getRuntimeKey } from '@/lib/runtime-switch';
 import { useProjectsStore } from '@/stores/useProjectsStore';
 import { useWorktreeStore } from '@/stores/useWorktreeStore';
 
-const DISCOVERY_INTERVAL_MS = 15_000;
+const DISCOVERY_INTERVAL_MS = 60_000;
 const DISCOVERY_CONCURRENCY = 2;
 
 export const WorktreeDiscovery: React.FC = () => {
@@ -16,7 +17,18 @@ export const WorktreeDiscovery: React.FC = () => {
     () => projects.map((project) => project.path).filter((path): path is string => Boolean(path)),
     [projects],
   );
+  // Stable identity for the project set: `projectPaths` (and `git`, via the
+  // runtime API context) can churn identity without content changing, which
+  // used to re-run the mount refresh as a full discovery pass.
+  const projectPathsKey = React.useMemo(
+    () => [...projectPaths].sort().join('\0'),
+    [projectPaths],
+  );
+  const runtimeKey = getRuntimeKey();
 
+  // Background discovery never forces: `refreshProject`'s freshness window
+  // (30 s) absorbs rapid focus/visibility toggles, and the HTTP caches absorb
+  // the rest. Explicit mutation refreshes pass `{ force: true }` themselves.
   const refreshAll = React.useCallback(async () => {
     if (!git || projectPaths.length === 0) return;
     let nextIndex = 0;
@@ -32,9 +44,16 @@ export const WorktreeDiscovery: React.FC = () => {
     );
   }, [git, projectPaths, refreshProject]);
 
+  // Mount refresh only for a real project-set change, not array/object
+  // identity churn. `refreshAll` is still in deps so a genuinely new closure
+  // re-evaluates, but the key guard skips the redundant full pass.
+  const lastDiscoveryKeyRef = React.useRef<string | null>(null);
   React.useEffect(() => {
+    const key = `${runtimeKey}\0${projectPathsKey}`;
+    if (lastDiscoveryKeyRef.current === key) return;
+    lastDiscoveryKeyRef.current = key;
     void refreshAll();
-  }, [refreshAll]);
+  }, [runtimeKey, projectPathsKey, refreshAll]);
 
   React.useEffect(() => {
     const handleFocus = () => { void refreshAll(); };

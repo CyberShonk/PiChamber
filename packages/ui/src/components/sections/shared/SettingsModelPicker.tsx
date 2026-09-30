@@ -60,6 +60,7 @@ export const SettingsModelPicker: React.FC<SettingsModelPickerProps> = ({
 
   React.useEffect(() => {
     if (!open) setSearchQuery('');
+    else useConfigStore.getState().ensureModelMetadata();
   }, [open]);
 
   const selectedProvider = value

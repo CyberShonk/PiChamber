@@ -7,7 +7,7 @@ import { liveSessionRecordToUiSession } from '@/sync/pi-session-catalog';
 import { useProjectsStore } from '@/stores/useProjectsStore';
 import { useSessionPinnedStore } from '@/stores/useSessionPinnedStore';
 import { useNotificationStore } from '@/sync/notification-store';
-import { compareSessionsByLifecycleOrder, useSessionOrderingStore } from '@/sync/session-ordering';
+import { createSessionLifecycleComparator, useSessionOrderingStore } from '@/sync/session-ordering';
 import { getRuntimeKey } from '@/lib/runtime-switch';
 
 /**
@@ -104,7 +104,7 @@ export const buildMobileWidgetSnapshot = (): MobileWidgetSnapshot => {
     }
   }
 
-  topLevel.sort((a, b) => compareSessionsByLifecycleOrder(a.session, b.session, pinnedSessionIds, sessionOrderRanks));
+  topLevel.sort(createSessionLifecycleComparator(pinnedSessionIds, sessionOrderRanks, (entry: (typeof topLevel)[number]) => entry.session));
   const recentSessions = topLevel
     .slice(0, RECENT_LIMIT)
     .map(({ session, unread, project }) => ({ id: session.id, title: session.title ?? '', unread, project }));

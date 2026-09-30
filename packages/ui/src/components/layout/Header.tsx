@@ -875,7 +875,13 @@ export const Header: React.FC<HeaderProps> = ({
 
     const height = headerRef.current?.getBoundingClientRect().height;
     if (height) {
-      document.documentElement.style.setProperty('--oc-header-height', `${height}px`);
+      // Root custom-property writes restyle the whole document; the resize
+      // observer and effects below re-run this often with an unchanged height.
+      const next = `${height}px`;
+      const rootStyle = document.documentElement.style;
+      if (rootStyle.getPropertyValue('--oc-header-height') !== next) {
+        rootStyle.setProperty('--oc-header-height', next);
+      }
     }
   }, []);
 

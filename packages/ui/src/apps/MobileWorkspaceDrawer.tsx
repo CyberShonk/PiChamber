@@ -9,6 +9,8 @@ import { cn } from '@/lib/utils';
 import { MOBILE_DRAWER_DURATION_MS, MOBILE_DRAWER_EASING, useDrawerSwipe } from './useDrawerSwipe';
 import { getVisibleMobileWorkspaceTabs } from './mobileWorkspaceTabs';
 import type { MobileWorkspaceTab } from './mobileWorkspaceTabs';
+import { MobileSurfaceHeader } from './MobileSurfaceHeader';
+import { CONTEXT_SURFACES } from '@/lib/surfaces/registry';
 
 const LazyFilesView = React.lazy(() =>
   import('@/components/views/FilesView').then((module) => ({ default: module.FilesView })),
@@ -96,6 +98,15 @@ export const MobileWorkspaceDrawer = React.memo(function MobileWorkspaceDrawer({
   }, []);
 
   const [visitedTabs, setVisitedTabs] = React.useState<ReadonlySet<MobileWorkspaceTab>>(() => new Set());
+  // Header slots for the GitHub list action controls (Refresh + the primary
+  // action such as New issue; TerminalView `terminalHeaderSlot` precedent
+  // via ContextPanel). Each tab owns its slot inside its own
+  // `MobileSurfaceHeader`, so the keep-alive hidden tab portals into its
+  // own hidden header and never leaks into the visible tab. Hosts gate the
+  // slot by visibility (`open && tab === ...`, terminal precedent), and
+  // detail/form routes unmount the list, unmounting the portal.
+  const [prHeaderSlot, setPrHeaderSlot] = React.useState<HTMLDivElement | null>(null);
+  const [issuesHeaderSlot, setIssuesHeaderSlot] = React.useState<HTMLDivElement | null>(null);
   React.useEffect(() => {
     if (!open) return;
     setVisitedTabs((current) => {
@@ -286,20 +297,52 @@ export const MobileWorkspaceDrawer = React.memo(function MobileWorkspaceDrawer({
             only (no polling). */}
         {visitedTabs.has('pull-requests') ? (
           <div className={cn('h-full', tab !== 'pull-requests' && 'hidden')}>
-            <ErrorBoundary>
-              <React.Suspense fallback={null}>
-                <LazyPullRequestsSurface hideFilesTab />
-              </React.Suspense>
-            </ErrorBoundary>
+            <div className="flex h-full min-h-0 flex-col bg-background">
+              <MobileSurfaceHeader
+                icon={CONTEXT_SURFACES.find((surface) => surface.id === 'pull-requests')?.icon}
+                title={CONTEXT_SURFACES.find((surface) => surface.id === 'pull-requests')?.label ?? 'Pull requests'}
+                actions={
+                  <div
+                    ref={(node) => {
+                      setPrHeaderSlot(node);
+                    }}
+                    className="flex items-center gap-1"
+                  />
+                }
+              />
+              <div className="min-h-0 flex-1">
+                <ErrorBoundary>
+                  <React.Suspense fallback={null}>
+                    <LazyPullRequestsSurface hideFilesTab headerActionsSlot={open && tab === 'pull-requests' ? prHeaderSlot : null} headerActionsPresentation="drawer" />
+                  </React.Suspense>
+                </ErrorBoundary>
+              </div>
+            </div>
           </div>
         ) : null}
         {visitedTabs.has('issues') ? (
           <div className={cn('h-full', tab !== 'issues' && 'hidden')}>
-            <ErrorBoundary>
-              <React.Suspense fallback={null}>
-                <LazyIssuesSurface />
-              </React.Suspense>
-            </ErrorBoundary>
+            <div className="flex h-full min-h-0 flex-col bg-background">
+              <MobileSurfaceHeader
+                icon={CONTEXT_SURFACES.find((surface) => surface.id === 'issues')?.icon}
+                title={CONTEXT_SURFACES.find((surface) => surface.id === 'issues')?.label ?? 'Issues'}
+                actions={
+                  <div
+                    ref={(node) => {
+                      setIssuesHeaderSlot(node);
+                    }}
+                    className="flex items-center gap-1"
+                  />
+                }
+              />
+              <div className="min-h-0 flex-1">
+                <ErrorBoundary>
+                  <React.Suspense fallback={null}>
+                    <LazyIssuesSurface headerActionsSlot={open && tab === 'issues' ? issuesHeaderSlot : null} headerActionsPresentation="drawer" />
+                  </React.Suspense>
+                </ErrorBoundary>
+              </div>
+            </div>
           </div>
         ) : null}
       </div>

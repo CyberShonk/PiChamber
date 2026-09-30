@@ -22,6 +22,7 @@ import { useGitHubRemoteSearch } from './useGitHubRemoteSearch';
 import { IssuesList } from './issues/IssuesList';
 import { IssueDetail } from './issues/IssueDetail';
 import { NewIssueForm } from './issues/NewIssueForm';
+import type { GitHubHeaderActionsPresentation } from './GitHubFiltersMenu';
 
 /**
  * Issues rail surface (plan §6.4).
@@ -40,7 +41,16 @@ const IssuesBody: React.FC<{
   isRefreshing: boolean;
   registerRefresh: (refresh: (() => void) | null) => void;
   onRefreshChange: (value: boolean) => void;
-}> = ({ directory, repo, isRefreshing, registerRefresh, onRefreshChange }) => {
+  /**
+   * Host header slot for the action controls (Refresh + New issue). Only
+   * the list branch below receives it; detail/form branches unmount the
+   * list so the portal unmounts too. Hosts gate the slot by visibility
+   * (terminal `terminalHeaderSlot={isActive ? slot : null}` precedent).
+   */
+  headerActionsSlot?: HTMLElement | null;
+  /** Which header hosts the slot (`desktop` ContextPanel or `drawer` mobile/tablet). */
+  headerActionsPresentation?: GitHubHeaderActionsPresentation;
+}> = ({ directory, repo, isRefreshing, registerRefresh, onRefreshChange, headerActionsSlot = null, headerActionsPresentation = 'drawer' }) => {
   const apis = useRuntimeAPIs();
   const github = apis.github ?? null;
   const filters = useIssuesFilters(directory, repo);
@@ -254,6 +264,8 @@ const IssuesBody: React.FC<{
   return (
     <IssuesList
       items={items}
+      headerActionsSlot={headerActionsSlot}
+      headerActionsPresentation={headerActionsPresentation}
       hasMore={relevantEntries.some((entry) => entry?.data?.nextCursor != null)}
       isLoadingMore={relevantEntries.some((entry) => entry?.isLoading)}
       isLoading={relevantEntries.some((entry) => entry?.isLoading)}
@@ -280,7 +292,16 @@ const IssuesBody: React.FC<{
   );
 };
 
-export const IssuesSurface: React.FC = () => {
+export const IssuesSurface: React.FC<{
+  /**
+   * Host header slot for the action controls (Refresh + New issue)
+   * (TerminalView `terminalHeaderSlot` precedent). Only used while the list
+   * is shown; detail/form routes unmount the list so the portal unmounts too.
+   */
+  headerActionsSlot?: HTMLElement | null;
+  /** Which header hosts the slot (`desktop` ContextPanel or `drawer` mobile/tablet). */
+  headerActionsPresentation?: GitHubHeaderActionsPresentation;
+}> = ({ headerActionsSlot = null, headerActionsPresentation = 'drawer' }) => {
   const directory = useEffectiveDirectory() ?? '';
   const [refreshing, setRefreshing] = React.useState(false);
   const refreshRef = React.useRef<(() => void) | null>(null);
@@ -303,7 +324,7 @@ export const IssuesSurface: React.FC = () => {
       onRefresh={() => refreshRef.current?.()}
     >
       {({ repo, directory: dir }) => (
-        <IssuesBody directory={dir} repo={repo} isRefreshing={refreshing} registerRefresh={registerRefresh} onRefreshChange={handleRefreshChange} />
+        <IssuesBody directory={dir} repo={repo} isRefreshing={refreshing} registerRefresh={registerRefresh} onRefreshChange={handleRefreshChange} headerActionsSlot={headerActionsSlot} headerActionsPresentation={headerActionsPresentation} />
       )}
     </GitHubSurfaceShell>
   );

@@ -17,6 +17,7 @@ import { getPiSessionStore } from "@/apps/pi-session-store";
 import { useSelectionStore } from "@/sync/selection-store";
 import {
   serializeAttachmentsForQueue,
+  shouldApplySentDraftClear,
   useInputStore,
 } from "@/sync/input-store";
 import { getWorktreeCreationKey, useWorktreeCreationStore } from "@/stores/useWorktreeCreationStore";
@@ -158,7 +159,6 @@ import {
 import { DraftBranchCheckoutDialog } from "./composer/ui/DraftBranchCheckoutDialog";
 import { ComposerAutocompletePopups } from "./composer/ui/ComposerAutocompletePopups";
 import { ComposerFooter } from "./composer/ui/ComposerFooter";
-import { GitHubLinkPicker } from "../views/github/agent/GitHubLinkPicker";
 import { RevertedMessageDock } from "./composer/ui/RevertedMessageDock";
 import { ComposerDragOverlay } from "./composer/ui/ComposerDragOverlay";
 import { ComposerAttachmentPickerInput } from "./composer/ui/ComposerAttachmentPickerInput";
@@ -171,6 +171,11 @@ import { useComposerDictation } from "@/lib/dictation/use-composer-dictation";
 
 // Lazy like in ChatMessage: a static import would pull the @pierre/diffs and
 // Shiki stacks into the eager startup graph for a dialog opened on demand.
+// Opened on demand; its detail scaffold pulls the GitHub rich-body renderer
+// (dompurify) that the composer must not load at startup.
+const GitHubLinkPicker = lazyWithChunkRecovery(
+  () => import("../views/github/agent/GitHubLinkPicker").then((module) => ({ default: module.GitHubLinkPicker })),
+);
 const ToolOutputDialog = lazyWithChunkRecovery(
   () => import("./message/ToolOutputDialog"),
 );
@@ -786,6 +791,36 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       : "";
     useInputStore.getState().activateAttachmentsDraft(nextKey);
   }, [chatDraftIdentity]);
+
+  // Remount-safe successful-send clear. The sending instance can unmount
+  // mid-send (prompt() flips the session busy synchronously, so the
+  // transcript branch swaps to a fresh ChatInput whose unmount flush
+  // persisted the still-unsent text and which initialised from that draft).
+  // The sender publishes a one-shot signal after persisting the cleared
+  // draft; whichever instance currently owns the same draft key finishes
+  // the clear. Runs on mount too, so a remount that initialised from the
+  // stale draft still clears. Clearing via setMessage reuses the existing
+  // path: the debounced draft writer cancels its pending write for the
+  // sent text and persists the cleared draft instead.
+  const sentDraftClear = useInputStore((s) => s.sentDraftClear);
+  React.useEffect(() => {
+    if (!sentDraftClear) return;
+    const myKey = chatDraftIdentity
+      ? getChatDraftIdentityKey(chatDraftIdentity)
+      : "";
+    // A signal for a different draft must neither clear nor be consumed:
+    // it belongs to that draft's owner.
+    if (!myKey || sentDraftClear.draftKey !== myKey) return;
+    // One-shot: drop the signal so a later mount cannot fire it again.
+    // Guarded to the exact nonce so a newer send's signal is never dropped.
+    useInputStore.getState().consumeSentDraftClear(sentDraftClear.nonce);
+    const current = composerRef.current?.getValue() ?? messageRef.current;
+    // Exact-match contract: never wipe text the user edited or typed after.
+    if (!shouldApplySentDraftClear(sentDraftClear, myKey, current)) return;
+    confirmedMentionsRef.current.clear();
+    messageHistory.reset();
+    setMessage("");
+  }, [sentDraftClear, chatDraftIdentity, messageHistory]);
 
   // Focus textarea when new session draft is opened
   const prevNewSessionDraftOpenRef = React.useRef(newSessionDraftOpen);
@@ -1621,6 +1656,15 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                 confirmedMentionsRef.current.clear();
                 messageHistory.reset();
               }
+              // Remount-safe clear: the sending instance may already have
+              // unmounted mid-send (busy flip swapped the transcript
+              // branch), making its setMessage above a no-op on a dead
+              // instance. Publish after persisting the cleared draft so the
+              // instance currently owning this draft key finishes the clear.
+              // Success only — the failure path publishes nothing and keeps
+              // the text (and attachments) for retry. Consumers clear only
+              // on exact text match, so type-ahead is never wiped.
+              useInputStore.getState().publishSentDraftClear(sentDraftKey, inputSnapshot.message);
             } else {
               persistDraftImmediately(chatDraftIdentity, "");
             }
@@ -2782,11 +2826,13 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       />
 
       {githubLinkOpen && (currentSessionDirectoryForSync ?? currentDirectory) ? (
-        <GitHubLinkPicker
-          directory={(currentSessionDirectoryForSync ?? currentDirectory) as string}
-          open={githubLinkOpen}
-          onClose={() => setGithubLinkOpen(false)}
-        />
+        <React.Suspense fallback={null}>
+          <GitHubLinkPicker
+            directory={(currentSessionDirectoryForSync ?? currentDirectory) as string}
+            open={githubLinkOpen}
+            onClose={() => setGithubLinkOpen(false)}
+          />
+        </React.Suspense>
       ) : null}
 
       {/* Mobile draft target pickers: bottom sheets replacing the inline

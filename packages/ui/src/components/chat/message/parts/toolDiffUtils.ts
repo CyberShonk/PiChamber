@@ -1,4 +1,4 @@
-import { parsePatchFiles } from '@pierre/diffs';
+import { parsePatchFiles } from '@pichamber/pierre-parse-patch';
 
 export type DiffPatchEntry = {
     id: string;

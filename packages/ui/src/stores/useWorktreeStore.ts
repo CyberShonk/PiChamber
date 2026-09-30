@@ -16,10 +16,15 @@ type ProjectWorktreeState = {
 type WorktreeStore = {
   runtimeKey: string;
   projects: Map<string, ProjectWorktreeState>;
-  refreshProject: (projectRoot: string, git: GitAPI) => Promise<GitWorktree[] | null>;
+  refreshProject: (projectRoot: string, git: GitAPI, options?: { force?: boolean }) => Promise<GitWorktree[] | null>;
   resetForRuntimeSwitch: (runtimeKey: string) => void;
 };
 
+// Successful discoveries stay fresh for 30 s: background polling
+// (`WorktreeDiscovery` interval/focus/visibility) skips the network entirely
+// inside this window, while explicit mutation refreshes pass `{ force: true }`.
+// Failures never count as fresh, so they retry on the next pass.
+export const WORKTREE_REFRESH_FRESHNESS_MS = 30_000;
 const inFlightByProject = new Map<string, Promise<GitWorktree[] | null>>();
 const linkedWorktreeCache = new WeakMap<GitWorktree[], GitWorktree[]>();
 let runtimeGeneration = 0;
@@ -54,7 +59,7 @@ export const useWorktreeStore = create<WorktreeStore>()((set, get) => ({
   runtimeKey: getRuntimeKey(),
   projects: new Map(),
 
-  refreshProject: async (projectRoot, git) => {
+  refreshProject: async (projectRoot, git, options) => {
     const normalizedRoot = normalizePath(projectRoot);
     if (!normalizedRoot) return null;
     const runtimeKey = getRuntimeKey();
@@ -64,6 +69,13 @@ export const useWorktreeStore = create<WorktreeStore>()((set, get) => ({
     if (existingTask) return existingTask;
 
     const previous = get().projects.get(normalizedRoot) ?? initialProjectState();
+    if (!options?.force
+      && previous.status === 'ready'
+      && previous.error === null
+      && Date.now() - previous.fetchedAt < WORKTREE_REFRESH_FRESHNESS_MS
+    ) {
+      return previous.worktrees;
+    }
     if (previous.status === 'idle') {
       set((state) => {
         const projects = new Map(state.projects);

@@ -5,7 +5,6 @@ import type {
   GitRemoveRemotePayload,
   CreateGitCommitOptions,
   GitCommitResult,
-  GitAuthorSummary,
   GitPushResult,
   GitPullResult,
   GitPullOptions,
@@ -347,28 +346,6 @@ export async function stash(
 export async function stashPop(directory: string): Promise<{ success: boolean }> {
   await popGitStash(directory, { ref: 'stash@{0}' });
   return { success: true };
-}
-
-/**
- * Read-only commit author from the user's own git config
- * (GET /api/git/current-identity). PiChamber never writes git config.
- */
-export async function getCurrentGitAuthor(directory: string): Promise<GitAuthorSummary | null> {
-  if (!directory) {
-    return null;
-  }
-  const response = await runtimeFetch(buildUrl(`${API_BASE}/current-identity`, directory));
-  if (!response.ok) {
-    throw new Error(`Failed to get current git author: ${response.statusText}`);
-  }
-  const data = await response.json();
-  if (!data) {
-    return null;
-  }
-  return {
-    userName: data.userName ?? null,
-    userEmail: data.userEmail ?? null,
-  };
 }
 
 export async function getRemoteUrl(directory: string, remote?: string): Promise<string | null> {

@@ -69,6 +69,9 @@ export const DefaultsSettings: React.FC = () => {
 
   React.useEffect(() => {
     void loadProviders({ source: 'sessionsDefaults' });
+    // Structured-output gating reads modelsMetadata; start it on demand when
+    // this surface mounts if idle has not fired yet (deduped).
+    useConfigStore.getState().ensureModelMetadata();
   }, [loadProviders]);
 
   React.useEffect(() => {

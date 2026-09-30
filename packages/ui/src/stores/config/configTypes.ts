@@ -49,6 +49,8 @@ export interface ConfigStore {
     source?: string;
   }) => Promise<void>;
   invalidateModelMetadataCache: () => void;
+  /** Start the models.dev load immediately (deduped). Picker opens call this so badges never wait for idle. */
+  ensureModelMetadata: () => void;
   invalidateProviderCache: (directory?: string | null) => void;
   setProvider: (providerId: string) => void;
   setModel: (modelId: string) => void;

@@ -6,8 +6,8 @@ This directory keeps the source file-type SVG icons and the generated sprite use
 
 - The UI resolves an icon id in `packages/ui/src/lib/fileTypeIcons.ts`.
 - Valid icon ids are loaded from `packages/ui/src/lib/fileTypeIconIds.ts`.
-- `packages/ui/src/components/icons/FileTypeIcon.tsx` renders the icon with `<use href="...#icon-id" />` from `sprite.svg`.
-- Vite handles `sprite.svg` as a normal asset URL automatically.
+- `packages/ui/src/components/icons/FileTypeIcon.tsx` renders the icon with `<use href="...#icon-id" />`.
+- `sprite.svg` is loaded on demand as its own chunk via a dynamic `?raw` import, never statically: it is ~965 KB raw and would otherwise dominate the startup JS chunk. The first icon request records the symbol as pending and starts a single shared load (also kicked off at idle after startup); when the load resolves, pending symbols are mounted into a hidden `<defs>`. `FileTypeIcon` subscribes to the sprite readiness version (`subscribeFileTypeSprite` / `getFileTypeSpriteVersion`) and re-renders once when the sprite arrives, so icons requested before the load still resolve.
 
 The sprite generator rewrites internal SVG ids per icon (gradients, clip paths, filters) so ids do not collide after packing all icons into one file.
 

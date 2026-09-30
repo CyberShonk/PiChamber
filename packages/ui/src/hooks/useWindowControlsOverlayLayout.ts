@@ -25,15 +25,26 @@ const clampPx = (value: number): string => {
   return `${Math.max(0, Math.round(value))}px`;
 };
 
+// A custom-property write on the root restyles the whole document, and this
+// runs on every window focus/resize. Skip writes that would not change the
+// effective value; the stylesheet already defaults these insets to 0px.
+const setInsetProperty = (root: HTMLElement, name: string, value: string) => {
+  const current = root.style.getPropertyValue(name);
+  if (current === value || (!current && value === '0px')) {
+    return;
+  }
+  root.style.setProperty(name, value);
+};
+
 const applyOverlayInsets = (
   root: HTMLElement,
   leftInsetPx: number,
   rightInsetPx: number,
   titlebarHeightPx: number,
 ) => {
-  root.style.setProperty('--oc-wco-left-inset', clampPx(leftInsetPx));
-  root.style.setProperty('--oc-wco-right-inset', clampPx(rightInsetPx));
-  root.style.setProperty('--oc-wco-titlebar-height', clampPx(titlebarHeightPx));
+  setInsetProperty(root, '--oc-wco-left-inset', clampPx(leftInsetPx));
+  setInsetProperty(root, '--oc-wco-right-inset', clampPx(rightInsetPx));
+  setInsetProperty(root, '--oc-wco-titlebar-height', clampPx(titlebarHeightPx));
 };
 
 export const useWindowControlsOverlayLayout = () => {

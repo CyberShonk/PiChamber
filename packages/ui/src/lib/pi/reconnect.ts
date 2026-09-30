@@ -137,7 +137,7 @@ export const reconnectPiSession = async (
   // 1. Health probe first — a `unavailable` result is not a failure but a
   //    distinct state the UI must render.
   result.phase = 'health-check';
-  const health = await task(() => dependencies.fetchHealth(options.signal, options.runtimeKey));
+  const health = await task(() => dependencies.fetchHealth(options.signal, options.runtimeKey, { fresh: true }));
   if (health.state !== 'ready') {
     result.phase = 'unavailable';
     result.error = {

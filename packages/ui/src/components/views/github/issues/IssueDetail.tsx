@@ -26,7 +26,7 @@ import { openExternalUrl } from '@/lib/url';
 import { toast } from '@/components/ui';
 import { useGitHubIssuesStore } from '@/stores/useGitHubIssuesStore';
 import { useGitHubScope } from '@/stores/useGitHubScopeStore';
-import { openPullRequestInSurface } from '../PullRequestsSurface';
+import { openPullRequestInSurface } from '../openPullRequestInSurface';
 import {
   GitHubAvatar,
   GitHubBotCommentGroup,

@@ -49,4 +49,14 @@ describe('AgentThinkingLoader elapsed origin', () => {
     expect(markup).toContain('agent-thinking-label-enter');
     expect(markup).toContain('pixel-loader-label');
   });
+
+  test('shimmers the label with a hidden compositor overlay, not a repainted gradient', () => {
+    const markup = renderToStaticMarkup(
+      <AgentThinkingLoader text="Thinking" showElapsed={false} />,
+    );
+    expect(markup).toContain('data-shimmer-text="Thinking"');
+    expect(markup).toContain('aria-hidden="true" class="oc-shimmer-clip"');
+    expect(markup).not.toContain('background-image');
+    expect(markup.replace(/<[^>]*>/g, '')).toBe('Thinking');
+  });
 });

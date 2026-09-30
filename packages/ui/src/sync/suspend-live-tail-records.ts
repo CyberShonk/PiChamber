@@ -23,6 +23,31 @@ export const selectStreamingAssistantMessageId = (
   return streamingId;
 };
 
+/** Latest user message id in insertion order, or null when there is none. */
+const latestUserMessageId = (
+  session: PiReducerSessionState,
+): string | null => {
+  let latest: string | null = null;
+  for (const message of session.messages.values()) {
+    if (message.role === 'user') latest = message.id;
+  }
+  return latest;
+};
+
+/**
+ * True while a plain prompt send is still waiting for the server to echo
+ * its user message. The marker self-resolves: the moment the echoed user
+ * message is inserted, the latest user id moves past the baseline and this
+ * returns false with no explicit clear needed.
+ */
+export const selectAwaitingPromptEcho = (
+  session: PiReducerSessionState | null | undefined,
+): boolean => {
+  const baseline = session?.awaitingPromptEcho?.baselineUserMessageId;
+  if (!session || session.awaitingPromptEcho === undefined) return false;
+  return latestUserMessageId(session) === baseline;
+};
+
 /**
  * True when `next` only changed a non-user message's parts. Composer arrow
  * history must not walk 200 user turns on every assistant token.

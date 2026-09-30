@@ -38,8 +38,8 @@ describe('terminal tabs dropdown', () => {
     expect(terminalViewSource).toContain('createPortal');
   });
 
-  test('the dropdown trigger follows the shared value-picker chrome', () => {
-    expect(dropdownSource).toContain('dropdownTriggerVariants');
+  test('the dropdown trigger matches the git branch selector ghost button', () => {
+    expect(dropdownSource).toContain('variant="ghost"');
     expect(dropdownSource).toContain('arrow-down-s');
     expect(dropdownSource).toContain('aria-label');
   });

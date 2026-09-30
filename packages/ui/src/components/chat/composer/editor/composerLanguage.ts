@@ -14,9 +14,10 @@
  */
 
 import { RangeSetBuilder, StateEffect, StateField } from '@codemirror/state';
-import { Decoration, EditorView, type DecorationSet } from '@codemirror/view';
+import { Decoration, EditorView, ViewPlugin, type DecorationSet, type ViewUpdate } from '@codemirror/view';
 
 import { resolveHighlightSegments, DEFAULT_HIGHLIGHT_CLASS } from '../../composerHighlight';
+import { preloadFencedCodeLanguages } from '../../composerCodeHighlight';
 import { tokenizeComposer, type ComposerLanguageContext } from '../language/tokenize';
 
 /**
@@ -25,6 +26,14 @@ import { tokenizeComposer, type ComposerLanguageContext } from '../language/toke
  * not on every keystroke, which only changes the document.
  */
 export const setLanguageContext = StateEffect.define<ComposerLanguageContext>();
+
+/**
+ * Recompute decorations after an on-demand fenced-code language arrives.
+ * `highlightFencedCode` renders uniform `codeFence` styling until the pack
+ * loads; this effect repaints the same document with per-token colors once
+ * `preloadFencedCodeLanguages` resolves true. It never changes the document.
+ */
+export const codeLanguagesChanged = StateEffect.define<void>();
 
 /**
  * The context lives in editor state rather than in a closure so the decoration
@@ -71,7 +80,8 @@ const decorationField = StateField.define<DecorationSet>({
     create: (state) => buildDecorations(state.doc.toString(), state.field(languageContextField)),
     update(value, transaction) {
         const contextChanged = transaction.effects.some((effect) => effect.is(setLanguageContext));
-        if (!transaction.docChanged && !contextChanged) return value;
+        const codeChanged = transaction.effects.some((effect) => effect.is(codeLanguagesChanged));
+        if (!transaction.docChanged && !contextChanged && !codeChanged) return value;
         return buildDecorations(
             transaction.state.doc.toString(),
             transaction.state.field(languageContextField),
@@ -81,13 +91,54 @@ const decorationField = StateField.define<DecorationSet>({
 });
 
 /**
+ * Watches the document for fenced-code languages that have not loaded yet,
+ * starts their packs, and dispatches `codeLanguagesChanged` when a new pack
+ * arrives so the same text repaints with per-token colors. Concurrent edits
+ * share the loader's deduped promise; a dispatch only fires when the loaded
+ * text is still current, so there is no flicker loop or repeated loading —
+ * after the cache fills, `preloadFencedCodeLanguages` resolves false and no
+ * further effects dispatch.
+ */
+const fencedCodeLanguagePlugin = ViewPlugin.fromClass(
+    class {
+        private generation = 0;
+
+        constructor(view: EditorView) {
+            void this.ensure(view);
+        }
+
+        update(update: ViewUpdate) {
+            if (update.docChanged) void this.ensure(update.view);
+        }
+
+        private async ensure(view: EditorView) {
+            const generation = ++this.generation;
+            const text = view.state.doc.toString();
+            if (!text.includes('```') && !text.includes('~~~')) return;
+            let changed = false;
+            try {
+                changed = await preloadFencedCodeLanguages(text);
+            } catch {
+                return;
+            }
+            if (generation !== this.generation) return;
+            if (!changed) return;
+            if (view.state.doc.toString() !== text) return;
+            view.dispatch({ effects: codeLanguagesChanged.of(undefined) });
+        }
+    },
+);
+
+/**
  * The composer language extension. Install once; feed it registry updates with
- * `setLanguageContext`.
+ * `setLanguageContext`. Fenced-code packs load on demand through the bundled
+ * view plugin, which dispatches `codeLanguagesChanged` when a pack arrives.
  */
 export function composerLanguage(initial: ComposerLanguageContext = EMPTY_CONTEXT) {
     return [
         languageContextField.init(() => initial),
         decorationField,
+        fencedCodeLanguagePlugin,
     ];
 }
 

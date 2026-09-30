@@ -1,6 +1,6 @@
 /**
  * Regression guard: the git panel collapsed three stacked header rows (the
- * ContextPanel "Git" label row plus GitHeader's branch/identity row and its
+ * ContextPanel "Git" label row plus GitHeader's branch row and its
  * sync/views row, with the diff toolbar as a fourth) into one meaningful
  * header row. GitView owns a single GitUnifiedHeader and portals it into the
  * panel header slot (terminal pattern); hosts without panel chrome render the
@@ -42,7 +42,6 @@ describe('git unified header', () => {
 
   test('the unified header keeps every control visible or one menu away', () => {
     expect(headerSource).toContain('<BranchSelector');
-    expect(headerSource).toContain('<GitAuthorLine');
     expect(headerSource).toContain('<ChangeScopeSelector');
     expect(headerSource).toContain('<SyncActions');
     expect(headerSource).toContain('Repository views');
@@ -55,17 +54,6 @@ describe('git unified header', () => {
     expect(headerSource).toContain('Load full files');
     expect(headerSource).toContain('Wrap lines');
     expect(headerSource).toContain('side-by-side');
-  });
-
-  test('the commit author is read-only and never writes git config', () => {
-    expect(headerSource).toContain('currentAuthor');
-    expect(headerSource).toContain('<GitAuthorLine');
-    // Concatenated so this guard does not itself reintroduce the removed name.
-    expect(headerSource).not.toContain('Identity' + 'Dropdown');
-    const authorSource = readFileSync(join(gitDir, 'GitAuthorLine.tsx'), 'utf-8');
-    expect(authorSource).toContain('Committing as');
-    expect(authorSource).toContain('No git author configured');
-    expect(gitViewSource).not.toContain('Identity' + 'Dropdown');
   });
 
   test('header icon buttons stay accessible', () => {

@@ -29,5 +29,7 @@ export const focusPathInput = (input: HTMLInputElement | null): void => {
 };
 
 export const resolveFreshFilesystemHome = async (): Promise<string | null> => {
-  return getFilesystemHome();
+  // Explicitly fresh: bypasses the runtime-scoped home memo in fsApi so the
+  // directory explorer always re-reads the live server value on open.
+  return getFilesystemHome({ fresh: true });
 };

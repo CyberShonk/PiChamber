@@ -1,4 +1,5 @@
 import { getRuntimeKey } from '@/lib/runtime-switch';
+import type { GitLogResponse } from '@/lib/api/types';
 import type {
   GitRequestToken,
   GitStatusFetchMode,
@@ -8,6 +9,9 @@ export const inFlightDiffFetchesByDirectory = new Map<string, Set<string>>();
 export const diffFetchGenerationByDirectory = new Map<string, number>();
 export const inFlightStatusFetches = new Map<string, Promise<boolean>>();
 export const inFlightBranchFetches = new Map<string, Promise<void>>();
+export const inFlightLogFetches = new Map<string, Promise<void>>();
+export const inFlightRemotesFetches = new Map<string, Promise<void>>();
+export const inFlightLogQueryFetches = new Map<string, Promise<GitLogResponse | null>>();
 export const inFlightEnsureAllByDirectory = new Map<string, Promise<void>>();
 export const requestGenerationByChannel = new Map<string, number>();
 export const statusMutationRevisionByDirectory = new Map<string, number>();
@@ -25,6 +29,9 @@ export const resetGitRuntimeGuards = (runtimeKey: string) => {
   statusMutationRevisionByDirectory.clear();
   inFlightStatusFetches.clear();
   inFlightBranchFetches.clear();
+  inFlightLogFetches.clear();
+  inFlightRemotesFetches.clear();
+  inFlightLogQueryFetches.clear();
   inFlightEnsureAllByDirectory.clear();
   inFlightDiffFetchesByDirectory.clear();
   diffFetchGenerationByDirectory.clear();
@@ -38,6 +45,18 @@ export const getStatusFetchKey = (
   directory: string,
   mode: GitStatusFetchMode
 ): string => JSON.stringify([runtimeKey, directory, mode]);
+
+export const getLogFetchKey = (
+  runtimeKey: string,
+  directory: string,
+  maxCount: number
+): string => JSON.stringify([runtimeKey, directory, maxCount]);
+
+export const getLogQueryFetchKey = (
+  runtimeKey: string,
+  directory: string,
+  queryKey: string
+): string => JSON.stringify([runtimeKey, directory, queryKey]);
 
 export const channelKey = (
   runtimeKey: string,

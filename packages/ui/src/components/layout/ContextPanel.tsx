@@ -16,6 +16,9 @@ import { lazyWithChunkRecovery } from '@/lib/chunkLoadRecovery';
 const DiffView = lazyWithChunkRecovery(() => import('@/components/views/DiffView').then((m) => ({ default: m.DiffView })));
 const FilesView = lazyWithChunkRecovery(() => import('@/components/views/FilesView').then((m) => ({ default: m.FilesView })));
 const GitView = lazyWithChunkRecovery(() => import('@/components/views/GitView').then((m) => ({ default: m.GitView })));
+// The GitHub surfaces reach @pierre/diffs → Shiki through PR file review.
+const PullRequestsSurface = lazyWithChunkRecovery(() => import('@/components/views/github/PullRequestsSurface').then((m) => ({ default: m.PullRequestsSurface })));
+const IssuesSurface = lazyWithChunkRecovery(() => import('@/components/views/github/IssuesSurface').then((m) => ({ default: m.IssuesSurface })));
 import { useEffectiveDirectory } from '@/hooks/useEffectiveDirectory';
 import { cn } from '@/lib/utils';
 import { useFilesViewTabsStore } from '@/stores/useFilesViewTabsStore';
@@ -23,8 +26,6 @@ import { useUIStore, type ContextPanelMode, type PendingDiffScope } from '@/stor
 import { getGitRailPresentation } from '@/lib/surfaces/registry';
 import { useIsGitRepo } from '@/stores/useGitStore';
 import { ContextPanelContent } from './ContextSidebarTab';
-import { PullRequestsSurface } from '@/components/views/github/PullRequestsSurface';
-import { IssuesSurface } from '@/components/views/github/IssuesSurface';
 import { Icon } from "@/components/icon/Icon";
 import { CONTEXT_SURFACE_DEFAULT_WIDTH_FRACTION } from '@/lib/surfaces/registry';
 import { isTerminalEventTarget } from '@/lib/terminalFocus';
@@ -221,6 +222,12 @@ export const ContextPanel: React.FC = () => {
   // when a diff surface is active. DiffView owns the diff state and portals
   // its toolbar here so the panel keeps a single header.
   const [diffHeaderSlot, setDiffHeaderSlot] = React.useState<HTMLDivElement | null>(null);
+  // Slot that hosts the pull-requests/issues list actions (Refresh + the
+  // primary action such as New issue) when those singleton surfaces show
+  // their list route. The lists own the action state and portal it here so
+  // the panel keeps a single header; detail routes unmount the list, which
+  // unmounts the portal and empties the slot.
+  const [githubHeaderSlot, setGithubHeaderSlot] = React.useState<HTMLDivElement | null>(null);
   const startXRef = React.useRef(0);
   const startWidthRef = React.useRef(width);
   const resizingWidthRef = React.useRef<number | null>(null);
@@ -456,14 +463,17 @@ export const ContextPanel: React.FC = () => {
     };
   }), [activeModeTabs, effectiveDirectory, isGitRepo]);
 
+  const isPullRequestsPanelActive = activeTab?.mode === 'pull-requests';
+  const isIssuesPanelActive = activeTab?.mode === 'issues';
+
   const activeContent = activeTab?.mode === 'context'
         ? <ContextPanelContent />
         : activeTab?.mode === 'git'
             ? <React.Suspense fallback={null}><GitView isActive={isOpen} gitHeaderSlot={activeTab?.mode === 'git' ? gitHeaderSlot : null} /></React.Suspense>
             : activeTab?.mode === 'pull-requests'
-                ? <PullRequestsSurface key={`pull-requests:${directoryKey}`} />
+                ? <React.Suspense fallback={null}><PullRequestsSurface key={`pull-requests:${directoryKey}`} headerActionsSlot={isPullRequestsPanelActive ? githubHeaderSlot : null} headerActionsPresentation="desktop" /></React.Suspense>
                 : activeTab?.mode === 'issues'
-                    ? <IssuesSurface key={`issues:${directoryKey}`} />
+                    ? <React.Suspense fallback={null}><IssuesSurface key={`issues:${directoryKey}`} headerActionsSlot={isIssuesPanelActive ? githubHeaderSlot : null} headerActionsPresentation="desktop" /></React.Suspense>
                     : activeTab?.mode === 'preview'
                 ? <PreviewPane rawUrl={activeTab.targetPath ?? ''} onNavigate={(url) => openContextPreview(effectiveDirectory, url)} />
                 : (
@@ -548,10 +558,24 @@ export const ContextPanel: React.FC = () => {
           }}
           className="flex min-w-0 flex-1 items-center overflow-hidden px-1"
         />
+      ) : isPullRequestsPanelActive || isIssuesPanelActive ? (
+        <div className="flex min-w-0 flex-1 items-center gap-1.5 px-3">
+          {activeTab ? getTabIcon(activeTab, isGitRepo) : null}
+          <span className="truncate typography-ui-label font-medium text-foreground">
+            {activeTab ? getModeLabel(activeTab.mode, isGitRepo) : null}
+          </span>
+          <span className="min-w-0 flex-1" />
+          <div
+            ref={(node) => {
+              setGithubHeaderSlot(node);
+            }}
+            className="flex shrink-0 items-center gap-1"
+          />
+        </div>
       ) : (
         <div className="flex min-w-0 flex-1 items-center gap-1.5 px-3">
           {activeTab ? getTabIcon(activeTab, isGitRepo) : null}
-          <span className="truncate typography-ui-label text-foreground">
+          <span className="truncate typography-ui-label font-medium text-foreground">
             {activeTab ? getModeLabel(activeTab.mode, isGitRepo) : null}
           </span>
         </div>
@@ -563,12 +587,12 @@ export const ContextPanel: React.FC = () => {
             variant="ghost"
             size="sm"
             onClick={toggleContextEditorTree}
-            className="h-7 w-7 p-0"
+            className="h-8 w-8 p-0"
             title={"Toggle file tree"}
             aria-label={"Toggle file tree"}
             aria-pressed={contextEditorTreeVisible}
           >
-            <Icon name="layout-right" className="h-3.5 w-3.5" />
+            <Icon name="layout-right" className="size-4" />
           </Button>
         ) : null}
         <Button
@@ -576,22 +600,22 @@ export const ContextPanel: React.FC = () => {
           variant="ghost"
           size="sm"
           onClick={handleToggleExpanded}
-          className="h-7 w-7 p-0"
+          className="h-8 w-8 p-0"
           title={isExpanded ? "Collapse panel" : "Expand panel"}
           aria-label={isExpanded ? "Collapse panel" : "Expand panel"}
         >
-          {isExpanded ? <Icon name="fullscreen-exit" className="h-3.5 w-3.5" /> : <Icon name="fullscreen" className="h-3.5 w-3.5" />}
+          {isExpanded ? <Icon name="fullscreen-exit" className="size-4" /> : <Icon name="fullscreen" className="size-4" />}
         </Button>
         <Button
           type="button"
           variant="ghost"
           size="sm"
           onClick={handleClose}
-          className="h-7 w-7 p-0"
+          className="h-8 w-8 p-0"
           title={"Close panel"}
           aria-label={"Close panel"}
         >
-          <Icon name="close" className="h-3.5 w-3.5" />
+          <Icon name="close" className="size-4" />
         </Button>
       </div>
     </header>

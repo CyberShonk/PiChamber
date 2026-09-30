@@ -221,9 +221,11 @@ const resolveRuntimeFetchInput = (input: string | URL | Request, query?: Runtime
 // event stream, and never a request carrying an AbortSignal (so one caller
 // aborting can't cancel the shared fetch for the others). The entry is removed
 // as soon as the request settles, so this only ever shares overlapping in-flight
-// requests — it never serves a stale/cached response.
+// requests — it never serves a stale/cached response. `runtime` (daemon health)
+// is included so concurrent boot probes from the config check, first-attach
+// open, and project-less connect merge into one request.
 // ---------------------------------------------------------------------------
-const COALESCE_READ_PATH = /\/api\/pi\/(health|projects|sessions|providers|resources|settings)(\b|\/|\?|$)/;
+const COALESCE_READ_PATH = /\/api\/pi\/(health|projects|sessions|providers|resources|runtime|settings)(\b|\/|\?|$)/;
 const READ_COALESCE = new Map<string, Promise<Response>>();
 
 const coalesceReadKey = (method: string, url: string, hasSignal: boolean): string | null => {

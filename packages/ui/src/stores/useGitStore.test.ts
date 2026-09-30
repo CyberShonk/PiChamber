@@ -37,7 +37,11 @@ const createDirectoryState = (status: GitStatus): DirectoryGitState => ({
   status,
   branches: null,
   log: null,
-  author: null,
+  remotes: null,
+  remoteUrl: null,
+  lastRemotesFetch: 0,
+  isLoadingRemotes: false,
+  logQueryCache: new Map(),
   diffCache: new Map(),
   indexRevision: 0,
   lastRepoCheckAt: Date.now(),
@@ -45,12 +49,10 @@ const createDirectoryState = (status: GitStatus): DirectoryGitState => ({
   lastStatusChange: 0,
   lastLogFetch: 0,
   lastBranchesFetch: 0,
-  lastAuthorFetch: 0,
   logMaxCount: 25,
   isLoadingStatus: false,
   isLoadingLog: false,
   isLoadingBranches: false,
-  isLoadingAuthor: false,
 });
 
 const setDirectoryStatus = (status: GitStatus) => {
@@ -65,7 +67,6 @@ const createGitApi = (getGitStatus: GitAPI['getGitStatus']): GitAPI => ({
   getGitStatus,
   getGitBranches: async () => ({ all: [], current: 'main', branches: {} }),
   getGitLog: async () => ({ all: [], latest: null, total: 0 }),
-  getCurrentGitAuthor: async () => null,
   getGitFileDiff: async (_directory, options) => ({ original: '', modified: '', path: options.path }),
 });
 

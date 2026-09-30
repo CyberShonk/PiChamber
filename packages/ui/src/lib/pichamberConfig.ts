@@ -9,6 +9,7 @@
 import type { FilesAPI } from './api/types';
 import { getRegisteredRuntimeAPIs } from '@/contexts/runtimeAPIRegistry';
 import { getDesktopHomeDirectory } from './desktop';
+import { getFilesystemHomeState } from './fsApi';
 import { sanitizeStarterRefs, type DraftStarterRef } from './draftStarters';
 import { createProjectIdFromPath } from './projectId';
 import { runtimeFetch } from './runtime-fetch';
@@ -165,34 +166,16 @@ type ResolvedServerHome = {
   pichamberDataDir: string | null;
 };
 
-let cachedResolvedHome: ResolvedServerHome | null = null;
-
 const resolveServerHome = async (): Promise<ResolvedServerHome> => {
-  if (cachedResolvedHome) {
-    return cachedResolvedHome;
-  }
-  let home: string | null = null;
-  let pichamberDataDir: string | null = null;
+  // Home reads share the runtime-scoped `GET /api/fs/home` memo owned by
+  // fsApi, so the directory store and the project config readers below issue
+  // one request per runtime instead of one each. No local memo remains here.
   // Use server-reported home as the source of truth for user config paths.
   // In some runtimes, window.__PICHAMBER_HOME__ can be workspace/project-root
   // scoped, which would incorrectly route writes into the project directory.
-  try {
-    const response = await runtimeFetch(`${getBaseUrl()}/fs/home`, {
-      // Avoid conditional requests (304 + empty body).
-      cache: 'no-store',
-    });
-    if (response.ok) {
-      const payload = await response.json().catch(() => null) as { home?: unknown; pichamberDataDir?: unknown } | null;
-      if (typeof payload?.home === 'string') {
-        home = normalize(payload.home);
-      }
-      if (typeof payload?.pichamberDataDir === 'string') {
-        pichamberDataDir = normalize(payload.pichamberDataDir);
-      }
-    }
-  } catch {
-    // fall through to desktop fallback below
-  }
+  const state = await getFilesystemHomeState();
+  let home = state.home ? normalize(state.home) : null;
+  const pichamberDataDir = state.pichamberDataDir ? normalize(state.pichamberDataDir) : null;
 
   // Fallback for environments where /api/fs/home is unavailable.
   if (!home) {
@@ -206,8 +189,7 @@ const resolveServerHome = async (): Promise<ResolvedServerHome> => {
     }
   }
 
-  cachedResolvedHome = { home, pichamberDataDir };
-  return cachedResolvedHome;
+  return { home, pichamberDataDir };
 };
 
 const resolveHomeDirectory = async (): Promise<string | null> => {

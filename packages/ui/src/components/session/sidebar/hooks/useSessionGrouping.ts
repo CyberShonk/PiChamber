@@ -7,7 +7,7 @@ import {
   getArchivedScopeKey,
   normalizePath,
 } from '../utils';
-import { compareSessionsByLifecycleOrder } from '@/sync/session-ordering';
+import { createSessionLifecycleComparator } from '@/sync/session-ordering';
 import { formatPathForDisplay } from '@/lib/utils';
 import { getSessionDisplayTitle } from '@/lib/chat/sessionTitle';
 import { getForkColorIdForSession } from '../forkColor';
@@ -65,7 +65,7 @@ export const useSessionGrouping = (args: Args) => {
     ) => {
       const normalizedProjectRoot = normalizePath(projectRoot ?? null);
       const sortedProjectSessions = dedupeSessionsById(projectSessions)
-        .sort((a, b) => compareSessionsByLifecycleOrder(a, b, args.pinnedSessionIds, args.sessionOrderRanks));
+        .sort(createSessionLifecycleComparator(args.pinnedSessionIds, args.sessionOrderRanks));
 
       const sessionMap = new Map(sortedProjectSessions.map((session) => [session.id, session]));
       const parentById = new Map<string, string | null>();

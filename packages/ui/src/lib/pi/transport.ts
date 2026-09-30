@@ -165,10 +165,7 @@ export interface PiStreamHandle {
   readonly eventsUrl: string;
 }
 
-export const fetchPiRuntimeHealth = async (
-  signal?: AbortSignal,
-  runtimeKey?: string,
-): Promise<{
+export interface PiRuntimeHealthResult {
   state: 'ready' | 'unavailable';
   protocolVersion: number;
   capabilities: string[];
@@ -176,8 +173,56 @@ export const fetchPiRuntimeHealth = async (
    *  advertises `events.streamEpoch`. */
   streamEpoch?: string;
   error?: { code: string; message?: string };
-}> => {
+}
+
+/**
+ * Short settled memo for boot-time `GET /api/pi/runtime` bursts.
+ *
+ * Cold start probes health from several owners at once (config connection
+ * check, first-attach open/connect). Genuinely concurrent requests already
+ * merge in `runtimeFetch`'s read coalescing; this memo additionally collapses
+ * sequential boot probes that land within a few seconds of each other.
+ *
+ * Safety rules (see `sync-state-invariants`: failure is not empty):
+ *
+ * - Only `ready` results memoize, for `PI_RUNTIME_HEALTH_MEMO_TTL_MS`.
+ *   Unavailable/error results never memoize, so reconnect and retry loops
+ *   always observe the live daemon.
+ * - Keyed by `getRuntimeKey()` and cleared by `resetPiRuntimeHealthCache()`
+ *   (wired through the central runtime-endpoint reset), so a runtime switch
+ *   can never serve the previous host's health.
+ * - Recovery/reconnect probing inside this module bypasses with
+ *   `{ fresh: true }`: the stream-epoch verification probes and the
+ *   EventSource auth-classifier probe all pass it, because a stale `ready`
+ *   would mask a restarted or unreachable daemon. The reconnect owner
+ *   (`reconnect.ts`) also passes `{ fresh: true }`. Boot callers use the
+ *   default memoized path.
+ */
+const PI_RUNTIME_HEALTH_MEMO_TTL_MS = 3_000;
+
+let piRuntimeHealthMemo: { runtimeKey: string; result: PiRuntimeHealthResult; expiresAt: number } | null = null;
+
+export const resetPiRuntimeHealthCache = (): void => {
+  piRuntimeHealthMemo = null;
+};
+
+export const fetchPiRuntimeHealth = async (
+  signal?: AbortSignal,
+  runtimeKey?: string,
+  options?: { fresh?: boolean },
+): Promise<PiRuntimeHealthResult> => {
   const requestRuntimeKey = runtimeKey ?? getRuntimeKey();
+  if (!options?.fresh) {
+    const memo = piRuntimeHealthMemo;
+    if (
+      memo
+      && memo.runtimeKey === requestRuntimeKey
+      && memo.runtimeKey === getRuntimeKey()
+      && Date.now() < memo.expiresAt
+    ) {
+      return { ...memo.result, capabilities: [...memo.result.capabilities] };
+    }
+  }
   let response: Response;
   try {
     response = await runtimeFetch(resolveHealthPath(), signal ? { signal } : {});
@@ -231,7 +276,7 @@ export const fetchPiRuntimeHealth = async (
   if (payload.state === 'ready' && streamEpoch) {
     observePiStreamEpoch(requestRuntimeKey, streamEpoch);
   }
-  return {
+  const result: PiRuntimeHealthResult = {
     state: payload.state === 'ready' ? 'ready' : 'unavailable',
     protocolVersion: typeof payload.protocolVersion === 'number' ? payload.protocolVersion : PI_PUBLIC_PROTOCOL_VERSION,
     capabilities: Array.isArray(payload.capabilities)
@@ -242,6 +287,14 @@ export const fetchPiRuntimeHealth = async (
       ? { error: { code: errorCode, ...(typeof payload.error?.message === 'string' ? { message: payload.error.message } : {}) } }
       : {}),
   };
+  if (!options?.fresh && result.state === 'ready' && requestRuntimeKey === getRuntimeKey()) {
+    piRuntimeHealthMemo = {
+      runtimeKey: requestRuntimeKey,
+      result: { ...result, capabilities: [...result.capabilities] },
+      expiresAt: Date.now() + PI_RUNTIME_HEALTH_MEMO_TTL_MS,
+    };
+  }
+  return result;
 };
 
 type ConnectionCleanup = () => void;
@@ -263,7 +316,8 @@ const probeRuntimeAuthFailure = async (
   if (signal.aborted) controller.abort();
   else signal.addEventListener('abort', abort, { once: true });
   try {
-    const health = await fetchPiRuntimeHealth(controller.signal, runtimeKey);
+    // Recovery probe: must observe the live daemon, never the boot memo.
+    const health = await fetchPiRuntimeHealth(controller.signal, runtimeKey, { fresh: true });
     return health.state === 'unavailable' && health.error?.code === 'DAEMON_AUTH_FAILED' ? 'auth' : 'transient';
   } catch {
     return 'transient';
@@ -757,7 +811,9 @@ export const createPiEventStream = (
     epochProbeController = new AbortController();
     const timer = setTimeout(() => epochProbeController?.abort(), epochProbeTimeoutMs);
     try {
-      const health = await fetchPiRuntimeHealth(epochProbeController.signal, expectedRuntimeKey);
+      // Recovery probe: verifies a foreign epoch against the live daemon,
+      // so it bypasses the boot memo.
+      const health = await fetchPiRuntimeHealth(epochProbeController.signal, expectedRuntimeKey, { fresh: true });
       if (disposed || signal.aborted || connectionId !== generation) return;
       if (health.state === 'ready' && health.streamEpoch === eventEpoch) {
         // Health verified the transition: retire the previous epoch, reset
@@ -814,7 +870,9 @@ export const createPiEventStream = (
     epochProbeController = new AbortController();
     const timer = setTimeout(() => epochProbeController?.abort(), epochProbeTimeoutMs);
     try {
-      const health = await fetchPiRuntimeHealth(epochProbeController.signal, expectedRuntimeKey);
+      // Recovery probe: verifies the resubscribed lifetime against the live
+      // daemon, so it bypasses the boot memo.
+      const health = await fetchPiRuntimeHealth(epochProbeController.signal, expectedRuntimeKey, { fresh: true });
       if (disposed || signal.aborted || connectionId !== generation) return;
       const liveEpoch = health.state === 'ready' ? health.streamEpoch : undefined;
       if (!liveEpoch || liveEpoch === reference || retiredEpochs.has(liveEpoch)) return;

@@ -98,9 +98,25 @@ export const catalogInvocationSet = (commands: readonly Pick<CatalogCommand, "in
   return set;
 };
 
-type CacheEntry = { commands: CatalogCommand[] };
+export interface CommandCatalogCacheEntry {
+  commands: CatalogCommand[];
+  /** `Date.now()` when the last authoritative fetch for this scope succeeded. */
+  fetchedAt: number;
+  /**
+   * Prompt/skill store signatures observed when the entry was last
+   * validated. Empty means the entry was recorded before the stores
+   * finished their first load — adopting it on empty → loaded is not a
+   * real change, because the commands response already reflects
+   * server-side prompts/skills.
+   */
+  promptSignature: string;
+  skillSignature: string;
+}
 
-const cacheByScope = new Map<string, CacheEntry>();
+/** A fresh entry with matching signatures needs no refetch. */
+export const COMMAND_CATALOG_FRESHNESS_MS = 30_000;
+
+const cacheByScope = new Map<string, CommandCatalogCacheEntry>();
 let invalidationRevision = 0;
 const invalidationListeners = new Set<() => void>();
 
@@ -126,20 +142,64 @@ const commandCatalogCacheKey = (runtimeKey: string, directory?: string): string 
 export const readCommandCatalogCache = (runtimeKey: string, directory?: string): CatalogCommand[] | undefined =>
   cacheByScope.get(commandCatalogCacheKey(runtimeKey, directory))?.commands;
 
+/** Read the full cache entry (freshness + validating signatures) for a scope. */
+export const readCommandCatalogEntry = (
+  runtimeKey: string,
+  directory?: string,
+): CommandCatalogCacheEntry | undefined => {
+  const entry = cacheByScope.get(commandCatalogCacheKey(runtimeKey, directory));
+  return entry ? { ...entry } : undefined;
+};
+
+/** True when the entry was fetched recently enough to skip a refetch. */
+export const isCommandCatalogEntryFresh = (
+  entry: Pick<CommandCatalogCacheEntry, 'fetchedAt'>,
+  now: number = Date.now(),
+): boolean => now - entry.fetchedAt < COMMAND_CATALOG_FRESHNESS_MS;
+
 export const writeCommandCatalogCache = (
   runtimeKey: string,
   directory: string | undefined,
   commands: CatalogCommand[],
+  options?: { promptSignature?: string; skillSignature?: string; /** Test seam for stale-entry coverage; defaults to `Date.now()`. */ fetchedAt?: number },
 ): void => {
   const key = commandCatalogCacheKey(runtimeKey, directory);
   // Refresh recency for LRU bound.
   cacheByScope.delete(key);
-  cacheByScope.set(key, { commands });
+  cacheByScope.set(key, {
+    commands,
+    fetchedAt: options?.fetchedAt ?? Date.now(),
+    promptSignature: options?.promptSignature ?? '',
+    skillSignature: options?.skillSignature ?? '',
+  });
   while (cacheByScope.size > MAX_CACHED_SCOPES) {
     const oldest = cacheByScope.keys().next().value;
     if (typeof oldest !== 'string') break;
     cacheByScope.delete(oldest);
   }
+};
+
+/**
+ * Adopt the current store signatures onto a fresh entry without refetching.
+ * Used when the entry was recorded before the prompt/skill stores finished
+ * their first load: the fetched commands already reflect those resources
+ * server-side, so empty → loaded validates the entry instead of refetching
+ * it. Returns false when the scope has no entry. Keeps `fetchedAt` and the
+ * commands untouched — a failed fetch must never mark an entry fresh.
+ */
+export const adoptCommandCatalogSignatures = (
+  runtimeKey: string,
+  directory: string | undefined,
+  promptSignature: string,
+  skillSignature: string,
+): boolean => {
+  const key = commandCatalogCacheKey(runtimeKey, directory);
+  const entry = cacheByScope.get(key);
+  if (!entry) return false;
+  // Refresh recency for LRU bound.
+  cacheByScope.delete(key);
+  cacheByScope.set(key, { ...entry, promptSignature, skillSignature });
+  return true;
 };
 
 export const invalidateCommandCatalogCache = (directory?: string | null): void => {

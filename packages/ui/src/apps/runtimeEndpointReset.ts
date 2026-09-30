@@ -17,6 +17,10 @@ import { useSnippetsStore } from '@/stores/useSnippetsStore';
 import { usePromptTemplatesStore } from '@/stores/usePromptTemplatesStore';
 import { useSkillsStore } from '@/stores/useSkillsStore';
 import { clearCommandCatalogForRuntimeSwitch } from '@/lib/pi/commandCatalog';
+import { resetFilesystemHomeCache } from '@/lib/fsApi';
+import { resetSttStatusCache } from '@/lib/dictation/stt-status';
+import { resetPiRuntimeHealthCache } from '@/lib/pi/transport';
+import { resetGitHttpCachesForRuntimeSwitch } from '@/lib/git/gitHttpHelpers';
 import { useSessionUIStore } from '@/sync/session-ui-store';
 import { useInputStore } from '@/sync/input-store';
 import { resetSessionOrdering } from '@/sync/session-ordering';
@@ -45,6 +49,11 @@ export const resetAppForRuntimeEndpointChange = (detail: RuntimeEndpointChangedD
   // Command and starter catalogs are runtime-scoped; stale previous-server
   // rows must never render for the new runtime.
   clearCommandCatalogForRuntimeSwitch();
+  // Boot-read memos are runtime-scoped: the previous host's home directory,
+  // daemon health, and dictation status must never serve the new runtime.
+  resetFilesystemHomeCache();
+  resetPiRuntimeHealthCache();
+  resetSttStatusCache();
   useSkillsStore.getState().resetForRuntimeSwitch();
   useConfigStore.setState({
     providers: [],
@@ -65,6 +74,7 @@ export const resetAppForRuntimeEndpointChange = (detail: RuntimeEndpointChangedD
   useFileSearchStore.getState().resetForRuntimeSwitch();
   useGitStore.getState().resetForRuntimeSwitch(detail.runtimeKey);
   useWorktreeStore.getState().resetForRuntimeSwitch(detail.runtimeKey);
+  resetGitHttpCachesForRuntimeSwitch();
   useWorktreeCreationStore.getState().resetForRuntimeSwitch(detail.runtimeKey);
   // Deferred same-directory restores target the previous runtime's draft
   // identity and failed payload. Drop them alongside task state so stale

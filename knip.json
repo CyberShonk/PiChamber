@@ -33,6 +33,7 @@
         "src/mini-chat-main.tsx",
         "src/main.tsx",
         "src/sw.ts",
+        "server/lib/package-manager-detect-child.js",
         "bin/**/*.{test,spec}.{js,cjs,mjs}",
         "server/**/*.{test,spec}.{js,cjs,mjs}",
         "src/**/*.{test,spec}.{ts,tsx}"

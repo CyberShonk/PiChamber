@@ -32,6 +32,8 @@ import { adoptServerRunTiming, observeSessionActivityTiming, removeSessionActivi
 import { observeSessionActivityEvent, raiseSessionOrderingBaselines, removeSessionOrdering } from '@/sync/session-ordering';
 import { dispatchSessionNotification, notifySessionTurnComplete } from '@/sync/notification-store';
 import { cleanupPersistedSessionState } from '@/sync/session-deletion-cleanup';
+import { selectAwaitingPromptEcho } from '@/sync/suspend-live-tail-records';
+import { useSelectionStore } from '@/sync/selection-store';
 import { clearAllRevertNavigations, clearRevertNavigation, getRevertNavigation, setRevertNavigation } from '@/sync/revert-navigation-store';
 import {
   applyArchiveChange,
@@ -191,6 +193,12 @@ export class PiSessionStore {
    *  refresh has begun, or after a runtime switch) commit nothing. Cleared
    *  on `dispose` / `clear` / `resetForRuntime`. */
   private directoryRefreshGenerationByDirectory = new Map<string, number>();
+  // Directories queued or in flight in a `refreshAllDirectoryCatalogs` pass,
+  // keyed by runtime generation + directory. A concurrent pass (feeder,
+  // retention cleanup) joins the existing listing instead of issuing a
+  // duplicate `listSessions`; explicit `refreshDirectoryCatalog` calls are
+  // unaffected and still supersede.
+  private pendingCatalogPassByKey = new Map<string, Promise<void>>();
   /** Committed deletions for the active runtime. A tombstone survives its
    *  echo so an in-flight list, detail, or history response started before
    *  the deletion cannot resurrect the session. Archive and directory moves
@@ -212,6 +220,25 @@ export class PiSessionStore {
    *  ChatContainer `ensureHydrated`, and Strict Mode remounts share one
    *  request so overlapping opens cannot race the daemon runtime registry. */
   private hydrateInflightById = new Map<PiSessionId, Promise<void>>();
+  /** First-attach transcript prefetch, owned by the store. `open()` starts
+   *  one `getSession` for its known preferred session id up front, in
+   *  flight while `selectProject` → health → `listSessions` resolve, so
+   *  the existence lookup and the first hydrate can share that single
+   *  response instead of issuing their own requests. Single-use: every take
+   *  clears the field, and the entry is valid only for its recorded
+   *  session id, directory, runtime key, and runtime generation. Cleared
+   *  on runtime reset/switch, epoch change, focus change, and disposal.
+   *  Only `open()` starts or consumes it; every other caller keeps its
+   *  current fetch behavior. Reusing the response never skips validation:
+   *  generation, deletion-tombstone, and stream-epoch checks run at each
+   *  consumption point exactly as they would for a fresh request. */
+  private transcriptPrefetch: {
+    sessionId: PiSessionId;
+    directory: string;
+    runtimeKey: string;
+    generation: number;
+    promise: Promise<Awaited<ReturnType<typeof piClient.getSession>>>;
+  } | null = null;
   /** Older-message page requests share one in-flight request per session. */
   private historyInflightById = new Map<PiSessionId, Promise<boolean>>();
   /** Per-session navigation generation. Bumped on every `navigate` so a stale
@@ -392,6 +419,9 @@ export class PiSessionStore {
     this.restoringTranscriptById.clear();
     this.hydrateInflightById.clear();
     this.historyInflightById.clear();
+    // A pre-epoch response belongs to a retired sequence space; it must
+    // not be consumed by the recovery reads on the new lifetime.
+    this.clearTranscriptPrefetch();
     // Stale history completions reject through navigation generation too.
     for (const [id, gen] of this.navigationGenerationById) this.navigationGenerationById.set(id, gen + 1);
     this.settleCarriedOverActivity();
@@ -668,6 +698,15 @@ export class PiSessionStore {
         // Persisted cleanup is best-effort; the in-memory tombstone still guards resurrection.
       }
     }
+    // Selection preferences are keyed by session id only (no runtime or
+    // directory scope), so they are forgotten for every authoritative
+    // deletion — including directory-unknown ids the scoped cleanup skips.
+    // Archive never reaches this commit, so restorable sessions keep theirs.
+    try {
+      useSelectionStore.getState().forgetSession(sessionId);
+    } catch {
+      // Selection cleanup is best-effort; the in-memory tombstone still guards resurrection.
+    }
     removeSessionActivityTiming(sessionId);
     removeSessionOrdering(sessionId);
     clearRevertNavigation(sessionId);
@@ -839,6 +878,10 @@ export class PiSessionStore {
     this.restoringTranscriptById.clear();
     this.hydrateInflightById.clear();
     this.historyInflightById.clear();
+    // The outgoing runtime's daemon (and its stream lifetime) no longer
+    // applies; the incoming runtime establishes a fresh epoch. Its
+    // prefetched transcript must not survive the switch either.
+    this.clearTranscriptPrefetch();
     this.cadence.dispose();
     this.stream?.dispose();
     this.stream = null;
@@ -1066,7 +1109,47 @@ export class PiSessionStore {
   async refreshAllDirectoryCatalogs(directories: Iterable<string>): Promise<void> {
     const ordered = [...new Set(directories)].map((directory) => normalizePath(directory)).filter((directory): directory is string => Boolean(directory));
     if (ordered.length === 0) return;
-    await mapDirectoriesWithRefreshSlot(ordered, (directory) => this.refreshDirectoryCatalog(directory));
+    const generation = this.runtimeGeneration;
+    const joined: Promise<void>[] = [];
+    const owned: string[] = [];
+    const settle = new Map<string, () => void>();
+    const ownedPromises = new Map<string, Promise<void>>();
+    for (const directory of ordered) {
+      const key = `${generation}\0${directory}`;
+      const pending = this.pendingCatalogPassByKey.get(key);
+      if (pending) {
+        joined.push(pending);
+        continue;
+      }
+      owned.push(directory);
+      const promise = new Promise<void>((resolve) => settle.set(directory, resolve));
+      ownedPromises.set(directory, promise);
+      this.pendingCatalogPassByKey.set(key, promise);
+    }
+    const run = mapDirectoriesWithRefreshSlot(owned, async (directory) => {
+      const key = `${generation}\0${directory}`;
+      try {
+        return await this.refreshDirectoryCatalog(directory);
+      } finally {
+        if (this.pendingCatalogPassByKey.get(key) === ownedPromises.get(directory)) {
+          this.pendingCatalogPassByKey.delete(key);
+        }
+        settle.get(directory)?.();
+      }
+    });
+    try {
+      await Promise.all([run, ...joined]);
+    } finally {
+      // A pass that ends early must not strand joiners on directories it
+      // never started.
+      for (const directory of owned) {
+        const key = `${generation}\0${directory}`;
+        if (this.pendingCatalogPassByKey.get(key) === ownedPromises.get(directory)) {
+          this.pendingCatalogPassByKey.delete(key);
+        }
+        settle.get(directory)?.();
+      }
+    }
   }
 
   async start(options: {
@@ -1151,6 +1234,8 @@ export class PiSessionStore {
     this.focusGeneration = expected;
     this.pendingFocus = null;
     this.pendingPreferredSessionId = null;
+    // No session is in flight here, so no prefetch may survive either.
+    this.clearTranscriptPrefetch();
     this.state = {
       ...this.state,
       directory: null,
@@ -1274,6 +1359,10 @@ export class PiSessionStore {
     const selectionAtStart = this.selectionRevision;
     this.pendingFocus = { directory: nextDirectory, expected, preferredSessionId: desiredSessionId };
     this.pendingPreferredSessionId = desiredSessionId;
+    // Folder focus never consumes the first-attach prefetch: an entry
+    // from a previous `open()` generation belongs to another attach and
+    // must not survive the focus change.
+    this.clearTranscriptPrefetch();
     const warmAlready = !!desiredSessionId && this.hydratedSessionIds.has(desiredSessionId);
     this.state = {
       ...this.state,
@@ -1497,6 +1586,61 @@ export class PiSessionStore {
     }
   }
 
+  /** Start the first-attach transcript prefetch for a known preferred
+   *  session id. The request runs while `selectProject` → health →
+   *  `listSessions` resolve; later `open()` steps reuse the in-flight
+   *  response instead of issuing a second `getSession`. A sidecar no-op
+   *  catch keeps an unconsumed rejection from surfacing as an unhandled
+   *  promise rejection; consumers still observe the original outcome. */
+  private startTranscriptPrefetch(sessionId: PiSessionId, directory: string, runtimeKey: string, generation: number): void {
+    if (!sessionId || this.isDeleted(sessionId)) return;
+    const promise = piClient.getSession(sessionId, { directory, runtimeKey });
+    void promise.catch(() => undefined);
+    this.transcriptPrefetch = { sessionId, directory, runtimeKey, generation, promise };
+  }
+  private clearTranscriptPrefetch(): void {
+    this.transcriptPrefetch = null;
+  }
+  /** Take the prefetch for single-use consumption. Returns the in-flight
+   *  promise only when every recorded coordinate still matches; clears
+   *  the field on every call so a second consumer always falls back to a
+   *  fresh request. Rejection propagates to the taker, which handles it
+   *  exactly as if its own request had failed there. */
+  private takeTranscriptPrefetch(
+    sessionId: PiSessionId,
+    directory: string,
+    runtimeKey: string,
+    generation: number,
+  ): Promise<Awaited<ReturnType<typeof piClient.getSession>>> | null {
+    const current = this.transcriptPrefetch;
+    this.transcriptPrefetch = null;
+    if (!current) return null;
+    if (current.generation !== generation) return null;
+    if (current.sessionId !== sessionId) return null;
+    if (current.directory !== directory || current.runtimeKey !== runtimeKey) return null;
+    if (this.isDeleted(sessionId)) return null;
+    return current.promise;
+  }
+  /** Await the prefetch for hydrate. A rejection or stale generation
+   *  yields `undefined` so hydrate falls back to a fresh request exactly
+   *  as it would had its own fetch failed. */
+  private async consumeTranscriptPrefetch(
+    sessionId: PiSessionId,
+    directory: string,
+    runtimeKey: string,
+    generation: number,
+  ): Promise<Awaited<ReturnType<typeof piClient.getSession>> | undefined> {
+    const pending = this.takeTranscriptPrefetch(sessionId, directory, runtimeKey, generation);
+    if (!pending) return undefined;
+    try {
+      const detail = await pending;
+      if (generation !== this.runtimeGeneration) return undefined;
+      return detail;
+    } catch {
+      return undefined;
+    }
+  }
+
   async open(directory: string, preferredSessionId?: PiSessionId | null): Promise<void> {
     // First-attach / runtime-switch bootstrap path. If the cluster already
     // covers the connected runtime (stream up OR `connection: 'ready'`
@@ -1558,6 +1702,10 @@ export class PiSessionStore {
     this.restoringTranscriptById.clear();
     this.hydrateInflightById.clear();
     this.historyInflightById.clear();
+    // A newer first attach supersedes any prefetch the previous
+    // generation left unconsumed; the take-time generation check would
+    // reject it, but drop it here so no stale entry lingers.
+    this.clearTranscriptPrefetch();
     this.cadence.dispose();
     this.stream?.dispose(); this.stream = null;
     this.state = {
@@ -1571,9 +1719,19 @@ export class PiSessionStore {
         lastSequence: new Map(this.state.reducer.lastSequence),
       },
     };
+    // Same-runtime rebuild keeps resident rows while prompt tracking resets;
+    // a carried-over pre-echo marker must not survive it.
+    this.stripAwaitingPromptEchoMarkers();
     this.emitChrome();
     const runtimeKey = getRuntimeKey();
     const baseline = this.state.catalog;
+    // The transcript fetch does not depend on project selection, health,
+    // or the list when the preferred session id is already known: start
+    // it now so it flies while the serial bootstrap below resolves. The
+    // existence lookup and hydrate consume this same in-flight response.
+    if (this.pendingPreferredSessionId) {
+      this.startTranscriptPrefetch(this.pendingPreferredSessionId, directory, runtimeKey, expected);
+    }
     try {
       const selected = await piClient.selectProject(directory, { runtimeKey });
       if (expected !== this.runtimeGeneration) return;
@@ -1615,9 +1773,14 @@ export class PiSessionStore {
       const desiredSessionId = this.newerSelection(selectionAtStart, selected.directory)
         ?? this.pendingPreferredSessionId ?? preferredSessionId;
       let matchedSession = desiredSessionId ? listedSessions.find((item) => item.session.id === desiredSessionId) : undefined;
+      // A lookup detail for the finally selected id is forwarded to
+      // hydrate as `initialDetail`, where bootstrap validates it exactly
+      // like a fresh read — so lookup and hydrate share one request.
+      let lookupDetail: Awaited<ReturnType<typeof piClient.getSession>> | null = null;
       if (desiredSessionId && !matchedSession && !this.isDeleted(desiredSessionId)) {
         try {
-          const detail = await piClient.getSession(desiredSessionId, { directory, runtimeKey });
+          const detail = await (this.takeTranscriptPrefetch(desiredSessionId, directory, runtimeKey, expected)
+            ?? piClient.getSession(desiredSessionId, { directory, runtimeKey }));
           if (expected !== this.runtimeGeneration) return;
           if (detail?.session?.directory && detail.session.directory !== directory) {
             if (expected !== this.runtimeGeneration) return;
@@ -1628,6 +1791,7 @@ export class PiSessionStore {
           } else if (detail?.session?.id) {
             listedSessions.unshift({ session: detail.session, updatedAt: detail.session.updatedAt });
             matchedSession = { session: detail.session, updatedAt: detail.session.updatedAt };
+            lookupDetail = detail;
           }
         } catch (lookupError) {
           if (expected !== this.runtimeGeneration) return;
@@ -1673,9 +1837,22 @@ export class PiSessionStore {
       this.emit(openTopics);
       if (catalogChanged) this.raiseOrderingBaselinesForDirectory(selected.directory);
       if (selectedSessionId) {
+        // The prefetch (or the lookup detail above) already carries this
+        // id's transcript when it won selection: reuse it instead of a
+        // second request. A different winner means the prefetch belongs
+        // to another id and must not survive. A rejected prefetch yields
+        // `undefined` so hydrate fetches fresh, exactly as today.
+        let initialDetail: Awaited<ReturnType<typeof piClient.getSession>> | undefined;
+        if (selectedSessionId === desiredSessionId) {
+          initialDetail = lookupDetail
+            ?? await this.consumeTranscriptPrefetch(selectedSessionId, directory, runtimeKey, expected);
+        } else {
+          this.clearTranscriptPrefetch();
+        }
         await this.hydrate(selectedSessionId, expected, undefined, {
           initialHealth,
           initialSessions: listedSessions,
+          ...(initialDetail ? { initialDetail } : {}),
         });
       }
     } catch (error) { if (expected === this.runtimeGeneration) this.reportError(error); }
@@ -2039,6 +2216,21 @@ export class PiSessionStore {
           extensionPanels: new Map(),
           extensionApps: new Map(),
         };
+    // A plain prompt's user message only enters the transcript via server
+    // echo, so the busy state below belongs to an unborn turn until then.
+    // Steer and follow-up extend the live turn: explicitly clear any stale
+    // marker so they keep today's behavior.
+    if (delivery === 'prompt') {
+      let baselineUserMessageId: string | null = null;
+      if (existing) {
+        for (const message of existing.messages.values()) {
+          if (message.role === 'user') baselineUserMessageId = message.id;
+        }
+      }
+      nextSession.awaitingPromptEcho = { baselineUserMessageId };
+    } else {
+      nextSession.awaitingPromptEcho = undefined;
+    }
     const nextBySession = new Map(this.state.reducer.bySession);
     nextBySession.set(sessionId, nextSession);
     this.state = { ...this.state, reducer: { ...this.state.reducer, bySession: nextBySession } };
@@ -2097,7 +2289,9 @@ export class PiSessionStore {
         const current = this.state.reducer.bySession.get(sessionId);
         if (current?.lifecycle === 'busy' && current.streamingMessages.size === 0) {
           const reverted = new Map(this.state.reducer.bySession);
-          reverted.set(sessionId, { ...current, lifecycle: 'error' });
+          // The send failed, so no user echo will arrive: the pre-echo
+          // window is abandoned with the prompt.
+          reverted.set(sessionId, { ...current, lifecycle: 'error', awaitingPromptEcho: undefined });
           this.state = { ...this.state, reducer: { ...this.state.reducer, bySession: reverted } };
           this.promoteSession(sessionId, 'settled');
           // The reducer record changed (lifecycle: error); chrome also
@@ -2153,7 +2347,9 @@ export class PiSessionStore {
         const current = this.state.reducer.bySession.get(sessionId);
         if (current?.lifecycle === 'busy' || current?.lifecycle === 'retry') {
           const bySession = new Map(this.state.reducer.bySession);
-          bySession.set(sessionId, { ...current, lifecycle: 'idle' });
+          // Settled with no live events: the prompt is abandoned, and with
+          // it the pre-echo window.
+          bySession.set(sessionId, { ...current, lifecycle: 'idle', awaitingPromptEcho: undefined });
           this.state = {
             ...this.state,
             reducer: { ...this.state.reducer, bySession },
@@ -2488,6 +2684,11 @@ export class PiSessionStore {
       force?: boolean;
       initialHealth?: Extract<PiBootstrapHealth, { state: 'ready' }>;
       initialSessions?: readonly PiSessionListItem[];
+      /** First-attach transcript prefetch (or existence-lookup detail)
+       *  for this id. Forwarded to bootstrap, which validates it exactly
+       *  like a fresh `getSession` read. Unlike `known` (a trusted create
+       *  response), this skips no validation. */
+      initialDetail?: Awaited<ReturnType<typeof piClient.getSession>>;
     },
   ) {
     if (expected !== this.runtimeGeneration) return;
@@ -2511,6 +2712,7 @@ export class PiSessionStore {
       force?: boolean;
       initialHealth?: Extract<PiBootstrapHealth, { state: 'ready' }>;
       initialSessions?: readonly PiSessionListItem[];
+      initialDetail?: Awaited<ReturnType<typeof piClient.getSession>>;
     },
   ) {
     if (expected !== this.runtimeGeneration) return;
@@ -2574,6 +2776,7 @@ export class PiSessionStore {
         runtimeKey,
         ...(options?.initialHealth ? { initialHealth: options.initialHealth } : {}),
         ...(options?.initialSessions ? { initialSessions: options.initialSessions } : {}),
+        ...(options?.initialDetail ? { initialDetail: options.initialDetail } : {}),
         onEvent,
         onStreamDisconnect: () => {
           if (bootstrapCallbackIsCurrent()) void this.reconnect(this.state.selectedSessionId ?? sessionId, expected, runtimeKey);
@@ -2918,6 +3121,24 @@ export class PiSessionStore {
     }
   }
 
+  /**
+   * Drop pre-echo markers from resident rows, cloning only marked
+   * sessions. Same-runtime cluster rebuilds keep `bySession` references
+   * while prompt tracking resets, so a stale marker must not survive them.
+   * Full runtime resets (`resetForRuntime` / `clear` / `dispose`) and epoch
+   * changes replace the reducer wholesale and need no strip.
+   */
+  private stripAwaitingPromptEchoMarkers(): void {
+    let nextBySession: Map<PiSessionId, PiReducerSessionState> | null = null;
+    for (const [id, session] of this.state.reducer.bySession) {
+      if (session.awaitingPromptEcho === undefined) continue;
+      if (!nextBySession) nextBySession = new Map(this.state.reducer.bySession);
+      nextBySession.set(id, { ...session, awaitingPromptEcho: undefined });
+    }
+    if (!nextBySession) return;
+    this.state = { ...this.state, reducer: { ...this.state.reducer, bySession: nextBySession } };
+  }
+
   private notePromptProgress(event: PiSessionEvent) {
     if (
       event.name === 'assistant.message.start'
@@ -3168,6 +3389,28 @@ export class PiSessionStore {
         });
       }
       this.notePromptProgress(event);
+      // A terminal prompt event abandons the pre-echo window: the busy state
+      // no longer belongs to an unborn turn. Lifecycle busy and an assistant
+      // `assistant.message.start` must not clear (they can arrive before the
+      // echo). Once the echoed user message (or a snapshot containing it) is
+      // applied the selector already reads false; drop the marker then too so
+      // it does not cost a transcript scan on every streamed token.
+      const terminalPromptEvent = event.name === 'session.error'
+        || event.name === 'session.interrupted'
+        || (event.name === 'session.lifecycle' && event.payload.state !== 'busy' && event.payload.state !== 'retry');
+      const mayCarryEcho = (event.name === 'assistant.message.start' && event.payload.role === 'user')
+        || event.name === 'session.snapshot';
+      if (terminalPromptEvent || mayCarryEcho) {
+        const settledSession = working.bySession.get(event.sessionId);
+        if (
+          settledSession?.awaitingPromptEcho !== undefined
+          && (terminalPromptEvent || !selectAwaitingPromptEcho(settledSession))
+        ) {
+          const bySession = new Map(working.bySession);
+          bySession.set(event.sessionId, { ...settledSession, awaitingPromptEcho: undefined });
+          working = { ...working, bySession };
+        }
+      }
       if (
         this.pendingPromptById.has(event.sessionId)
         && event.name === 'session.snapshot'

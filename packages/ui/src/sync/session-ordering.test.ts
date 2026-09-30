@@ -1,7 +1,9 @@
 import { beforeEach, describe, expect, test } from 'bun:test';
 import type { Session } from '@/lib/chat/types';
+import { getRuntimeKey } from '@/lib/runtime-switch';
 import {
   compareSessionsByLifecycleOrder,
+  createSessionLifecycleComparator,
   observeSessionActivityEvent,
   orderSessionsByLifecycleScopes,
   removeSessionOrdering,
@@ -143,5 +145,32 @@ describe('session lifecycle ordering', () => {
     useSessionOrderingStore.setState({ rankById: new Map([['stale', 15]]) });
     raiseSessionOrderingBaselines([session('stale', 40)]);
     expect(useSessionOrderingStore.getState().rankById.get('stale')).toBe(15);
+  });
+});
+
+describe('createSessionLifecycleComparator', () => {
+  test('orders exactly like compareSessionsByLifecycleOrder, including pins, ranks, and item wrappers', () => {
+    const withDirectory = (value: Session, directory: string): Session => ({ ...value, directory } as Session);
+    const sessions = [
+      withDirectory(session('a', 100), '/repo'),
+      withDirectory(session('b', 300), '/repo'),
+      withDirectory(session('c', 200), '/repo/'),
+      withDirectory(session('d', 50, 'a'), '/repo'),
+      withDirectory(session('e', 400), '/other'),
+      withDirectory(session('f', 300), '/other'),
+    ];
+    const pinnedKey = JSON.stringify([getRuntimeKey(), '/repo', 'c']);
+    const pinned = new Set([pinnedKey]);
+    observeSessionActivityEvent('a', 'active');
+    const ranks = useSessionOrderingStore.getState().rankById;
+
+    const expected = [...sessions].sort((left, right) => compareSessionsByLifecycleOrder(left, right, pinned, ranks));
+    expect(expected[0].id).toBe('c');
+    expect([...sessions].sort(createSessionLifecycleComparator(pinned, ranks)).map((item) => item.id))
+      .toEqual(expected.map((item) => item.id));
+
+    const wrapped = sessions.map((item) => ({ session: item }));
+    expect(wrapped.sort(createSessionLifecycleComparator(pinned, ranks, (entry: { session: Session }) => entry.session)).map((entry) => entry.session.id))
+      .toEqual(expected.map((item) => item.id));
   });
 });

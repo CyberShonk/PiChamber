@@ -1,15 +1,24 @@
-import { describe, expect, test } from 'bun:test';
+import { beforeEach, describe, expect, test } from 'bun:test';
 
 import {
+  adoptCommandCatalogSignatures,
   buildSystemCatalogCommands,
   catalogInvocationSet,
+  clearCommandCatalogForRuntimeSwitch,
   getCommandCatalogInvalidationRevision,
   invalidateCommandCatalogCache,
+  isCommandCatalogEntryFresh,
+  readCommandCatalogCache,
+  readCommandCatalogEntry,
   subscribeCommandCatalogInvalidation,
   toCatalogCommands,
+  writeCommandCatalogCache,
 } from './commandCatalog';
 
 describe('commandCatalog — executable invocation identity', () => {
+  beforeEach(() => {
+    clearCommandCatalogForRuntimeSwitch();
+  });
   test('system commands expose bare invocations', () => {
     const system = buildSystemCatalogCommands();
     const byName = new Map(system.map((c) => [c.name, c]));
@@ -108,5 +117,80 @@ describe('commandCatalog — executable invocation identity', () => {
     expect(known.has('hello')).toBe(true);
     expect(known.has('undo')).toBe(true);
     expect(known.has('code-review')).toBe(false);
+  });
+});
+
+describe('commandCatalog — freshness and signature adoption', () => {
+  beforeEach(() => {
+    clearCommandCatalogForRuntimeSwitch();
+  });
+
+  test('written entries record fetch time and validating signatures', () => {
+    const before = Date.now();
+    writeCommandCatalogCache('runtime-1', '/work', toCatalogCommands([
+      { name: 'review', source: 'prompt', scope: 'global' },
+    ]), { promptSignature: 'p1', skillSignature: 's1' });
+    const entry = readCommandCatalogEntry('runtime-1', '/work');
+    expect(entry?.commands.map((c) => c.invocationName)).toEqual(['review']);
+    expect(entry?.promptSignature).toBe('p1');
+    expect(entry?.skillSignature).toBe('s1');
+    expect(entry!.fetchedAt >= before).toBe(true);
+    expect(entry!.fetchedAt <= Date.now()).toBe(true);
+    expect(isCommandCatalogEntryFresh(entry!)).toBe(true);
+    expect(readCommandCatalogCache('runtime-1', '/work')?.map((c) => c.invocationName)).toEqual(['review']);
+  });
+
+  test('entries default to empty signatures for writers that do not track stores', () => {
+    writeCommandCatalogCache('runtime-1', '/work', []);
+    const entry = readCommandCatalogEntry('runtime-1', '/work');
+    expect(entry?.promptSignature).toBe('');
+    expect(entry?.skillSignature).toBe('');
+  });
+
+  test('stale entries fail the freshness check', () => {
+    writeCommandCatalogCache('runtime-1', '/work', [], {
+      promptSignature: 'p1',
+      skillSignature: 's1',
+      fetchedAt: Date.now() - 31_000,
+    });
+    const entry = readCommandCatalogEntry('runtime-1', '/work');
+    expect(isCommandCatalogEntryFresh(entry!)).toBe(false);
+  });
+
+  test('adopting signatures keeps commands and fetch time untouched', () => {
+    const fetchedAt = Date.now() - 5_000;
+    writeCommandCatalogCache('runtime-1', '/work', toCatalogCommands([
+      { name: 'review', source: 'prompt', scope: 'global' },
+    ]), { fetchedAt });
+    expect(adoptCommandCatalogSignatures('runtime-1', '/work', 'p1', 's1')).toBe(true);
+    const entry = readCommandCatalogEntry('runtime-1', '/work');
+    expect(entry?.promptSignature).toBe('p1');
+    expect(entry?.skillSignature).toBe('s1');
+    expect(entry?.fetchedAt).toBe(fetchedAt);
+    expect(entry?.commands.map((c) => c.invocationName)).toEqual(['review']);
+    expect(isCommandCatalogEntryFresh(entry!)).toBe(true);
+  });
+
+  test('adopting a missing scope reports false', () => {
+    expect(adoptCommandCatalogSignatures('runtime-1', '/missing', 'p1', 's1')).toBe(false);
+  });
+
+  test('invalidation and runtime switches drop entries', () => {
+    writeCommandCatalogCache('runtime-1', '/work', [], { promptSignature: 'p1', skillSignature: 's1' });
+    invalidateCommandCatalogCache('/work');
+    expect(readCommandCatalogEntry('runtime-1', '/work')).toBeUndefined();
+    writeCommandCatalogCache('runtime-1', '/work', []);
+    writeCommandCatalogCache('runtime-1', '/other', []);
+    clearCommandCatalogForRuntimeSwitch();
+    expect(readCommandCatalogEntry('runtime-1', '/work')).toBeUndefined();
+    expect(readCommandCatalogEntry('runtime-1', '/other')).toBeUndefined();
+  });
+
+  test('directory scopes stay bounded', () => {
+    for (let i = 0; i < 25; i += 1) {
+      writeCommandCatalogCache('runtime-1', `/dir-${i}`, []);
+    }
+    expect(readCommandCatalogEntry('runtime-1', '/dir-0')).toBeUndefined();
+    expect(readCommandCatalogEntry('runtime-1', '/dir-24')).toBeDefined();
   });
 });

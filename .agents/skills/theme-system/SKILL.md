@@ -92,6 +92,13 @@ identical at any element count from 1 to 32:
   conveying anything should not be animating.
 - `will-change`, wrapper elements, `contain`, and `steps()` timing do not make a
   non-composited property cheap. Only changing the property does.
+- Do not force static elements onto GPU layers (`translateZ(0)`, `translate3d`,
+  `will-change`) as a speed hint. Each forced layer also promotes whatever
+  overlaps it; a global `button svg { translateZ(0) }` rule produced ~125 layers
+  (vs ~29) and ~30% more main-thread work per frame while anything animated.
+- For a highlight sweeping across text, reuse `components/chat/ShimmerGlint`
+  (a masked copy moved with `transform`) instead of animating a
+  `background-clip: text` gradient, which repaints every frame (~68ms/s vs ~4ms/s).
 - Verify with `bun run profile:animation` rather than reasoning about it; add a
   variant to `scripts/perf/animation-fixture.html` for a technique not covered.
   See `scripts/perf/DOCUMENTATION.md`.

@@ -6,9 +6,8 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { dropdownTriggerVariants } from '@/components/ui/dropdown-trigger';
+import { Button } from '@/components/ui/button';
 import { Icon } from '@/components/icon/Icon';
-import { cn } from '@/lib/utils';
 
 export type TerminalTabDropdownItem = {
   id: string;
@@ -45,19 +44,19 @@ export const TerminalTabDropdown: React.FC<Props> = ({
   return (
     <DropdownMenu modal={false}>
       <DropdownMenuTrigger asChild>
-        <button
+        <Button
           type="button"
+          variant="ghost"
+          size="sm"
           disabled={disabled}
           title={activeItem ? `Switch terminal, current: ${activeItem.label}` : 'Switch terminal'}
           aria-label={activeItem ? `Switch terminal, current: ${activeItem.label}` : 'Switch terminal'}
-          className={cn(dropdownTriggerVariants({ size: 'sm' }), 'min-w-0 max-w-full')}
+          className="h-8 min-w-0 max-w-full justify-start gap-1.5 px-2 py-1 normal-case"
         >
-          <span className="flex min-w-0 flex-1 items-center gap-1.5">
-            {activeItem?.icon ?? <Icon name="terminal" className="size-3.5 shrink-0" />}
-            <span className="min-w-0 flex-1 truncate text-left">{activeItem?.label ?? 'Terminal'}</span>
-          </span>
-          <Icon name="arrow-down-s" className="size-3.5 shrink-0" />
-        </button>
+          {activeItem?.icon ?? <Icon name="terminal" className="size-4 shrink-0" />}
+          <span className="min-w-0 truncate font-medium text-left">{activeItem?.label ?? 'Terminal'}</span>
+          <Icon name="arrow-down-s" className="size-4 shrink-0 opacity-60" />
+        </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="w-64">
         {items.map((item) => {
