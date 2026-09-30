@@ -197,6 +197,13 @@ export const mergeHydratedSession = (
     extensionCatalogRevision: existing.extensionCatalogRevision,
     sessionTreeRevision: existing.sessionTreeRevision,
     extensionEditor: existing.extensionEditor,
+    // The pre-echo marker is likewise local send state. The detail response
+    // never carries it; keep it so a hydrate racing the user echo does not
+    // reopen the window. The selector still self-resolves once the fetched
+    // transcript contains the echoed user message.
+    ...(existing.awaitingPromptEcho !== undefined
+      ? { awaitingPromptEcho: existing.awaitingPromptEcho }
+      : {}),
   };
   if (preserveExisting || preservePagedHistory) {
     for (const [id, message] of existing.messages) {

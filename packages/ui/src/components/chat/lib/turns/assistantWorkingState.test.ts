@@ -102,6 +102,42 @@ describe('assistantWorkingState', () => {
         })).toBe(true);
     });
 
+    test('pre-echo window suppresses only the last-turn fallback', () => {
+        // Settled previous turn is still the last turn while the new user
+        // message has not been echoed: no live stream id, session busy.
+        expect(shouldShowTurnWorkingStatus({
+            isLastTurn: true,
+            sessionIsWorking: true,
+            turnIsInActiveStream: false,
+            activeStreamingMessageId: null,
+            awaitingPromptEcho: true,
+        })).toBe(false);
+        // The authoritative-stream branch stays unconditional.
+        expect(shouldShowTurnWorkingStatus({
+            isLastTurn: false,
+            sessionIsWorking: true,
+            turnIsInActiveStream: true,
+            activeStreamingMessageId: 'a1',
+            awaitingPromptEcho: true,
+        })).toBe(true);
+        // Steering path is unaffected once the echo has arrived.
+        expect(shouldShowTurnWorkingStatus({
+            isLastTurn: true,
+            sessionIsWorking: true,
+            turnIsInActiveStream: false,
+            activeStreamingMessageId: 'a1',
+            isSteering: true,
+            awaitingPromptEcho: false,
+        })).toBe(true);
+        // Omitted flag keeps today's behavior.
+        expect(shouldShowTurnWorkingStatus({
+            isLastTurn: true,
+            sessionIsWorking: true,
+            turnIsInActiveStream: false,
+            activeStreamingMessageId: null,
+        })).toBe(true);
+    });
+
     test('does not keep a completed last assistant working after the live stream ends', () => {
         const lastId = 'a1';
         expect(

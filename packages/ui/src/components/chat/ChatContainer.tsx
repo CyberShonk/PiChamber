@@ -26,6 +26,7 @@ import { cn } from '@/lib/utils';
 import { useSessionUIStore } from '@/sync/session-ui-store';
 import { isNewSessionDraftSendPending } from '@/sync/session-ui-draft-helpers';
 import {
+    useSessionAwaitingPromptEcho,
     useSessionStreamingMessageId,
     usePiConnectionState,
     useSessionMessageCount,
@@ -155,6 +156,7 @@ export const ChatContainer: React.FC<ChatContainerProps> = ({ active = true, aut
     }, [connection, currentSessionId, reducerStreamingMessageId, sessionMessages, sessionStatusForCurrent.type, transportUncertain]);
     const sessionIsWorking = sessionWorkingPresentation.isWorking;
     const sessionAwaitingRecovery = sessionWorkingPresentation.isAwaitingRecovery;
+    const awaitingPromptEcho = useSessionAwaitingPromptEcho(currentSessionId ?? '');
     const activeRetryStatus = React.useMemo(() => {
         if (!currentSessionId || sessionStatusForCurrent.type !== 'retry') {
             return null;
@@ -580,6 +582,7 @@ export const ChatContainer: React.FC<ChatContainerProps> = ({ active = true, aut
                 isLoadingOlder={timelineController.isLoadingOlder}
                 sessionIsWorking={sessionIsWorking}
                 sessionAwaitingRecovery={sessionAwaitingRecovery}
+                awaitingPromptEcho={awaitingPromptEcho}
                 streamingMessageId={streamingMessageId}
                 activeStreamingPhase={activeStreamingPhase}
                 retryOverlay={retryOverlay}

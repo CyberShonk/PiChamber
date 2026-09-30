@@ -13,7 +13,7 @@ import {
   uiSessionListEqual,
   type LiveSessionLifecycle,
 } from './pi-session-catalog';
-import { selectStreamingAssistantMessageId, shouldReuseSuspendedRecords, shouldReuseUserHistory } from './suspend-live-tail-records';
+import { selectAwaitingPromptEcho, selectStreamingAssistantMessageId, shouldReuseSuspendedRecords, shouldReuseUserHistory } from './suspend-live-tail-records';
 
 const IDLE: SessionStatus = { type: 'idle' };
 const BUSY: SessionStatus = { type: 'busy' };
@@ -287,6 +287,16 @@ export function useUserMessageHistory(sessionID: string): string[] {
 export function useSessionStreamingMessageId(sessionID: string): string | null {
   return usePiSessionSnapshot(
     (state) => selectStreamingAssistantMessageId(
+      sessionID ? state.reducer.bySession.get(sessionID) ?? null : null,
+    ),
+    Object.is,
+    sessionID ? sessionTopic(sessionID) : '*',
+  );
+}
+
+export function useSessionAwaitingPromptEcho(sessionID: string): boolean {
+  return usePiSessionSnapshot(
+    (state) => selectAwaitingPromptEcho(
       sessionID ? state.reducer.bySession.get(sessionID) ?? null : null,
     ),
     Object.is,

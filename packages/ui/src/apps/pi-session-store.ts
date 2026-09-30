@@ -32,6 +32,7 @@ import { adoptServerRunTiming, observeSessionActivityTiming, removeSessionActivi
 import { observeSessionActivityEvent, raiseSessionOrderingBaselines, removeSessionOrdering } from '@/sync/session-ordering';
 import { dispatchSessionNotification, notifySessionTurnComplete } from '@/sync/notification-store';
 import { cleanupPersistedSessionState } from '@/sync/session-deletion-cleanup';
+import { selectAwaitingPromptEcho } from '@/sync/suspend-live-tail-records';
 import { useSelectionStore } from '@/sync/selection-store';
 import { clearAllRevertNavigations, clearRevertNavigation, getRevertNavigation, setRevertNavigation } from '@/sync/revert-navigation-store';
 import {
@@ -1627,6 +1628,9 @@ export class PiSessionStore {
         lastSequence: new Map(this.state.reducer.lastSequence),
       },
     };
+    // Same-runtime rebuild keeps resident rows while prompt tracking resets;
+    // a carried-over pre-echo marker must not survive it.
+    this.stripAwaitingPromptEchoMarkers();
     this.emitChrome();
     const runtimeKey = getRuntimeKey();
     const baseline = this.state.catalog;
@@ -2095,6 +2099,21 @@ export class PiSessionStore {
           extensionPanels: new Map(),
           extensionApps: new Map(),
         };
+    // A plain prompt's user message only enters the transcript via server
+    // echo, so the busy state below belongs to an unborn turn until then.
+    // Steer and follow-up extend the live turn: explicitly clear any stale
+    // marker so they keep today's behavior.
+    if (delivery === 'prompt') {
+      let baselineUserMessageId: string | null = null;
+      if (existing) {
+        for (const message of existing.messages.values()) {
+          if (message.role === 'user') baselineUserMessageId = message.id;
+        }
+      }
+      nextSession.awaitingPromptEcho = { baselineUserMessageId };
+    } else {
+      nextSession.awaitingPromptEcho = undefined;
+    }
     const nextBySession = new Map(this.state.reducer.bySession);
     nextBySession.set(sessionId, nextSession);
     this.state = { ...this.state, reducer: { ...this.state.reducer, bySession: nextBySession } };
@@ -2153,7 +2172,9 @@ export class PiSessionStore {
         const current = this.state.reducer.bySession.get(sessionId);
         if (current?.lifecycle === 'busy' && current.streamingMessages.size === 0) {
           const reverted = new Map(this.state.reducer.bySession);
-          reverted.set(sessionId, { ...current, lifecycle: 'error' });
+          // The send failed, so no user echo will arrive: the pre-echo
+          // window is abandoned with the prompt.
+          reverted.set(sessionId, { ...current, lifecycle: 'error', awaitingPromptEcho: undefined });
           this.state = { ...this.state, reducer: { ...this.state.reducer, bySession: reverted } };
           this.promoteSession(sessionId, 'settled');
           // The reducer record changed (lifecycle: error); chrome also
@@ -2209,7 +2230,9 @@ export class PiSessionStore {
         const current = this.state.reducer.bySession.get(sessionId);
         if (current?.lifecycle === 'busy' || current?.lifecycle === 'retry') {
           const bySession = new Map(this.state.reducer.bySession);
-          bySession.set(sessionId, { ...current, lifecycle: 'idle' });
+          // Settled with no live events: the prompt is abandoned, and with
+          // it the pre-echo window.
+          bySession.set(sessionId, { ...current, lifecycle: 'idle', awaitingPromptEcho: undefined });
           this.state = {
             ...this.state,
             reducer: { ...this.state.reducer, bySession },
@@ -2974,6 +2997,24 @@ export class PiSessionStore {
     }
   }
 
+  /**
+   * Drop pre-echo markers from resident rows, cloning only marked
+   * sessions. Same-runtime cluster rebuilds keep `bySession` references
+   * while prompt tracking resets, so a stale marker must not survive them.
+   * Full runtime resets (`resetForRuntime` / `clear` / `dispose`) and epoch
+   * changes replace the reducer wholesale and need no strip.
+   */
+  private stripAwaitingPromptEchoMarkers(): void {
+    let nextBySession: Map<PiSessionId, PiReducerSessionState> | null = null;
+    for (const [id, session] of this.state.reducer.bySession) {
+      if (session.awaitingPromptEcho === undefined) continue;
+      if (!nextBySession) nextBySession = new Map(this.state.reducer.bySession);
+      nextBySession.set(id, { ...session, awaitingPromptEcho: undefined });
+    }
+    if (!nextBySession) return;
+    this.state = { ...this.state, reducer: { ...this.state.reducer, bySession: nextBySession } };
+  }
+
   private notePromptProgress(event: PiSessionEvent) {
     if (
       event.name === 'assistant.message.start'
@@ -3224,6 +3265,28 @@ export class PiSessionStore {
         });
       }
       this.notePromptProgress(event);
+      // A terminal prompt event abandons the pre-echo window: the busy state
+      // no longer belongs to an unborn turn. Lifecycle busy and an assistant
+      // `assistant.message.start` must not clear (they can arrive before the
+      // echo). Once the echoed user message (or a snapshot containing it) is
+      // applied the selector already reads false; drop the marker then too so
+      // it does not cost a transcript scan on every streamed token.
+      const terminalPromptEvent = event.name === 'session.error'
+        || event.name === 'session.interrupted'
+        || (event.name === 'session.lifecycle' && event.payload.state !== 'busy' && event.payload.state !== 'retry');
+      const mayCarryEcho = (event.name === 'assistant.message.start' && event.payload.role === 'user')
+        || event.name === 'session.snapshot';
+      if (terminalPromptEvent || mayCarryEcho) {
+        const settledSession = working.bySession.get(event.sessionId);
+        if (
+          settledSession?.awaitingPromptEcho !== undefined
+          && (terminalPromptEvent || !selectAwaitingPromptEcho(settledSession))
+        ) {
+          const bySession = new Map(working.bySession);
+          bySession.set(event.sessionId, { ...settledSession, awaitingPromptEcho: undefined });
+          working = { ...working, bySession };
+        }
+      }
       if (
         this.pendingPromptById.has(event.sessionId)
         && event.name === 'session.snapshot'

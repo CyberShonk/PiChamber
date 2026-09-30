@@ -74,10 +74,18 @@ export const shouldShowTurnWorkingStatus = (options: {
     turnIsInActiveStream: boolean;
     activeStreamingMessageId: string | null | undefined;
     isSteering?: boolean;
+    /**
+     * True while a plain prompt send still waits for the server to echo its
+     * user message. The busy state belongs to that unborn turn, so the
+     * last-turn fallback must not present it as live work on an older turn.
+     * The authoritative-stream branch stays unconditional.
+     */
+    awaitingPromptEcho?: boolean;
 }): boolean =>
     options.turnIsInActiveStream
     || (options.isLastTurn
         && options.sessionIsWorking
+        && options.awaitingPromptEcho !== true
         && (options.isSteering === true || !options.activeStreamingMessageId));
 
 export const isTurnAssistantWorking = (options: {

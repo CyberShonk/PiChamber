@@ -165,6 +165,8 @@ interface MessageListProps {
     sessionIsWorking?: boolean;
     /** Latest turn was last seen working while the transport is unverified. */
     sessionAwaitingRecovery?: boolean;
+    /** Plain prompt send still waiting for the server user-message echo. */
+    awaitingPromptEcho?: boolean;
     activeStreamingMessageId?: string | null;
     activeStreamingPhase?: StreamPhase | null;
     retryOverlay?: {
@@ -213,6 +215,7 @@ interface MessageListEntryProps {
     scrollToBottom?: () => void;
     sessionIsWorking: boolean;
     sessionAwaitingRecovery?: boolean;
+    awaitingPromptEcho?: boolean;
     shouldAnimateUserMessage: (message: ChatMessageEntry) => boolean;
     onUserAnimationConsumed: (messageId: string) => void;
     activeStreamingMessageId?: string | null;
@@ -228,6 +231,7 @@ const MessageListEntry = React.memo(({
     scrollToBottom,
     sessionIsWorking,
     sessionAwaitingRecovery = false,
+    awaitingPromptEcho = false,
     shouldAnimateUserMessage,
     onUserAnimationConsumed,
     activeStreamingMessageId,
@@ -270,6 +274,7 @@ const MessageListEntry = React.memo(({
             nextEntryFirstMessage={entry.nextEntryFirstMessage}
             sessionIsWorking={sessionIsWorking}
             sessionAwaitingRecovery={sessionAwaitingRecovery}
+            awaitingPromptEcho={awaitingPromptEcho}
             shouldAnimateUserMessage={shouldAnimateUserMessage}
             onUserAnimationConsumed={onUserAnimationConsumed}
             activeStreamingMessageId={activeStreamingMessageId}
@@ -592,6 +597,7 @@ const StreamingTailContent: React.FC<{
     scrollToBottom?: () => void;
     sessionIsWorking: boolean;
     sessionAwaitingRecovery?: boolean;
+    awaitingPromptEcho?: boolean;
     shouldAnimateUserMessage: (message: ChatMessageEntry) => boolean;
     onUserAnimationConsumed: (messageId: string) => void;
     activeStreamingMessageId?: string | null;
@@ -605,6 +611,7 @@ const StreamingTailContent: React.FC<{
     scrollToBottom,
     sessionIsWorking,
     sessionAwaitingRecovery = false,
+    awaitingPromptEcho = false,
     shouldAnimateUserMessage,
     onUserAnimationConsumed,
     activeStreamingMessageId,
@@ -626,6 +633,7 @@ const StreamingTailContent: React.FC<{
             scrollToBottom={scrollToBottom}
             sessionIsWorking={sessionIsWorking}
             sessionAwaitingRecovery={sessionAwaitingRecovery}
+            awaitingPromptEcho={awaitingPromptEcho}
             shouldAnimateUserMessage={shouldAnimateUserMessage}
             onUserAnimationConsumed={onUserAnimationConsumed}
             activeStreamingMessageId={activeStreamingMessageId}
@@ -641,6 +649,7 @@ const MessageList = React.forwardRef<MessageListHandle, MessageListProps>(({
     messages,
     sessionIsWorking = false,
     sessionAwaitingRecovery = false,
+    awaitingPromptEcho = false,
     activeStreamingMessageId = null,
     activeStreamingPhase = null,
     retryOverlay = null,
@@ -1401,6 +1410,7 @@ const MessageList = React.forwardRef<MessageListHandle, MessageListProps>(({
                                 scrollToBottom={stableScrollToBottom}
                                 sessionIsWorking={sessionIsWorking}
                                 sessionAwaitingRecovery={sessionAwaitingRecovery}
+                                awaitingPromptEcho={awaitingPromptEcho}
                                 shouldAnimateUserMessage={shouldAnimateUserMessage}
                                 onUserAnimationConsumed={onUserAnimationConsumed}
                                 activeStreamingMessageId={activeStreamingMessageId}

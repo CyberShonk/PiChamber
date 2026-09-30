@@ -112,6 +112,14 @@ export interface PiReducerSessionState {
   toolsByCallId: Map<string, string>;
   /** Assistant messages that still own live token or tool-continuation work. */
   streamingMessages: Set<string>;
+  /**
+   * Set by the local send path for a plain prompt while the new turn's
+   * user message has not been echoed by the server yet. While the session's
+   * latest user message id still equals `baselineUserMessageId`, the busy
+   * state belongs to a turn whose user message has not arrived, so no
+   * existing turn may present it as live work.
+   */
+  awaitingPromptEcho?: { baselineUserMessageId: string | null };
   /** Queue depths at the time of the last `session.queue` event. */
   queue: { steering: number; followUp: number };
   /** Live extension status texts (`ctx.ui.setStatus`). Key → text. */
