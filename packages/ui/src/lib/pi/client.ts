@@ -275,6 +275,13 @@ export interface PiClientScope {
   /** Expected daemon lifetime for a queued send. Ordinary sends capture the
    * latest health-verified epoch at the Pi client call boundary. */
   streamEpoch?: string;
+  /**
+   * `listResources`-only: bypass the settled memo and force a fresh read.
+   * The fresh result still shares same-revision in-flight work and
+   * repopulates the memo. Explicit reload paths use this instead of
+   * reaching around the cache.
+   */
+  reload?: boolean;
 }
 
 const assertRuntimeUnchanged = (scope?: PiClientScope): void => {
@@ -290,6 +297,104 @@ const assertSendEpochCurrent = (runtimeKey: string, streamEpoch: string | undefi
     throw new PiRequestError('STALE_STREAM_EPOCH', 'The Pi runtime restarted before this send could be verified.', 409);
   }
   return streamEpoch;
+};
+
+// ---------------------------------------------------------------------------
+// Resource discovery memo (`GET /api/pi/resources`)
+// ---------------------------------------------------------------------------
+//
+// Two stores project the same Pi resource discovery response: prompt
+// templates (`loadPrompts`, keyed by runtime + directory) and skills
+// (`loadSkills`, keyed by runtime). They fire sequentially on startup, so the
+// transport's concurrent-request coalescing never merges them. This memo
+// shares one in-flight request plus a short settled result per
+// runtime + directory scope, collapsing the sequential duplicate into a
+// single GET while keeping every other behavior identical.
+//
+// Rules:
+// - Failures never populate the memo; the next load retries the network.
+// - Any successful resource mutation bumps the runtime revision, which
+//   orphans older in-flight work (waiters still resolve; their results just
+//   never populate the memo) so a stale completion cannot overwrite fresh
+//   post-mutation data.
+// - Memo entries are keyed by runtime identity, so a runtime switch can
+//   never read the previous server's resources. A completion that lands
+//   after a switch is returned to its waiter but not memoized.
+// - Every return is an independent clone: callers never share mutable
+//   state with the memo or with each other.
+
+/** Settled `listResources` results stay fresh for one store TTL window. */
+const RESOURCES_MEMO_TTL_MS = 5_000;
+
+/** Bound on memoized scopes; entries are short-lived, so plain FIFO is enough. */
+const MAX_RESOURCES_MEMO_KEYS = 32;
+
+interface ResourcesMemoEntry {
+  response: PiResourceListResponse;
+  settledAt: number;
+}
+
+interface ResourcesInFlightEntry {
+  revision: number;
+  promise: Promise<PiResourceListResponse>;
+}
+
+const resourcesMemoByKey = new Map<string, ResourcesMemoEntry>();
+const resourcesInFlightByKey = new Map<string, ResourcesInFlightEntry>();
+const resourcesRevisionByRuntime = new Map<string, number>();
+
+const resourcesCacheKey = (runtimeKey: string, directory?: string): string =>
+  `${runtimeKey}\n${directory?.trim() ?? ''}`;
+
+const getResourcesRevision = (runtimeKey: string): number =>
+  resourcesRevisionByRuntime.get(runtimeKey) ?? 0;
+
+const clearResourcesMemoForRuntime = (runtimeKey: string): void => {
+  resourcesRevisionByRuntime.set(runtimeKey, getResourcesRevision(runtimeKey) + 1);
+  const prefix = `${runtimeKey}\n`;
+  for (const key of [...resourcesMemoByKey.keys()]) {
+    if (key.startsWith(prefix)) resourcesMemoByKey.delete(key);
+  }
+};
+
+/**
+ * Drop memoized resource discovery for the active runtime so the next load
+ * reads fresh data. Bumps the runtime revision so in-flight results from
+ * before the invalidation never repopulate the memo. With a non-empty
+ * directory only that scope is dropped (the revision still advances for
+ * every scope: a global prompt edit can affect all directory listings, so
+ * in-flight work is never trusted after any resource invalidation).
+ */
+export const invalidateResourcesCache = (directory?: string | null): void => {
+  const runtimeKey = getRuntimeKey();
+  resourcesRevisionByRuntime.set(runtimeKey, getResourcesRevision(runtimeKey) + 1);
+  if (typeof directory === 'string' && directory.trim().length > 0) {
+    resourcesMemoByKey.delete(resourcesCacheKey(runtimeKey, directory));
+    return;
+  }
+  const prefix = `${runtimeKey}\n`;
+  for (const key of [...resourcesMemoByKey.keys()]) {
+    if (key.startsWith(prefix)) resourcesMemoByKey.delete(key);
+  }
+};
+
+const memoizeResourcesResponse = (
+  cacheKey: string,
+  response: PiResourceListResponse,
+  settledAt: number,
+): void => {
+  if (resourcesMemoByKey.size >= MAX_RESOURCES_MEMO_KEYS) {
+    const now = Date.now();
+    for (const [key, entry] of resourcesMemoByKey) {
+      if (now - entry.settledAt >= RESOURCES_MEMO_TTL_MS) resourcesMemoByKey.delete(key);
+    }
+    while (resourcesMemoByKey.size >= MAX_RESOURCES_MEMO_KEYS) {
+      const oldest = resourcesMemoByKey.keys().next().value;
+      if (typeof oldest !== 'string') break;
+      resourcesMemoByKey.delete(oldest);
+    }
+  }
+  resourcesMemoByKey.set(cacheKey, { response, settledAt });
 };
 
 // ---------------------------------------------------------------------------
@@ -780,11 +885,48 @@ export class PiService {
     const resolvedScope = typeof directoryOrScope === 'string' ? scope : (directoryOrScope as PiClientScope | undefined);
     const directory = typeof directoryOrScope === 'string' ? directoryOrScope : undefined;
     assertRuntimeUnchanged(resolvedScope);
-    return jsonRequest<undefined, PiResourceListResponse>('/api/pi/resources', {
-      method: 'GET',
-      ...(directory ? { query: { directory } } : {}),
-      ...(resolvedScope?.runtimeKey ? { runtimeKey: resolvedScope.runtimeKey } : {}),
-    });
+    const runtimeKey = resolvedScope?.runtimeKey ?? getRuntimeKey();
+    const cacheKey = resourcesCacheKey(runtimeKey, directory);
+    const revision = getResourcesRevision(runtimeKey);
+    if (resolvedScope?.reload !== true) {
+      const memoized = resourcesMemoByKey.get(cacheKey);
+      if (memoized && Date.now() - memoized.settledAt < RESOURCES_MEMO_TTL_MS) {
+        return structuredClone(memoized.response);
+      }
+    }
+    const inFlight = resourcesInFlightByKey.get(cacheKey);
+    if (inFlight && inFlight.revision === revision) {
+      return structuredClone(await inFlight.promise);
+    }
+    const startedAt = Date.now();
+    const requestRevision = getResourcesRevision(runtimeKey);
+    const inFlightHolder: { promise?: Promise<PiResourceListResponse> } = {};
+    const request: Promise<PiResourceListResponse> = (async () => {
+      try {
+        const response = await jsonRequest<undefined, PiResourceListResponse>('/api/pi/resources', {
+          method: 'GET',
+          ...(directory ? { query: { directory } } : {}),
+          ...(resolvedScope?.runtimeKey ? { runtimeKey: resolvedScope.runtimeKey } : {}),
+        });
+        // Memoize only when this request is still current: same runtime,
+        // no invalidation landed mid-flight, and no newer completion
+        // already memoized a fresher result. Failures never reach here.
+        if (getRuntimeKey() === runtimeKey && getResourcesRevision(runtimeKey) === requestRevision) {
+          const existing = resourcesMemoByKey.get(cacheKey);
+          if (!existing || existing.settledAt <= startedAt) {
+            memoizeResourcesResponse(cacheKey, response, Date.now());
+          }
+        }
+        return response;
+      } finally {
+        if (resourcesInFlightByKey.get(cacheKey)?.promise === inFlightHolder.promise) {
+          resourcesInFlightByKey.delete(cacheKey);
+        }
+      }
+    })();
+    inFlightHolder.promise = request;
+    resourcesInFlightByKey.set(cacheKey, { revision: requestRevision, promise: request });
+    return structuredClone(await request);
   }
 
   async listCommands(directory?: string, scope?: PiClientScope): Promise<PiCommandListResponse> {
@@ -828,34 +970,46 @@ export class PiService {
 
   async updateResource(input: PiResourceUpdateInput, scope?: PiClientScope): Promise<PiResourceListResponse> {
     assertRuntimeUnchanged(scope);
+    const mutationRuntimeKey = scope?.runtimeKey ?? getRuntimeKey();
     const directory = input.directory ?? scope?.directory;
-    return jsonRequest<PiResourceUpdateInput, PiResourceListResponse>(`/api/pi/resources/${encodeURIComponent(input.resourceId)}`, {
+    const response = await jsonRequest<PiResourceUpdateInput, PiResourceListResponse>(`/api/pi/resources/${encodeURIComponent(input.resourceId)}`, {
       method: 'PUT', body: input, ...(directory ? { query: { directory } } : {}), ...(scope?.runtimeKey ? { runtimeKey: scope.runtimeKey } : {}),
     });
+    clearResourcesMemoForRuntime(mutationRuntimeKey);
+    return response;
   }
 
   async createPromptTemplate(input: PiPromptTemplateCreateInput, directory?: string, scope?: PiClientScope): Promise<PiResourceListResponse> {
     const effectiveDirectory = directory ?? input.directory ?? scope?.directory;
     assertRuntimeUnchanged(scope);
-    return jsonRequest<PiPromptTemplateCreateInput, PiResourceListResponse>('/api/pi/resources/prompts', {
+    const mutationRuntimeKey = scope?.runtimeKey ?? getRuntimeKey();
+    const response = await jsonRequest<PiPromptTemplateCreateInput, PiResourceListResponse>('/api/pi/resources/prompts', {
       method: 'POST', body: input, ...(effectiveDirectory ? { query: { directory: effectiveDirectory } } : {}), ...(scope?.runtimeKey ? { runtimeKey: scope.runtimeKey } : {}),
     });
+    clearResourcesMemoForRuntime(mutationRuntimeKey);
+    return response;
   }
 
   async updatePromptTemplate(resourceId: string, input: PiPromptTemplateUpdateInput, directory?: string, scope?: PiClientScope): Promise<PiResourceListResponse> {
     assertRuntimeUnchanged(scope);
+    const mutationRuntimeKey = scope?.runtimeKey ?? getRuntimeKey();
     const effectiveDirectory = directory ?? input.directory ?? scope?.directory;
-    return jsonRequest<PiPromptTemplateUpdateInput, PiResourceListResponse>(`/api/pi/resources/prompts/${encodeURIComponent(resourceId)}`, {
+    const response = await jsonRequest<PiPromptTemplateUpdateInput, PiResourceListResponse>(`/api/pi/resources/prompts/${encodeURIComponent(resourceId)}`, {
       method: 'PUT', body: input, ...(effectiveDirectory ? { query: { directory: effectiveDirectory } } : {}), ...(scope?.runtimeKey ? { runtimeKey: scope.runtimeKey } : {}),
     });
+    clearResourcesMemoForRuntime(mutationRuntimeKey);
+    return response;
   }
 
   async deletePromptTemplate(resourceId: string, directory?: string, scope?: PiClientScope): Promise<PiResourceListResponse> {
     assertRuntimeUnchanged(scope);
+    const mutationRuntimeKey = scope?.runtimeKey ?? getRuntimeKey();
     const effectiveDirectory = directory ?? scope?.directory;
-    return jsonRequest<undefined, PiResourceListResponse>(`/api/pi/resources/prompts/${encodeURIComponent(resourceId)}`, {
+    const response = await jsonRequest<undefined, PiResourceListResponse>(`/api/pi/resources/prompts/${encodeURIComponent(resourceId)}`, {
       method: 'DELETE', ...(effectiveDirectory ? { query: { directory: effectiveDirectory } } : {}), ...(scope?.runtimeKey ? { runtimeKey: scope.runtimeKey } : {}),
     });
+    clearResourcesMemoForRuntime(mutationRuntimeKey);
+    return response;
   }
 
   // ----- Attachments ------------------------------------------------------
