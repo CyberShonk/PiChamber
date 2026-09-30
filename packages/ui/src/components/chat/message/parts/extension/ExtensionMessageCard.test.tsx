@@ -1,8 +1,15 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, mock, test } from 'bun:test';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 
-import { ExtensionMessageCard } from './ExtensionMessageCard';
+mock.module('../../../MarkdownRenderer', () => ({
+    MarkdownRenderer: (props: { content?: unknown }) => {
+        const text = typeof props.content === 'string' ? props.content : '';
+        return React.createElement('div', { 'data-markdown-content': 'true' }, text);
+    },
+}));
+
+const { ExtensionMessageCard } = await import('./ExtensionMessageCard');
 
 const renderCard = (props: Partial<Parameters<typeof ExtensionMessageCard>[0]>) => renderToStaticMarkup(
     <ExtensionMessageCard messageId="m1" {...props} />,
@@ -52,13 +59,16 @@ describe('ExtensionMessageCard', () => {
         expect(markup).toContain('Reindex');
     });
 
-    test('falls back to a preformatted card for non-GUI extension content', () => {
+    test('falls back to a card with collapsed details for non-GUI extension content', () => {
         const markup = renderCard({
             customType: 'my-extension',
             text: 'Status update',
             details: { count: 3 },
         });
         expect(markup).toContain('my-extension');
-        expect(markup).toContain('&quot;count&quot;: 3');
+        expect(markup).toContain('Status update');
+        expect(markup).toContain('Details');
+        expect(markup).toContain('aria-expanded="false"');
+        expect(markup).not.toContain('&quot;count&quot;: 3');
     });
 });
