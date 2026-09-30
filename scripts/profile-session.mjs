@@ -455,6 +455,9 @@ const main = async () => {
 
     if (options.agent) throw new Error("--agent is no longer supported by the Pi session API")
     console.log("Dispatching the prompt and recording until the session reports idle.")
+    // Sends are fenced to the daemon's current stream epoch, as the UI client does.
+    const { streamEpoch } = await runSessionRequest(client, "/api/pi/runtime")
+    if (!streamEpoch) throw new Error("Pi runtime did not report a stream epoch")
     const dispatch = runSessionRequest(
       client,
       `/api/pi/sessions/${encodeURIComponent(sessionId)}/prompt`,
@@ -462,6 +465,7 @@ const main = async () => {
         method: "POST",
         body: {
           sessionId,
+          streamEpoch,
           text: options.prompt,
           directory: options.dir,
           ...(options.model ? { model: parseModelRef(options.model) } : {}),

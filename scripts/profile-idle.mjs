@@ -30,6 +30,13 @@ import { CdpClient, createPageTarget, evaluateValue, launchChrome, reservePort, 
 import { buildIdleProbeSource, IDLE_PROBE_GLOBAL } from "./perf/idle-probe.mjs"
 import { summarizeCpuProfile } from "./perf/cpu-profile.mjs"
 import { expandProjects, expandSessionLists } from "./perf/scenario.mjs"
+import {
+  buildRailSwitchExpression,
+  buildRailVerifyExpression,
+  normalizeCycleMode,
+  summarizeNetworkWindow,
+  toNetworkEvent,
+} from "./perf/network.mjs"
 import { growthPerSecond, metricMap, round } from "./perf/metrics.mjs"
 
 const HELP = `Usage: bun run profile:idle -- [options]
@@ -54,6 +61,13 @@ Options:
                            recording (chat, preview, terminal, git, pr, notes,
                            file, diff, plan, context, browser, walkthrough).
                            Repeatable; the first entry becomes the active tab.
+  --cycle-panels <a,b,c>  After the idle window, activate each context-panel
+                           mode in order (e.g. git,terminal,files) to measure
+                           per-switch refetches. Repeats for --cycle-rounds.
+  --cycle-rounds <n>      Panel-cycle rounds (default: 3)
+  --cycle-dwell-ms <ms>   Wait on each panel mode before switching (default:
+                           2000). API requests between activations are
+                           attributed to the switch that preceded them.
   --duration <seconds>     Idle recording window (default: 30)
   --settle <seconds>       Wait after load before recording (default: 15)
   --output <directory>     Artifact directory (default: artifacts/idle-profile-<time>)
@@ -66,6 +80,8 @@ Options:
   --budget-cpu <percent>   Fail when idle main-thread busy time exceeds this
   --budget-listeners <n>   Fail when net listener growth exceeds this
   --budget-heap <mb>       Fail when heap growth exceeds this
+  --budget-requests-per-minute <n>
+                           Fail when idle API requests per minute exceeds this
   --json                   Print the summary as JSON instead of a table
   --help                   Show this help
 
@@ -92,6 +108,10 @@ const parseArgs = (argv) => {
     budgetCpu: null,
     budgetListeners: null,
     budgetHeap: null,
+    budgetRequestsPerMinute: null,
+    cyclePanels: [],
+    cycleRounds: 3,
+    cycleDwellMs: 2000,
     json: false,
   }
   for (let index = 0; index < argv.length; index += 1) {
@@ -117,10 +137,30 @@ const parseArgs = (argv) => {
     else if (value === "--budget-cpu") options.budgetCpu = Number(argv[++index])
     else if (value === "--budget-listeners") options.budgetListeners = Number(argv[++index])
     else if (value === "--budget-heap") options.budgetHeap = Number(argv[++index])
+    else if (value === "--budget-requests-per-minute") options.budgetRequestsPerMinute = Number(argv[++index])
+    else if (value === "--cycle-panels") {
+      const raw = argv[++index] ?? ""
+      for (const entry of raw.split(",")) {
+        const trimmed = entry.trim()
+        if (trimmed) options.cyclePanels.push(normalizeCycleMode(trimmed))
+      }
+    }
+    else if (value === "--cycle-rounds") options.cycleRounds = Number(argv[++index])
+    else if (value === "--cycle-dwell-ms") options.cycleDwellMs = Number(argv[++index])
     else throw new Error(`Unknown option: ${value}`)
   }
   if (!Number.isFinite(options.duration) || options.duration <= 0) throw new Error("--duration must be a positive number")
   if (!Number.isFinite(options.settle) || options.settle < 0) throw new Error("--settle must be zero or greater")
+  if (!Number.isInteger(options.cycleRounds) || options.cycleRounds <= 0) {
+    throw new Error("--cycle-rounds must be a positive integer")
+  }
+  if (!Number.isFinite(options.cycleDwellMs) || options.cycleDwellMs < 0) {
+    throw new Error("--cycle-dwell-ms must be zero or greater")
+  }
+  if (options.budgetRequestsPerMinute !== null
+    && (!Number.isFinite(options.budgetRequestsPerMinute) || options.budgetRequestsPerMinute < 0)) {
+    throw new Error("--budget-requests-per-minute must be zero or greater")
+  }
   // Deep-link parameters are folded into the URL so the recorded window starts
   // from the requested screen without synthesising input events.
   const target = new URL(options.url)
@@ -261,6 +301,101 @@ const buildSummary = ({ options, before, after, samples, cpu, probe, elapsedSeco
 
 const formatRow = (label, value, unit) => `${label.padEnd(22)} ${String(value).padStart(12)} ${unit}`
 
+const formatNetworkPath = (entry) => {
+  const names = entry.queryParamNames ?? []
+  return names.length > 0 ? `${entry.pathname}{?${names.join(",")}}` : entry.pathname
+}
+
+const printNetworkWindow = (title, window, baselineWindow) => {
+  console.log(`\n${title} (${window.durationSeconds}s):`)
+  console.log(
+    `  API requests: ${window.totalApi} (${window.apiPerMinute}/min)`
+    + `  Static/other: ${window.totalStatic}  WS opened: ${window.wsOpened}  SSE opened: ${window.sseOpened}`,
+  )
+  if (window.grouped.length === 0) {
+    console.log("  No API requests recorded in this window.")
+    return
+  }
+  console.log(`  ${"Count".padStart(7)}  ${"Distinct".padStart(8)}  ${"Per/min".padStart(7)}  Method  Pathname (query names only, never values)`)
+  for (const entry of window.grouped.slice(0, 20)) {
+    console.log(
+      `  ${String(entry.count).padStart(7)}  ${String(entry.distinct ?? "").padStart(8)}  ${String(entry.perMinute).padStart(7)}  ${(entry.method + " " + formatNetworkPath(entry)).trim()}`,
+    )
+  }
+  if (baselineWindow) {
+    const previous = baselineWindow.apiPerMinute
+    if (Number.isFinite(previous)) {
+      const change = round(window.apiPerMinute - previous)
+      const marker = change === 0 ? "" : change < 0 ? "  improved" : "  WORSE"
+      console.log(
+        `  Baseline API req/min was ${previous}; change ${change > 0 ? "+" : ""}${change}${marker}`,
+      )
+    }
+  }
+}
+
+const printPanelCycle = (cycle) => {
+  if (!cycle) return
+  console.log(`\nPanel cycle — modes ${cycle.modes.join(", ")} x${cycle.rounds} (dwell ${cycle.dwellMs}ms):`)
+  console.log(`  Total cycle API requests: ${cycle.total.totalApi}  Static/other: ${cycle.total.totalStatic}`)
+  const header = ["Round", ...cycle.modes].map((cell) => String(cell).padStart(10)).join("")
+  console.log(`  Per-switch API requests:${"\n    " + header}`)
+  for (const row of cycle.perModePerRound.slice(1)) {
+    console.log(`    ${row.map((cell) => String(cell).padStart(10)).join("")}`)
+  }
+  console.log("  Per-mode totals (API requests across all rounds):")
+  for (const [mode, totals] of Object.entries(cycle.perMode)) {
+    console.log(
+      `    ${mode.padEnd(14)} ${String(totals.totalApi).padStart(6)} total  ${String(totals.meanPerSwitch).padStart(6)}/switch over ${totals.switches} switches`,
+    )
+  }
+  console.log(`  ${"Count".padStart(7)}  Method  Pathname (query names only, never values)`)
+  for (const entry of cycle.total.grouped.slice(0, 15)) {
+    console.log(`  ${String(entry.count).padStart(7)}  ${(entry.method + " " + formatNetworkPath(entry)).trim()}`)
+  }
+}
+
+/**
+ * Switches the live context panel to `mode` through the same right-rail
+ * button the user clicks, then verifies an independent DOM signal (rail
+ * pressed state plus a laid-out, non-inert panel) before returning. Throws
+ * when the switch did not actually happen so a quiet cycle can never pass
+ * as a clean measurement.
+ */
+const switchContextPanelMode = async (client, mode) => {
+  const switched = await evaluateValue(client, buildRailSwitchExpression(mode))
+  let status
+  try {
+    status = JSON.parse(switched ?? "null")
+  } catch {
+    throw new Error(`Could not switch context panel to ${JSON.stringify(mode)}: unreadable rail response`)
+  }
+  if (!status?.ok) {
+    const available = Array.isArray(status?.available) ? status.available.filter(Boolean).join(", ") : ""
+    throw new Error(
+      `Could not switch context panel to ${JSON.stringify(mode)}`
+      + ` (${status?.reason ?? "unknown"})`
+      + (available ? `. Rail offers: ${available}` : ". Is the surface visible on the rail?"),
+    )
+  }
+  await wait(600)
+  const verified = await evaluateValue(client, buildRailVerifyExpression(mode))
+  let state
+  try {
+    state = JSON.parse(verified ?? "null")
+  } catch {
+    throw new Error(`Could not verify context panel mode ${JSON.stringify(mode)}: unreadable verify response`)
+  }
+  if (!state?.pressed || !state?.panelOpen) {
+    throw new Error(
+      `Context panel switch to ${JSON.stringify(mode)} did not take effect`
+      + ` (pressed: ${state?.pressed ?? "unknown"}, panel open: ${state?.panelOpen ?? "unknown"},`
+      + ` width: ${state?.panelWidth ?? "unknown"}). The cycle measurement is invalid.`,
+    )
+  }
+  return { clicked: status.clicked !== false, railLabel: status.label ?? null }
+}
+
 const printReport = (summary, baseline) => {
   const { metrics } = summary
   console.log(`\nIdle profile — ${summary.durationSeconds}s window at ${summary.url}`)
@@ -299,6 +434,22 @@ const printReport = (summary, baseline) => {
       + ` mutations ${counters.mutationRecords}, resizes ${counters.resizeEntries}, fetches ${counters.fetches}`,
     )
   }
+
+  if (summary.network) {
+    if (summary.network.settle) {
+      printNetworkWindow("Network requests (settle/startup)", summary.network.settle, baseline?.network?.settle)
+    }
+    if (summary.network.idle) {
+      printNetworkWindow("Network requests (idle)", summary.network.idle, baseline?.network?.idle)
+    }
+    if (!summary.network.settle && !summary.network.idle) {
+      console.log("\nNetwork requests: no data recorded.")
+    }
+    if (summary.network.livenessWarning) {
+      console.warn(`\nWARNING: ${summary.network.livenessWarning}`)
+    }
+    printPanelCycle(summary.network.cycle)
+  }
 }
 
 const evaluateBudgets = (summary, options) => {
@@ -311,6 +462,12 @@ const evaluateBudgets = (summary, options) => {
   check(options.budgetCpu, "mainThreadBusyPercent", "Idle main-thread busy", "%")
   check(options.budgetListeners, "listenerGrowth", "Listener growth", "")
   check(options.budgetHeap, "heapGrowthMbPerSecond", "Heap growth", "MB/s")
+  if (Number.isFinite(options.budgetRequestsPerMinute)) {
+    const value = summary.network?.idle?.apiPerMinute
+    if (Number.isFinite(value) && value > options.budgetRequestsPerMinute) {
+      failures.push(`Idle API requests ${value}/min exceeds budget ${options.budgetRequestsPerMinute}/min`)
+    }
+  }
   return failures
 }
 
@@ -335,6 +492,17 @@ const main = async () => {
   const port = await reservePort()
   const chromeProcess = launchChrome({ chrome, profileDir, port, headless: options.headless })
   let client
+  // Every entry keeps pathname + query parameter NAMES only; values never
+  // enter the process output or the artifact (see scripts/perf/network.mjs).
+  const networkEvents = []
+  const wsOpenedAt = []
+  const recordNetworkParams = (params) => {
+    networkEvents.push(toNetworkEvent(params, Date.now()))
+  }
+  const recordWsOpened = () => {
+    wsOpenedAt.push(Date.now())
+  }
+  let settleStartMs = 0
   try {
     const target = await createPageTarget(port)
     client = new CdpClient(target.webSocketDebuggerUrl)
@@ -346,6 +514,9 @@ const main = async () => {
       client.send("Profiler.enable"),
       client.send("Network.enable", { maxTotalBufferSize: 0, maxResourceBufferSize: 0 }),
     ])
+    client.on("Network.requestWillBeSent", recordNetworkParams)
+    client.on("Network.webSocketCreated", recordWsOpened)
+    settleStartMs = Date.now()
     // Measure the current local build, never a service-worker-cached bundle
     // from an earlier optimization run.
     await client.send("Network.setBypassServiceWorker", { bypass: true })
@@ -371,6 +542,9 @@ const main = async () => {
     if (options.panels.length > 0 || options.expandProjects) {
       if (options.panels.length > 0) await seedContextPanel(client, options.panels, options.session)
       const reloaded = client.once("Page.loadEventFired", 60_000)
+      // The settle/startup network window covers exactly one boot: the
+      // reload that applies the seeded state, not the throwaway first load.
+      settleStartMs = Date.now()
       await client.send("Page.reload", { ignoreCache: false })
       await reloaded
     }
@@ -389,6 +563,8 @@ const main = async () => {
     await client.send("Profiler.start")
     const before = metricMap((await client.send("Performance.getMetrics")).metrics)
     const startedAt = Date.now()
+    const settleEndMs = startedAt
+    const idleStartMs = startedAt
 
     console.log(`Recording ${options.duration}s of idle time. No input is delivered to the page.`)
     const samples = []
@@ -420,6 +596,7 @@ const main = async () => {
     })`)
 
     const elapsedSeconds = (Date.now() - startedAt) / 1000
+    const idleEndMs = Date.now()
     const after = metricMap((await client.send("Performance.getMetrics")).metrics)
     const { profile } = await client.send("Profiler.stop")
     await evaluateValue(client, `globalThis[${JSON.stringify(IDLE_PROBE_GLOBAL)}]?.stop()`)
@@ -440,6 +617,98 @@ const main = async () => {
         `\nWARNING: the renderer produced ${frameLiveness?.framesPerSecond ?? 0} frames per second`
         + ` (visibility: ${frameLiveness?.visibilityState ?? "unknown"}). Rendering metrics from this run understate real work.`,
       )
+    }
+
+    // The cycle delivers real input (rail clicks), so it always runs after the
+    // input-free idle window. Attribution windows start at the activation
+    // instant so the refetch burst fired by the click belongs to that switch.
+    let cycle = null
+    if (options.cyclePanels.length > 0) {
+      console.log(
+        `Cycling context-panel modes ${options.cyclePanels.join(", ")} x${options.cycleRounds}`
+        + ` with ${options.cycleDwellMs}ms dwell per switch.`,
+      )
+      const marks = []
+      const cycleStartMs = Date.now()
+      for (let currentRound = 1; currentRound <= options.cycleRounds; currentRound += 1) {
+        for (const mode of options.cyclePanels) {
+          const activationAt = Date.now()
+          const switched = await switchContextPanelMode(client, mode)
+          marks.push({
+            round: currentRound,
+            mode,
+            startedAt: activationAt,
+            clicked: switched.clicked,
+            railLabel: switched.railLabel,
+          })
+          console.log(`  round ${currentRound}/${options.cycleRounds}: ${mode}${switched.clicked ? "" : " (already active)"}`)
+          await wait(options.cycleDwellMs)
+        }
+      }
+      const cycleEndMs = Date.now()
+      const switches = marks.map((mark, index) => {
+        const window = summarizeNetworkWindow(
+          networkEvents,
+          wsOpenedAt,
+          mark.startedAt,
+          marks[index + 1]?.startedAt ?? cycleEndMs,
+        )
+        return {
+          index,
+          round: mark.round,
+          mode: mark.mode,
+          clicked: mark.clicked,
+          startedAt: new Date(mark.startedAt).toISOString(),
+          apiRequests: window.totalApi,
+          totalRequests: window.totalRequests,
+          wsOpened: window.wsOpened,
+        }
+      })
+      const perMode = {}
+      for (const mode of options.cyclePanels) {
+        const modeSwitches = switches.filter((entry) => entry.mode === mode)
+        const totalApi = modeSwitches.reduce((total, entry) => total + entry.apiRequests, 0)
+        perMode[mode] = {
+          switches: modeSwitches.length,
+          totalApi,
+          meanPerSwitch: modeSwitches.length > 0 ? Number((totalApi / modeSwitches.length).toFixed(1)) : 0,
+          perRound: Array.from({ length: options.cycleRounds }, (_, roundIndex) =>
+            switches
+              .filter((entry) => entry.round === roundIndex + 1 && entry.mode === mode)
+              .reduce((total, entry) => total + entry.apiRequests, 0)),
+        }
+      }
+      cycle = {
+        modes: [...options.cyclePanels],
+        rounds: options.cycleRounds,
+        dwellMs: options.cycleDwellMs,
+        switches,
+        perMode,
+        perModePerRound: [
+          ["Round", ...options.cyclePanels],
+          ...Array.from({ length: options.cycleRounds }, (_, roundIndex) => [
+            roundIndex + 1,
+            ...options.cyclePanels.map((mode) => perMode[mode]?.perRound[roundIndex] ?? 0),
+          ]),
+        ],
+        total: summarizeNetworkWindow(networkEvents, wsOpenedAt, cycleStartMs, cycleEndMs),
+      }
+    }
+
+    summary.network = {
+      instrument: "cdp-Network.requestWillBeSent",
+      settle: summarizeNetworkWindow(networkEvents, wsOpenedAt, settleStartMs, settleEndMs),
+      idle: summarizeNetworkWindow(networkEvents, wsOpenedAt, idleStartMs, idleEndMs),
+      ...(cycle ? { cycle } : {}),
+    }
+    if (networkEvents.length === 0 && wsOpenedAt.length === 0) {
+      // Page load always issues requests; zero events means the Network
+      // domain never delivered, not a quiet app. Keep the artifact but say so.
+      summary.network.livenessWarning =
+        "the Network domain recorded no requests during load, settle, or idle;"
+        + " the network section below is a disabled instrument, not a quiet app."
+        + " Check the Chrome build and the Network.enable dispatch before trusting it."
+      console.warn(`\nWARNING: ${summary.network.livenessWarning}`)
     }
 
     await writeFile(join(output, "idle-summary.json"), JSON.stringify(summary, null, 2))
