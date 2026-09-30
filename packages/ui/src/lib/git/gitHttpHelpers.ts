@@ -1,15 +1,24 @@
-import type { GitStatus } from '../api/types';
+import type { GitStatus, GitWorktree } from '../api/types';
 import { getRuntimeUrlResolver } from '../runtime-url';
 import { getRuntimeKey } from '../runtime-switch';
 
 export const API_BASE = '/api/git';
 export const GIT_STATUS_CACHE_TTL_MS = 1200;
-export const GIT_REPO_CHECK_CACHE_TTL_MS = 5000;
+// `/check` spawns `git rev-parse` per call and its answer is stable at idle:
+// positive results cache for 5 minutes, negatives for 30 s (a `git init`
+// becomes visible quickly). Fetch failures are never cached.
+export const GIT_REPO_CHECK_POSITIVE_TTL_MS = 5 * 60_000;
+export const GIT_REPO_CHECK_NEGATIVE_TTL_MS = 30_000;
+// Worktree topology changes only through explicit mutations (create/remove),
+// so a short TTL plus explicit invalidation keeps idle discovery cheap.
+export const GIT_WORKTREES_CACHE_TTL_MS = 10_000;
 export const gitStatusCache = new Map<string, { value: GitStatus; expiresAt: number }>();
 export const gitStatusInFlight = new Map<string, Promise<GitStatus>>();
 export const gitStatusCacheVersions = new Map<string, number>();
 export const gitRepoCache = new Map<string, { value: boolean; expiresAt: number }>();
 export const gitRepoInFlight = new Map<string, Promise<boolean>>();
+export const gitWorktreesCache = new Map<string, { value: GitWorktree[]; expiresAt: number }>();
+export const gitWorktreesInFlight = new Map<string, Promise<GitWorktree[]>>();
 
 export const normalizeDirectoryKey = (directory: string): string => directory.trim();
 export const getDirectoryCacheKey = (runtimeKey: string, directory: string): string =>
@@ -29,6 +38,30 @@ export const invalidateGitStatusCache = (directory: string): void => {
     gitStatusCache.delete(statusKey);
     gitStatusInFlight.delete(statusKey);
   }
+};
+
+export const invalidateGitRepoCheckCache = (directory: string): void => {
+  const key = getDirectoryCacheKey(getRuntimeKey(), directory);
+  gitRepoCache.delete(key);
+  gitRepoInFlight.delete(key);
+};
+
+export const invalidateGitWorktreesCache = (directory: string): void => {
+  const key = getDirectoryCacheKey(getRuntimeKey(), directory);
+  gitWorktreesCache.delete(key);
+  gitWorktreesInFlight.delete(key);
+};
+
+/** Drop every git HTTP cache and in-flight marker (runtime switch). Keys are
+ *  already runtime-scoped, so this is a memory bound, not a correctness fix. */
+export const resetGitHttpCachesForRuntimeSwitch = (): void => {
+  gitStatusCache.clear();
+  gitStatusInFlight.clear();
+  gitStatusCacheVersions.clear();
+  gitRepoCache.clear();
+  gitRepoInFlight.clear();
+  gitWorktreesCache.clear();
+  gitWorktreesInFlight.clear();
 };
 
 export function buildUrl(

@@ -2,12 +2,28 @@ import type {
   GitStatus,
   GitBranch,
   GitLogResponse,
+  GitRemote,
 } from '@/lib/api/types';
 
 export const LOG_STALE_THRESHOLD = 10000;
 export const REPO_CHECK_STALE_THRESHOLD = 60_000;
 export const STATUS_STALE_THRESHOLD = 5_000;
 export const BRANCHES_STALE_THRESHOLD = 30_000;
+// Mount-time (revisit) freshness windows for GitView's ensureAll stale-while-
+// revalidate. Longer than the background thresholds above so a quick
+// Git -> Terminal -> Files -> Git round-trip serves cache with zero requests.
+// Explicit refresh paths (manual refresh, requestGitRefresh hints,
+// post-mutation refresh) bypass these windows by calling fetch* directly.
+export const STATUS_MOUNT_STALE_THRESHOLD = 15_000;
+export const LOG_MOUNT_STALE_THRESHOLD = 30_000;
+export const BRANCHES_MOUNT_STALE_THRESHOLD = 60_000;
+// Remote list / remote URL change almost never (only remote add/remove), so a
+// long window is safe; remote-changing mutations must call invalidateRemotes.
+export const REMOTES_STALE_THRESHOLD = 5 * 60_000;
+// Ranged (branch-divider) and graph log queries derive from the same commit
+// data as the main log, so they share the mount-time log freshness.
+export const LOG_QUERY_STALE_THRESHOLD = 30_000;
+export const LOG_QUERY_CACHE_MAX_ENTRIES = 10;
 export const DIFF_PREFETCH_MAX_FILES = 25;
 export const DIFF_PREFETCH_FOCUS_MAX_FILES = 40;
 export const DIFF_PREFETCH_CONCURRENCY = 2;
@@ -25,6 +41,12 @@ export interface DirectoryGitState {
   status: GitStatus | null;
   branches: GitBranch | null;
   log: GitLogResponse | null;
+  remotes: GitRemote[] | null;
+  remoteUrl: string | null;
+  lastRemotesFetch: number;
+  isLoadingRemotes: boolean;
+  /** Ranged/graph log queries keyed by JSON of {from,to,all,file,maxCount}. */
+  logQueryCache: Map<string, { log: GitLogResponse; fetchedAt: number }>;
   diffCache: Map<
     string,
     { original: string; modified: string; fetchedAt: number; isBinary?: boolean }
@@ -41,6 +63,23 @@ export interface DirectoryGitState {
   isLoadingBranches: boolean;
 }
 
+export interface GitLogQueryOptions {
+  from?: string;
+  to?: string;
+  all?: boolean;
+  file?: string;
+  maxCount?: number;
+}
+
+export const buildLogQueryKey = (options: GitLogQueryOptions): string =>
+  JSON.stringify({
+    from: options.from ?? null,
+    to: options.to ?? null,
+    all: options.all ?? false,
+    file: options.file ?? null,
+    maxCount: options.maxCount ?? null,
+  });
+
 export interface GitStore {
   runtimeKey: string;
   directories: Map<string, DirectoryGitState>;
@@ -55,11 +94,16 @@ export interface GitStore {
     git: GitAPI,
     options?: { silent?: boolean; mode?: 'light' }
   ) => Promise<boolean>;
-  fetchBranches: (directory: string, git: GitAPI) => Promise<void>;
+  fetchBranches: (
+    directory: string,
+    git: GitAPI,
+    options?: { silent?: boolean }
+  ) => Promise<void>;
   fetchLog: (
     directory: string,
     git: GitAPI,
-    maxCount?: number
+    maxCount?: number,
+    options?: { silent?: boolean }
   ) => Promise<void>;
   fetchAll: (
     directory: string,
@@ -69,6 +113,27 @@ export interface GitStore {
 
   ensureStatus: (directory: string, git: GitAPI) => Promise<void>;
   ensureAll: (directory: string, git: GitAPI) => Promise<void>;
+  fetchRemotes: (
+    directory: string,
+    git: GitAPI,
+    options?: { silent?: boolean; force?: boolean }
+  ) => Promise<void>;
+  ensureRemotes: (directory: string, git: GitAPI) => Promise<void>;
+  /** Mark the remotes entry stale so the next ensure refetches (keeps data visible). */
+  invalidateRemotes: (directory: string) => void;
+  /**
+   * Ranged/graph log query with store cache + in-flight dedupe, keyed by
+   * (directory, from/to/all/file/maxCount). Returns the cached entry when
+   * fresh; pass { force: true } for explicit manual refresh.
+   * Failure preserves the prior cached entry and resolves null when none exists.
+   */
+  fetchLogQuery: (
+    directory: string,
+    git: GitAPI,
+    query: GitLogQueryOptions,
+    options?: { force?: boolean }
+  ) => Promise<GitLogResponse | null>;
+  getCachedLogQuery: (directory: string, query: GitLogQueryOptions) => GitLogResponse | null;
   moveStatusPathsOptimistically: (
     directory: string,
     paths: string[],
@@ -123,8 +188,16 @@ export interface GitAPI {
   getGitBranches: (directory: string) => Promise<GitBranch>;
   getGitLog: (
     directory: string,
-    options?: { maxCount?: number }
+    options?: {
+      maxCount?: number;
+      from?: string;
+      to?: string;
+      file?: string;
+      all?: boolean;
+    }
   ) => Promise<GitLogResponse>;
+  getRemotes?: (directory: string) => Promise<GitRemote[]>;
+  getRemoteUrl?: (directory: string, remote?: string) => Promise<string | null>;
   getGitFileDiff: (
     directory: string,
     options: { path: string }
@@ -144,6 +217,11 @@ export const createEmptyDirectoryState = (): DirectoryGitState => ({
   status: null,
   branches: null,
   log: null,
+  remotes: null,
+  remoteUrl: null,
+  lastRemotesFetch: 0,
+  isLoadingRemotes: false,
+  logQueryCache: new Map(),
   diffCache: new Map(),
   indexRevision: 0,
   lastRepoCheckAt: 0,

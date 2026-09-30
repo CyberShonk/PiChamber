@@ -8,7 +8,7 @@ import { buildAvailableWorktreesByProject, useWorktreeStore } from '@/stores/use
  * GitHub flow created or switched one, mirroring the normal new-worktree flow
  * (`useWorktreeCreationStore` awaits `refreshProject` after setup). Without
  * it the sidebar only learns about the new worktree on the next background
- * discovery pass (focus/visibility/15 s interval).
+ * discovery pass (focus/visibility/60 s interval).
  *
  * `directory` may be the project root, a subdirectory, or a linked worktree;
  * the owning registered project is resolved first. Best-effort: a failed
@@ -21,7 +21,9 @@ export const refreshWorktreeTopology = async (directory: string, git: GitAPI | n
   const project = resolveProjectForSessionDirectory(projects, worktrees, directory);
   const projectRoot = project?.path ?? directory;
   try {
-    await useWorktreeStore.getState().refreshProject(projectRoot, git);
+    // Forced: this follows an explicit mutation (create/switch/remove), so
+    // the background freshness window must not absorb it.
+    await useWorktreeStore.getState().refreshProject(projectRoot, git, { force: true });
   } catch {
     // Background worktree discovery still reconciles on its next pass.
   }

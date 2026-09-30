@@ -171,7 +171,7 @@ Authenticated `GET /api/git/worktrees`, `POST /api/git/worktrees/validate`, `POS
 7. Update this file with the new function in the appropriate API section.
 
 ### SSH Agent Handling
-- SSH_AUTH_SOCK is automatically resolved via `resolveSshAuthSock` (checks GPG agent, gpgconf), so the user's normal SSH credentials work without extra config.
+- SSH_AUTH_SOCK is automatically resolved via `resolveSshAuthSock` (checks GPG agent, gpgconf), so the user's normal SSH credentials work without extra config. The result is memoized for 60 s (a cached socket is re-checked with a `stat` before reuse, a negative result also expires) and concurrent git calls share one in-flight lookup, because each gpgconf spawn blocks the in-process server's event loop and every git operation builds its env.
 
 ### Working directory (simple-git)
 - Repository operations always pass an explicit `baseDir` (the opened project/directory path) into simple-git. Omitting `baseDir` would default to `process.cwd()`, which breaks when the server was launched from a neutral directory (e.g. `$HOME`) while the opened project lives elsewhere.

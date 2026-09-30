@@ -1245,7 +1245,9 @@ const SessionSidebarComponent: React.FC<SessionSidebarProps> = ({
         throw new Error('Git worktree removal was not confirmed by the server.');
       }
 
-      let refreshed = await refreshWorktreeProject(pending.projectPath, git);
+      // Forced: this follows an explicit remove mutation, so the freshness
+      // window must not serve the pre-delete topology.
+      let refreshed = await refreshWorktreeProject(pending.projectPath, git, { force: true });
       const targetPath = normalizePath(pending.worktree.path);
       // refreshProject coalesces concurrent polls for the same project. If a
       // discovery fetch started before removal, the first result can predate
@@ -1255,7 +1257,7 @@ const SessionSidebarComponent: React.FC<SessionSidebarProps> = ({
         && targetPath !== null
         && refreshed.some((entry) => normalizePath(entry.path) === targetPath)
       ) {
-        refreshed = await refreshWorktreeProject(pending.projectPath, git);
+        refreshed = await refreshWorktreeProject(pending.projectPath, git, { force: true });
       }
       const isCurrentWorktree = targetPath !== null && normalizePath(currentDirectory) === targetPath;
       const isSelectedWorktree = targetPath !== null

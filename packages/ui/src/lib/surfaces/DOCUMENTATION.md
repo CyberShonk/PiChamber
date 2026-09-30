@@ -65,7 +65,10 @@ the `openContext*` actions in `useUIStore`.
   remount on switch and must restore themselves from their stores/snapshots
   instead. Git embeds a stacked diff list of changed files, collapsed until
   the user expands a file. Pull requests / Issues restore list filters,
-  selection, and scroll from their stores.
+  selection, and scroll from their stores. A Git remount serves cached
+  status/branches/log/remotes/ranged-logs immediately and revalidates only
+  stale entries in the background (stale-while-revalidate, documented in
+  `packages/ui/src/stores/DOCUMENTATION.md`); it must not refetch fresh data.
 - Runtime scope: desktop/web `MainLayout` only. The dedicated Capacitor mobile
   shell has its own layout and does not consume this registry: phone drawer +
   tablet side panel/header tabs live in `apps/mobileWorkspaceTabs.ts` and

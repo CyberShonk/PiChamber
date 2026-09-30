@@ -1,13 +1,18 @@
 import React from 'react';
 import { create } from 'zustand';
 import { devtools } from 'zustand/middleware';
-import type { GitStatus } from '@/lib/api/types';
+import type { GitLogResponse, GitStatus } from '@/lib/api/types';
 import { getRuntimeKey } from '@/lib/runtime-switch';
 import {
   LOG_STALE_THRESHOLD,
   REPO_CHECK_STALE_THRESHOLD,
   STATUS_STALE_THRESHOLD,
-  BRANCHES_STALE_THRESHOLD,
+  STATUS_MOUNT_STALE_THRESHOLD,
+  LOG_MOUNT_STALE_THRESHOLD,
+  BRANCHES_MOUNT_STALE_THRESHOLD,
+  REMOTES_STALE_THRESHOLD,
+  LOG_QUERY_STALE_THRESHOLD,
+  LOG_QUERY_CACHE_MAX_ENTRIES,
   DIFF_PREFETCH_MAX_FILES,
   DIFF_PREFETCH_FOCUS_MAX_FILES,
   DIFF_PREFETCH_CONCURRENCY,
@@ -19,6 +24,7 @@ import {
   type GitStore,
   type GitFileDiffResponse,
   type GitAPI,
+  buildLogQueryKey,
   createEmptyDirectoryState,
 } from './git/gitStoreTypes';
 import {
@@ -41,11 +47,16 @@ import {
 import {
   inFlightStatusFetches,
   inFlightBranchFetches,
+  inFlightLogFetches,
+  inFlightRemotesFetches,
+  inFlightLogQueryFetches,
   inFlightEnsureAllByDirectory,
   getActiveGitRuntimeKey,
   resetGitRuntimeGuards,
   runtimeDirectoryKey,
   getStatusFetchKey,
+  getLogFetchKey,
+  getLogQueryFetchKey,
   startRequest,
   isRequestCurrent,
   bumpStatusMutationRevision,
@@ -347,15 +358,16 @@ export const useGitStore = create<GitStore>()(
         set({ directories: nextDirectories });
       },
 
-      fetchBranches: async (directory, git) => {
+      fetchBranches: async (directory, git, options = {}) => {
         const runtimeKey = getRuntimeKey();
         const requestKey = runtimeDirectoryKey(runtimeKey, directory);
         const existing = inFlightBranchFetches.get(requestKey);
         if (existing) return existing;
 
         const token = startRequest(directory, 'branches');
+        const { silent = false } = options;
         const pending: Promise<void> = (async () => {
-          {
+          if (!silent) {
             const newDirectories = new Map(get().directories);
             const d = newDirectories.get(directory) ?? createEmptyDirectoryState();
             newDirectories.set(directory, { ...d, isLoadingBranches: true });
@@ -387,40 +399,188 @@ export const useGitStore = create<GitStore>()(
         return pending;
       },
 
-      fetchLog: async (directory, git, maxCount) => {
-        const token = startRequest(directory, 'log');
+      fetchLog: async (directory, git, maxCount, options = {}) => {
         const { directories } = get();
         const dirState = directories.get(directory);
         const effectiveMaxCount = maxCount ?? dirState?.logMaxCount ?? 25;
+        const runtimeKey = getRuntimeKey();
+        const requestKey = getLogFetchKey(runtimeKey, directory, effectiveMaxCount);
+        const existing = inFlightLogFetches.get(requestKey);
+        if (existing) return existing;
 
-        {
-          const newDirectories = new Map(get().directories);
-          const d = newDirectories.get(directory) ?? createEmptyDirectoryState();
-          newDirectories.set(directory, { ...d, isLoadingLog: true });
-          set({ directories: newDirectories });
-        }
+        const token = startRequest(directory, 'log');
+        const { silent = false } = options;
+        const pending: Promise<void> = (async () => {
+          if (!silent) {
+            const newDirectories = new Map(get().directories);
+            const d = newDirectories.get(directory) ?? createEmptyDirectoryState();
+            newDirectories.set(directory, { ...d, isLoadingLog: true });
+            set({ directories: newDirectories });
+          }
 
-        try {
-          const log = await git.getGitLog(directory, { maxCount: effectiveMaxCount });
-          if (!isRequestCurrent(token, directory)) return;
-          const newDirectories = new Map(get().directories);
-          const currentDirState = newDirectories.get(directory) ?? createEmptyDirectoryState();
-          newDirectories.set(directory, {
-            ...currentDirState,
-            log,
-            isLoadingLog: false,
-            lastLogFetch: Date.now(),
-            logMaxCount: effectiveMaxCount,
-          });
-          set({ directories: newDirectories });
-        } catch (error) {
-          console.error('Failed to fetch git log:', error);
-          if (!isRequestCurrent(token, directory)) return;
-          const newDirectories = new Map(get().directories);
-          const d = newDirectories.get(directory) ?? createEmptyDirectoryState();
-          newDirectories.set(directory, { ...d, isLoadingLog: false });
-          set({ directories: newDirectories });
+          try {
+            const log = await git.getGitLog(directory, { maxCount: effectiveMaxCount });
+            if (!isRequestCurrent(token, directory)) return;
+            const newDirectories = new Map(get().directories);
+            const currentDirState = newDirectories.get(directory) ?? createEmptyDirectoryState();
+            newDirectories.set(directory, {
+              ...currentDirState,
+              log,
+              isLoadingLog: false,
+              lastLogFetch: Date.now(),
+              logMaxCount: effectiveMaxCount,
+            });
+            set({ directories: newDirectories });
+          } catch (error) {
+            console.error('Failed to fetch git log:', error);
+            if (!isRequestCurrent(token, directory)) return;
+            const newDirectories = new Map(get().directories);
+            const d = newDirectories.get(directory) ?? createEmptyDirectoryState();
+            newDirectories.set(directory, { ...d, isLoadingLog: false });
+            set({ directories: newDirectories });
+          }
+        })().finally(() => {
+          if (inFlightLogFetches.get(requestKey) === pending) {
+            inFlightLogFetches.delete(requestKey);
+          }
+        });
+        inFlightLogFetches.set(requestKey, pending);
+        return pending;
+      },
+
+      fetchRemotes: async (directory, git, options = {}) => {
+        const getRemotes = git.getRemotes;
+        if (typeof getRemotes !== 'function') return;
+        const getRemoteUrl = git.getRemoteUrl;
+        const runtimeKey = getRuntimeKey();
+        const requestKey = runtimeDirectoryKey(runtimeKey, directory);
+        const existing = inFlightRemotesFetches.get(requestKey);
+        if (existing) return existing;
+
+        const token = startRequest(directory, 'remotes');
+        const { silent = false } = options;
+        const pending: Promise<void> = (async () => {
+          if (!silent) {
+            const newDirectories = new Map(get().directories);
+            const d = newDirectories.get(directory) ?? createEmptyDirectoryState();
+            newDirectories.set(directory, { ...d, isLoadingRemotes: true });
+            set({ directories: newDirectories });
+          }
+
+          try {
+            const remotesPromise = getRemotes(directory);
+            const urlPromise =
+              typeof getRemoteUrl === 'function'
+                ? getRemoteUrl(directory).then(
+                  (value) => ({ ok: true as const, value }),
+                  () => ({ ok: false as const, value: null as string | null })
+                )
+                : Promise.resolve({ ok: true as const, value: null as string | null });
+            const [remoteList, urlResult] = await Promise.all([remotesPromise, urlPromise]);
+            if (!isRequestCurrent(token, directory)) return;
+            const newDirectories = new Map(get().directories);
+            const currentDirState = newDirectories.get(directory) ?? createEmptyDirectoryState();
+            newDirectories.set(directory, {
+              ...currentDirState,
+              remotes: remoteList,
+              remoteUrl: urlResult.ok ? urlResult.value : currentDirState.remoteUrl,
+              lastRemotesFetch: Date.now(),
+              isLoadingRemotes: false,
+            });
+            set({ directories: newDirectories });
+          } catch (error) {
+            console.error('Failed to fetch git remotes:', error);
+            if (!isRequestCurrent(token, directory)) return;
+            const newDirectories = new Map(get().directories);
+            const d = newDirectories.get(directory) ?? createEmptyDirectoryState();
+            newDirectories.set(directory, { ...d, isLoadingRemotes: false });
+            set({ directories: newDirectories });
+          }
+        })().finally(() => {
+          if (inFlightRemotesFetches.get(requestKey) === pending) {
+            inFlightRemotesFetches.delete(requestKey);
+          }
+        });
+        inFlightRemotesFetches.set(requestKey, pending);
+        return pending;
+      },
+
+      ensureRemotes: async (directory, git) => {
+        const dirState = get().directories.get(directory);
+        const now = Date.now();
+        if (dirState?.remotes !== null && dirState?.remotes !== undefined && now - (dirState?.lastRemotesFetch ?? 0) < REMOTES_STALE_THRESHOLD) {
+          return;
         }
+        await get().fetchRemotes(directory, git, { silent: dirState?.remotes != null });
+      },
+
+      invalidateRemotes: (directory) => {
+        const { directories } = get();
+        const dirState = directories.get(directory);
+        if (!dirState) return;
+        const newDirectories = new Map(directories);
+        newDirectories.set(directory, { ...dirState, lastRemotesFetch: 0 });
+        set({ directories: newDirectories });
+      },
+
+      fetchLogQuery: async (directory, git, query, options = {}) => {
+        const { force = false } = options;
+        const queryKey = buildLogQueryKey(query);
+        const runtimeKey = getRuntimeKey();
+        const requestKey = getLogQueryFetchKey(runtimeKey, directory, queryKey);
+        const now = Date.now();
+        const cached = get().directories.get(directory)?.logQueryCache.get(queryKey);
+        if (!force && cached && now - cached.fetchedAt < LOG_QUERY_STALE_THRESHOLD) {
+          return cached.log;
+        }
+        const existing = inFlightLogQueryFetches.get(requestKey);
+        if (existing) return existing;
+
+        const token = startRequest(directory, 'log-query');
+        const pending: Promise<GitLogResponse | null> = (async () => {
+          try {
+            const log = await git.getGitLog(directory, {
+              maxCount: query.maxCount,
+              from: query.from,
+              to: query.to,
+              all: query.all,
+              file: query.file,
+            });
+            if (!isRequestCurrent(token, directory)) return cached?.log ?? null;
+            const newDirectories = new Map(get().directories);
+            const currentDirState = newDirectories.get(directory) ?? createEmptyDirectoryState();
+            const nextCache = new Map(currentDirState.logQueryCache);
+            nextCache.set(queryKey, { log, fetchedAt: Date.now() });
+            if (nextCache.size > LOG_QUERY_CACHE_MAX_ENTRIES) {
+              let oldestKey: string | null = null;
+              let oldestAt = Number.POSITIVE_INFINITY;
+              for (const [key, entry] of nextCache) {
+                if (entry.fetchedAt < oldestAt) {
+                  oldestAt = entry.fetchedAt;
+                  oldestKey = key;
+                }
+              }
+              if (oldestKey !== null) nextCache.delete(oldestKey);
+            }
+            newDirectories.set(directory, { ...currentDirState, logQueryCache: nextCache });
+            set({ directories: newDirectories });
+            return log;
+          } catch (error) {
+            console.error('Failed to fetch git log query:', error);
+            return cached?.log ?? get().directories.get(directory)?.logQueryCache.get(queryKey)?.log ?? null;
+          }
+        })().finally(() => {
+          if (inFlightLogQueryFetches.get(requestKey) === pending) {
+            inFlightLogQueryFetches.delete(requestKey);
+          }
+        });
+        inFlightLogQueryFetches.set(requestKey, pending);
+        return pending;
+      },
+
+      getCachedLogQuery: (directory, query) => {
+        const queryKey = buildLogQueryKey(query);
+        return get().directories.get(directory)?.logQueryCache.get(queryKey)?.log ?? null;
       },
 
       fetchAll: async (directory, git, options = {}) => {
@@ -643,7 +803,7 @@ export const useGitStore = create<GitStore>()(
           const now = Date.now();
           const needsFullStatus = !dirState?.status || dirState.status.diffStats === undefined;
 
-          if (needsFullStatus || now - (dirState?.lastStatusFetch ?? 0) >= STATUS_STALE_THRESHOLD) {
+          if (needsFullStatus || now - (dirState?.lastStatusFetch ?? 0) >= STATUS_MOUNT_STALE_THRESHOLD) {
             await get().fetchStatus(directory, git, { silent: Boolean(dirState?.status) });
           }
 
@@ -652,11 +812,14 @@ export const useGitStore = create<GitStore>()(
 
           const fetches: Promise<void>[] = [];
 
-          if (!updatedState.branches || now - updatedState.lastBranchesFetch >= BRANCHES_STALE_THRESHOLD) {
-            fetches.push(get().fetchBranches(directory, git));
+          if (!updatedState.branches || now - updatedState.lastBranchesFetch >= BRANCHES_MOUNT_STALE_THRESHOLD) {
+            fetches.push(get().fetchBranches(directory, git, { silent: Boolean(updatedState.branches) }));
           }
-          if (!updatedState.log || now - updatedState.lastLogFetch >= LOG_STALE_THRESHOLD) {
-            fetches.push(get().fetchLog(directory, git));
+          if (!updatedState.log || now - updatedState.lastLogFetch >= LOG_MOUNT_STALE_THRESHOLD) {
+            fetches.push(get().fetchLog(directory, git, undefined, { silent: Boolean(updatedState.log) }));
+          }
+          if (updatedState.remotes == null || now - (updatedState.lastRemotesFetch ?? 0) >= REMOTES_STALE_THRESHOLD) {
+            fetches.push(get().fetchRemotes(directory, git, { silent: updatedState.remotes != null }));
           }
 
           if (fetches.length > 0) await Promise.all(fetches);
@@ -700,6 +863,27 @@ export const useGitLog = (directory: string | null) => {
   return useGitStore((state) => {
     if (!directory) return null;
     return state.directories.get(directory)?.log ?? null;
+  });
+};
+
+export const useGitRemotes = (directory: string | null) => {
+  return useGitStore((state) => {
+    if (!directory) return null;
+    return state.directories.get(directory)?.remotes ?? null;
+  });
+};
+
+export const useGitRemoteUrl = (directory: string | null) => {
+  return useGitStore((state) => {
+    if (!directory) return null;
+    return state.directories.get(directory)?.remoteUrl ?? null;
+  });
+};
+
+export const useGitLoadingRemotes = (directory: string | null) => {
+  return useGitStore((state) => {
+    if (!directory) return false;
+    return state.directories.get(directory)?.isLoadingRemotes ?? false;
   });
 };
 
