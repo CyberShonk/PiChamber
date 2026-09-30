@@ -27,7 +27,7 @@ import { useGitHubPrStatusStore } from '@/stores/useGitHubPrStatusStore';
 import { useGitHubSelectedRepo } from '@/stores/useGitHubScopeStore';
 import { validateCreatePullRequest } from '../github/pulls/pullLogic';
 import { GitHubMarkdownBody } from '../github/GitHubDetailScaffold';
-import { openPullRequestInSurface } from '../github/PullRequestsSurface';
+import { openPullRequestInSurface } from '../github/openPullRequestInSurface';
 import {
   CREATE_PR_MODES,
   clearCreatePrDraft,

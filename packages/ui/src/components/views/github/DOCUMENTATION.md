@@ -286,6 +286,11 @@ same stack; desktop keeps the single-column rail layout.
 
 - A failed fetch never renders as empty: shell and list/detail paths prefer
   `GitHubUnavailableState` / `GitHubStaleBanner` over empty lists.
+- The surfaces stay out of the eager startup graph: `ContextPanel` and the
+  mobile drawer load `PullRequestsSurface` / `IssuesSurface` lazily, and
+  callers outside this folder hand off a PR selection through
+  `openPullRequestInSurface.ts`, never by importing the surface module (PR
+  file review reaches `@pierre/diffs` → Shiki, ~1.2 MB raw).
 - Theme tokens only; no hardcoded colors. Buttons use shared variants.
 - Copy follows locale precedent (inline Sentence-case strings, `aria-label`
   on icon-only controls).

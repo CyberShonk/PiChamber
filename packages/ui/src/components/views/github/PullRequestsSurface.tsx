@@ -1,4 +1,3 @@
-/* eslint-disable react-refresh/only-export-components -- surface component colocated with its selection-handoff helper by design */
 import React from 'react';
 import type { GitHubPullRequestSummary } from '@/lib/api/types';
 import { GitHubSurfaceShell } from './GitHubSurfaceShell';
@@ -433,18 +432,4 @@ const PullDetailLoader: React.FC<{
       onOpenFilesAtLine={openFilesAtLine}
     />
   );
-};
-
-export const openPullRequestInSurface = (directory: string, repo: string, number: number): void => {
-  // Selection handoff for the Git chip / sidebar badges: persist which PR the
-  // Pull requests surface should show, then open the surface. The surface
-  // reads this selection on mount.
-  useGitHubPullRequestsStore.getState().selectPullRequest(directory, repo, number);
-  const dirKey = normalizeDirectoryPathKey(directory);
-  void import('@/stores/useUIStore').then(({ useUIStore }) => {
-    useUIStore.getState().openContextSurface(dirKey, 'pull-requests');
-  }).catch(() => {});
-  void import('@/stores/useGitHubScopeStore').then(({ useGitHubScopeStore }) => {
-    useGitHubScopeStore.getState().setSelectedRepo(directory, repo);
-  }).catch(() => {});
 };

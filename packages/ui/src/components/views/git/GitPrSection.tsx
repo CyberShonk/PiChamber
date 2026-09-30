@@ -5,7 +5,7 @@ import { useGitHubSelectedRepo, useGitHubScopeStore } from '@/stores/useGitHubSc
 import { getGitHubPrStatusKey, useEnsureGitHubPrStatus, useGitHubPrStatusStore, usePrVisualSummary } from '@/stores/useGitHubPrStatusStore';
 import { useRuntimeAPIs } from '@/hooks/useRuntimeAPIs';
 import { GitHubChecksGlyph, GitHubStateGlyph } from '../github/GitHubDetailScaffold';
-import { openPullRequestInSurface } from '../github/PullRequestsSurface';
+import { openPullRequestInSurface } from '../github/openPullRequestInSurface';
 import { CreatePullRequestForm } from './CreatePullRequestForm';
 import { clearCreatePrDraft } from './createPullRequestLogic';
 import { createPrDraftKey } from './createPullRequestLogic';

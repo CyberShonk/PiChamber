@@ -24,7 +24,7 @@ import type { SessionNodeItemProps } from './sessionNodeTypes';
 import { areSessionNodeItemPropsEqual } from './sessionNodeComparators';
 import { useSessionNodeItemMetadata } from './useSessionNodeItemMetadata';
 import { useGitHubSelectedRepo } from '@/stores/useGitHubScopeStore';
-import { openPullRequestInSurface } from '@/components/views/github/PullRequestsSurface';
+import { openPullRequestInSurface } from '@/components/views/github/openPullRequestInSurface';
 
 /** Clickable PR badge: opens the PR in the Pull requests surface (§6.6). */
 const PrBadgeButton: React.FC<{

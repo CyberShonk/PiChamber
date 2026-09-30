@@ -158,7 +158,6 @@ import {
 import { DraftBranchCheckoutDialog } from "./composer/ui/DraftBranchCheckoutDialog";
 import { ComposerAutocompletePopups } from "./composer/ui/ComposerAutocompletePopups";
 import { ComposerFooter } from "./composer/ui/ComposerFooter";
-import { GitHubLinkPicker } from "../views/github/agent/GitHubLinkPicker";
 import { RevertedMessageDock } from "./composer/ui/RevertedMessageDock";
 import { ComposerDragOverlay } from "./composer/ui/ComposerDragOverlay";
 import { ComposerAttachmentPickerInput } from "./composer/ui/ComposerAttachmentPickerInput";
@@ -171,6 +170,11 @@ import { useComposerDictation } from "@/lib/dictation/use-composer-dictation";
 
 // Lazy like in ChatMessage: a static import would pull the @pierre/diffs and
 // Shiki stacks into the eager startup graph for a dialog opened on demand.
+// Opened on demand; its detail scaffold pulls the GitHub rich-body renderer
+// (dompurify) that the composer must not load at startup.
+const GitHubLinkPicker = lazyWithChunkRecovery(
+  () => import("../views/github/agent/GitHubLinkPicker").then((module) => ({ default: module.GitHubLinkPicker })),
+);
 const ToolOutputDialog = lazyWithChunkRecovery(
   () => import("./message/ToolOutputDialog"),
 );
@@ -2782,11 +2786,13 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       />
 
       {githubLinkOpen && (currentSessionDirectoryForSync ?? currentDirectory) ? (
-        <GitHubLinkPicker
-          directory={(currentSessionDirectoryForSync ?? currentDirectory) as string}
-          open={githubLinkOpen}
-          onClose={() => setGithubLinkOpen(false)}
-        />
+        <React.Suspense fallback={null}>
+          <GitHubLinkPicker
+            directory={(currentSessionDirectoryForSync ?? currentDirectory) as string}
+            open={githubLinkOpen}
+            onClose={() => setGithubLinkOpen(false)}
+          />
+        </React.Suspense>
       ) : null}
 
       {/* Mobile draft target pickers: bottom sheets replacing the inline

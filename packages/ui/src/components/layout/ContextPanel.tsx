@@ -16,6 +16,9 @@ import { lazyWithChunkRecovery } from '@/lib/chunkLoadRecovery';
 const DiffView = lazyWithChunkRecovery(() => import('@/components/views/DiffView').then((m) => ({ default: m.DiffView })));
 const FilesView = lazyWithChunkRecovery(() => import('@/components/views/FilesView').then((m) => ({ default: m.FilesView })));
 const GitView = lazyWithChunkRecovery(() => import('@/components/views/GitView').then((m) => ({ default: m.GitView })));
+// The GitHub surfaces reach @pierre/diffs → Shiki through PR file review.
+const PullRequestsSurface = lazyWithChunkRecovery(() => import('@/components/views/github/PullRequestsSurface').then((m) => ({ default: m.PullRequestsSurface })));
+const IssuesSurface = lazyWithChunkRecovery(() => import('@/components/views/github/IssuesSurface').then((m) => ({ default: m.IssuesSurface })));
 import { useEffectiveDirectory } from '@/hooks/useEffectiveDirectory';
 import { cn } from '@/lib/utils';
 import { useFilesViewTabsStore } from '@/stores/useFilesViewTabsStore';
@@ -23,8 +26,6 @@ import { useUIStore, type ContextPanelMode, type PendingDiffScope } from '@/stor
 import { getGitRailPresentation } from '@/lib/surfaces/registry';
 import { useIsGitRepo } from '@/stores/useGitStore';
 import { ContextPanelContent } from './ContextSidebarTab';
-import { PullRequestsSurface } from '@/components/views/github/PullRequestsSurface';
-import { IssuesSurface } from '@/components/views/github/IssuesSurface';
 import { Icon } from "@/components/icon/Icon";
 import { CONTEXT_SURFACE_DEFAULT_WIDTH_FRACTION } from '@/lib/surfaces/registry';
 import { isTerminalEventTarget } from '@/lib/terminalFocus';
@@ -470,9 +471,9 @@ export const ContextPanel: React.FC = () => {
         : activeTab?.mode === 'git'
             ? <React.Suspense fallback={null}><GitView isActive={isOpen} gitHeaderSlot={activeTab?.mode === 'git' ? gitHeaderSlot : null} /></React.Suspense>
             : activeTab?.mode === 'pull-requests'
-                ? <PullRequestsSurface key={`pull-requests:${directoryKey}`} headerActionsSlot={isPullRequestsPanelActive ? githubHeaderSlot : null} headerActionsPresentation="desktop" />
+                ? <React.Suspense fallback={null}><PullRequestsSurface key={`pull-requests:${directoryKey}`} headerActionsSlot={isPullRequestsPanelActive ? githubHeaderSlot : null} headerActionsPresentation="desktop" /></React.Suspense>
                 : activeTab?.mode === 'issues'
-                    ? <IssuesSurface key={`issues:${directoryKey}`} headerActionsSlot={isIssuesPanelActive ? githubHeaderSlot : null} headerActionsPresentation="desktop" />
+                    ? <React.Suspense fallback={null}><IssuesSurface key={`issues:${directoryKey}`} headerActionsSlot={isIssuesPanelActive ? githubHeaderSlot : null} headerActionsPresentation="desktop" /></React.Suspense>
                     : activeTab?.mode === 'preview'
                 ? <PreviewPane rawUrl={activeTab.targetPath ?? ''} onNavigate={(url) => openContextPreview(effectiveDirectory, url)} />
                 : (
