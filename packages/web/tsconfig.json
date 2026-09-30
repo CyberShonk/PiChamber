@@ -18,6 +18,7 @@
       "@/*": ["../ui/src/*", "./src/*"],
       "@web/*": ["./src/*"],
       "@pichamber/ui/*": ["../ui/src/*"],
+      "@pichamber/pierre-parse-patch": ["../ui/node_modules/@pierre/diffs/dist/utils/parsePatchFiles"],
       "@pichamber/web/*": ["./src/*"]
     }
   },

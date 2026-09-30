@@ -16,7 +16,8 @@
     "baseUrl": "./src",
     "paths": {
       "@/*": ["./*"],
-      "@pichamber/ui/*": ["./*"]
+      "@pichamber/ui/*": ["./*"],
+      "@pichamber/pierre-parse-patch": ["../node_modules/@pierre/diffs/dist/utils/parsePatchFiles"]
     }
   },
   "include": ["src"]
