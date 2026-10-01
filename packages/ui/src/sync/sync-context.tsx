@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-unused-vars */
-import { useCallback, useMemo, useRef } from 'react';
+import { useCallback, useMemo, useRef, useSyncExternalStore } from 'react';
 import { getPiSessionStore } from '@/apps/pi-session-store';
 import { piProjectedToRecords, mapPart } from '@/lib/chat/pi-to-renderable';
 import type { Message, Part, Session, SessionStatus } from '@/lib/chat/types';
@@ -386,14 +386,20 @@ export function useSessionReducerPart(
   partId: string | null | undefined,
   enabled: boolean,
 ): Part | null {
-  const part = usePiSessionSnapshot(
-    (state) => {
-      if (!enabled || !sessionId || !partId) return null;
-      return state.reducer.bySession.get(sessionId)?.parts.get(partId) ?? null;
-    },
-    undefined,
-    enabled && sessionId ? sessionTopic(sessionId) : TOPIC_CHROME,
+  // Not usePiSessionSnapshot: its cache keys on store snapshot identity, so
+  // flipping `enabled` (expanding a settled tool row) without a store change
+  // would keep returning the earlier null. getSnapshot is rebuilt per input.
+  const store = usePiSessionStore();
+  const topic = enabled && sessionId ? sessionTopic(sessionId) : TOPIC_CHROME;
+  const subscribe = useMemo(
+    () => (listener: () => void) => store.subscribe(listener, topic),
+    [store, topic],
   );
+  const getPart = useCallback(() => {
+    if (!enabled || !sessionId || !partId) return null;
+    return store.getState().reducer.bySession.get(sessionId)?.parts.get(partId) ?? null;
+  }, [enabled, partId, sessionId, store]);
+  const part = useSyncExternalStore(subscribe, getPart, getPart);
   return useMemo(() => {
     if (!enabled || !part) return null;
     return mapPart({
