@@ -355,7 +355,7 @@ describe("hydrateSessionFromDetail with extension content", () => {
     expect(message?.details).toEqual({ ok: true })
   })
 
-  test("tracks extension.working message and visibility state", () => {
+  test("tracks extension.working message and visibility state with full replacement semantics", () => {
     let state = applyPiEvent(createReducerState(), baseEvent("extension.working", 1, {
       message: "Analyzing code...",
       visible: true,
@@ -363,20 +363,26 @@ describe("hydrateSessionFromDetail with extension content", () => {
     let session = state.bySession.get("sess-1")!
     expect(session.extensionWorking).toEqual({ message: "Analyzing code...", visible: true })
 
-    // Partial update only updating visible
-    state = applyPiEvent(state, baseEvent("extension.working", 2, { visible: false })).state
+    // Daemon publishes full working state; sending { visible: true } replaces and clears previous message
+    state = applyPiEvent(state, baseEvent("extension.working", 2, { visible: true })).state
     session = state.bySession.get("sess-1")!
-    expect(session.extensionWorking).toEqual({ message: "Analyzing code...", visible: false })
+    expect(session.extensionWorking).toEqual({ visible: true })
 
-    // Setting empty message clears message property
-    state = applyPiEvent(state, baseEvent("extension.working", 3, { message: "" })).state
+    // Setting new message without visible clears visible
+    state = applyPiEvent(state, baseEvent("extension.working", 3, { message: "Running tests..." })).state
     session = state.bySession.get("sess-1")!
-    expect(session.extensionWorking).toEqual({ visible: false })
+    expect(session.extensionWorking).toEqual({ message: "Running tests..." })
 
-    // Clearing both removes extensionWorking entirely
-    state = applyPiEvent(state, baseEvent("extension.working", 4, { visible: undefined, message: undefined })).state
+    // Setting empty message clears message, omitting visible clears visible -> delete extensionWorking
+    state = applyPiEvent(state, baseEvent("extension.working", 4, { message: "" })).state
     session = state.bySession.get("sess-1")!
     expect(session.extensionWorking).toBeUndefined()
+
+    // Explicit empty object clears extensionWorking
+    state = applyPiEvent(state, baseEvent("extension.working", 5, { message: "Busy", visible: true })).state
+    expect(state.bySession.get("sess-1")!.extensionWorking).toEqual({ message: "Busy", visible: true })
+    state = applyPiEvent(state, baseEvent("extension.working", 6, {})).state
+    expect(state.bySession.get("sess-1")!.extensionWorking).toBeUndefined()
   })
 
   test("restores extensionWorking from snapshot and detail hydration", () => {

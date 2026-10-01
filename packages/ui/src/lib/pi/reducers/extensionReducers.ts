@@ -201,15 +201,14 @@ export const reduceExtensionWorking = (
   session: PiReducerSessionState,
   payload: { message?: string; visible?: boolean },
 ): void => {
-  const current = session.extensionWorking;
-  const nextMessage = 'message' in payload ? (payload.message || undefined) : current?.message;
-  const nextVisible = 'visible' in payload ? payload.visible : current?.visible;
-  if (nextMessage === undefined && nextVisible === undefined) {
+  const message = payload.message || undefined;
+  const visible = payload.visible;
+  if (message === undefined && visible === undefined) {
     delete session.extensionWorking;
   } else {
     session.extensionWorking = {
-      ...(nextMessage !== undefined ? { message: nextMessage } : {}),
-      ...(nextVisible !== undefined ? { visible: nextVisible } : {}),
+      ...(message !== undefined ? { message } : {}),
+      ...(visible !== undefined ? { visible } : {}),
     };
   }
 };

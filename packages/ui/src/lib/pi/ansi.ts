@@ -274,7 +274,7 @@ export function parseAnsiSegments(text: string): AnsiSegment[] {
   // Regex to match CSI sequences: \x1b[ <params> <final-byte>
   // or other escapes like OSC (\x1b]...\x07), APC (\x1b_...\x07), etc.
   // eslint-disable-next-line no-control-regex
-  const tokenRegex = /\u001b(?:\[([0-9;]*)([@-~])|\][^\u0007\u001b]*(?:\u0007|\u001b\\)|_[^\u0007\u001b]*(?:\u0007|\u001b\\)|[PX^_][^\u001b]*\u001b\\|[@-Z\\-_])/g;
+  const tokenRegex = /\u001b(?:\[([0-?]*)[ -/]*([@-~])|\][^\u0007\u001b]*(?:\u0007|\u001b\\)|_[^\u0007\u001b]*(?:\u0007|\u001b\\)|[PX^_][^\u001b]*\u001b\\|[@-Z\\-_])/g;
 
   let lastIndex = 0;
   let match: RegExpExecArray | null;
@@ -318,8 +318,8 @@ export function parseAnsiSegments(text: string): AnsiSegment[] {
     const paramsStr = match[1];
     const finalByte = match[2];
 
-    // Only CSI SGR ('m') modifies style state. Non-SGR CSI or other escapes are stripped.
-    if (finalByte === 'm') {
+    // Only CSI SGR ('m') modifies style state when parameter string contains only digits and ';'. Non-SGR CSI or other escapes are stripped.
+    if (finalByte === 'm' && (!paramsStr || /^[0-9;]*$/.test(paramsStr))) {
       const rawCodes = (paramsStr || '0').split(';').map((s) => (s === '' ? 0 : parseInt(s, 10)));
       let i = 0;
       while (i < rawCodes.length) {

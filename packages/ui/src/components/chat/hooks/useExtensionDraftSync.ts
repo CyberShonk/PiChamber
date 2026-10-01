@@ -68,8 +68,44 @@ export function useExtensionDraftSync({
       })
       .catch(() => {
         // Request errors are ignored; text is never logged.
+        if (lastSentTextBySessionRef.current.get(targetSessionId) === textToSend) {
+          lastSentTextBySessionRef.current.delete(targetSessionId);
+        }
       });
   }, []);
+
+  React.useEffect(() => {
+    if (!sessionId || !isDraftTracked) return;
+
+    const handleActive = () => {
+      if (!isDocumentActive()) return;
+      const currentText = textRef.current;
+      const lastSent = lastSentTextBySessionRef.current.get(sessionId);
+      if (currentText !== lastSent) {
+        if (timerRef.current !== null) {
+          clearTimeout(timerRef.current);
+          timerRef.current = null;
+        }
+        sendDraft(sessionId, currentText);
+      }
+    };
+
+    if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+      window.addEventListener('focus', handleActive);
+    }
+    if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+      document.addEventListener('visibilitychange', handleActive);
+    }
+
+    return () => {
+      if (typeof window !== 'undefined' && typeof window.removeEventListener === 'function') {
+        window.removeEventListener('focus', handleActive);
+      }
+      if (typeof document !== 'undefined' && typeof document.removeEventListener === 'function') {
+        document.removeEventListener('visibilitychange', handleActive);
+      }
+    };
+  }, [sessionId, isDraftTracked, sendDraft]);
 
   React.useEffect(() => {
     if (!sessionId || trackedText === null) {

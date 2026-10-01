@@ -230,4 +230,21 @@ describe("parseAnsiSegments", () => {
     const segments = parseAnsiSegments(raw)
     expect(segments.map((s) => s.text).join("")).toBe("cleaned text done")
   })
+
+  test("strips private-mode CSI sequences without leaking sequence parameter text", () => {
+    const raw = "Cursor \u001b[?25hshown, bracketed paste \u001b[?2004lenabled\u001b[?25l"
+    const segments = parseAnsiSegments(raw)
+    expect(segments).toEqual([
+      { text: "Cursor shown, bracketed paste enabled" },
+    ])
+
+    // Private mode mixed with styled text
+    const mixed = "\u001b[?25h\u001b[32mSuccess\u001b[39m\u001b[?2004l \u001b[38;2;1;1;4mThemeToken\u001b[39m"
+    const mixedSegments = parseAnsiSegments(mixed)
+    expect(mixedSegments).toEqual([
+      { text: "Success", fg: "var(--status-success)" },
+      { text: " " },
+      { text: "ThemeToken", fg: "var(--status-success)" },
+    ])
+  })
 })

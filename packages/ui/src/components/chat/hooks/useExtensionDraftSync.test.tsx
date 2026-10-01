@@ -14,14 +14,22 @@ const installMinimalDom = () => {
     Object.defineProperty(globalThis, name, { configurable: true, writable: true, value });
   };
   class ElementStub {}
+  const windowListeners = new Map<string, Set<() => void>>();
+  const documentListeners = new Map<string, Set<() => void>>();
+
   const documentStub: Record<string, unknown> = {
     nodeType: 9,
     defaultView: globalThis,
     activeElement: null,
     visibilityState: 'visible',
     hasFocus: () => true,
-    addEventListener: () => undefined,
-    removeEventListener: () => undefined,
+    addEventListener: (type: string, listener: () => void) => {
+      if (!documentListeners.has(type)) documentListeners.set(type, new Set());
+      documentListeners.get(type)!.add(listener);
+    },
+    removeEventListener: (type: string, listener: () => void) => {
+      documentListeners.get(type)?.delete(listener);
+    },
   };
   const rootElement = {
     nodeType: 1,
@@ -34,14 +42,33 @@ const installMinimalDom = () => {
   };
   documentStub.documentElement = rootElement;
   documentStub.body = rootElement;
+
+  const windowStub: Record<string, unknown> = {
+    ...globalThis,
+    addEventListener: (type: string, listener: () => void) => {
+      if (!windowListeners.has(type)) windowListeners.set(type, new Set());
+      windowListeners.get(type)!.add(listener);
+    },
+    removeEventListener: (type: string, listener: () => void) => {
+      windowListeners.get(type)?.delete(listener);
+    },
+  };
+
   setGlobal('document', documentStub);
-  setGlobal('window', globalThis);
+  setGlobal('window', windowStub);
   setGlobal('Element', ElementStub);
   setGlobal('HTMLElement', ElementStub);
   setGlobal('HTMLIFrameElement', ElementStub);
   setGlobal('IS_REACT_ACT_ENVIRONMENT', true);
   return {
     container: rootElement as unknown as Element,
+    documentStub,
+    dispatchWindowEvent: (type: string) => {
+      windowListeners.get(type)?.forEach((cb) => cb());
+    },
+    dispatchDocumentEvent: (type: string) => {
+      documentListeners.get(type)?.forEach((cb) => cb());
+    },
     restore: () => {
       for (const [name, descriptor] of descriptors) {
         if (descriptor) Object.defineProperty(globalThis, name, descriptor);
@@ -229,5 +256,100 @@ describe('useExtensionDraftSync', () => {
     const rev3 = draftCalls[2].revision;
     expect(rev2).toBeGreaterThan(rev1);
     expect(rev3).toBeGreaterThan(rev2);
+  });
+
+  test('retries sending draft when document becomes active via focus or visibilitychange', async () => {
+    // 1. Start with inactive/hidden document
+    dom.documentStub.visibilityState = 'hidden';
+    dom.documentStub.hasFocus = () => false;
+
+    // 2. Track session
+    emitStoreEvent({
+      protocolVersion: 1,
+      kind: 'event',
+      name: 'extension.editor.track',
+      sequence: 1,
+      sessionId: 'sess-focus',
+      directory: '/work',
+      payload: { enabled: true },
+    });
+
+    await act(async () => {
+      root.render(<Harness sessionId="sess-focus" directory="/work" text="initial hidden draft" debounceMs={20} />);
+    });
+    await flush(30);
+
+    // Initial send skipped because document is inactive
+    expect(draftCalls).toHaveLength(0);
+
+    // 3. Document becomes active and window receives focus
+    dom.documentStub.visibilityState = 'visible';
+    dom.documentStub.hasFocus = () => true;
+
+    await act(async () => {
+      dom.dispatchWindowEvent('focus');
+    });
+    await flush(10);
+
+    // Now draft is sent
+    expect(draftCalls).toHaveLength(1);
+    expect(draftCalls[0].sessionId).toBe('sess-focus');
+    expect(draftCalls[0].text).toBe('initial hidden draft');
+
+    // 4. Test visibilitychange event as well
+    dom.documentStub.visibilityState = 'hidden';
+    await act(async () => {
+      root.render(<Harness sessionId="sess-focus" directory="/work" text="updated while hidden" debounceMs={20} />);
+    });
+    await flush(40);
+    // Debounce timer elapsed but document was inactive
+    expect(draftCalls).toHaveLength(1);
+
+    dom.documentStub.visibilityState = 'visible';
+    await act(async () => {
+      dom.dispatchDocumentEvent('visibilitychange');
+    });
+    await flush(10);
+
+    expect(draftCalls).toHaveLength(2);
+    expect(draftCalls[1].text).toBe('updated while hidden');
+  });
+
+  test('clears lastSent on request failure so subsequent change or focus retries', async () => {
+    emitStoreEvent({
+      protocolVersion: 1,
+      kind: 'event',
+      name: 'extension.editor.track',
+      sequence: 1,
+      sessionId: 'sess-fail',
+      directory: '/work',
+      payload: { enabled: true },
+    });
+
+    let failRequest = true;
+    piClient.updateExtensionDraft = async (input) => {
+      if (failRequest) {
+        throw new Error('Network failure');
+      }
+      draftCalls.push(input);
+    };
+
+    // First attempt fails
+    await act(async () => {
+      root.render(<Harness sessionId="sess-fail" directory="/work" text="retryable draft" debounceMs={20} />);
+    });
+    await flush(30);
+    expect(draftCalls).toHaveLength(0);
+
+    // Server is healthy again; window focus should retry the same text
+    failRequest = false;
+    await act(async () => {
+      dom.dispatchWindowEvent('focus');
+    });
+    await flush(10);
+
+    expect(draftCalls).toHaveLength(1);
+    expect(draftCalls[0].sessionId).toBe('sess-fail');
+    expect(draftCalls[0].text).toBe('retryable draft');
   });
 });

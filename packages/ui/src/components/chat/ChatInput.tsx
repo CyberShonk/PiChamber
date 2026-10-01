@@ -338,25 +338,27 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     currentSessionId ? `session:${currentSessionId}` : "chrome",
   );
   const isSessionInUse = sessionLoadErrorCode === "SESSION_IN_USE";
-  const extensionEditorOps = usePiSessionSnapshot(
+  const extensionEditorSelection = usePiSessionSnapshot(
     (state) => {
       if (!currentSessionId) return undefined;
       const session = state.reducer.bySession.get(currentSessionId);
       if (!session) return undefined;
-      return (
+      const ops =
         session.extensionEditorOps ??
-        (session.extensionEditor ? [session.extensionEditor] : undefined)
-      );
+        (session.extensionEditor ? [session.extensionEditor] : undefined);
+      if (!ops || ops.length === 0) return undefined;
+      return { sessionId: currentSessionId, ops };
     },
     (previous, next) => {
       if (previous === next) return true;
       if (!previous || !next) return false;
-      if (previous.length !== next.length) return false;
-      return previous.every(
+      if (previous.sessionId !== next.sessionId) return false;
+      if (previous.ops.length !== next.ops.length) return false;
+      return previous.ops.every(
         (op, idx) =>
-          op.sequence === next[idx]?.sequence &&
-          op.text === next[idx]?.text &&
-          op.mode === next[idx]?.mode,
+          op.sequence === next.ops[idx]?.sequence &&
+          op.text === next.ops[idx]?.text &&
+          op.mode === next.ops[idx]?.mode,
       );
     },
     currentSessionId ? `session:${currentSessionId}` : "chrome",
@@ -365,10 +367,18 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     new Map<string, number>(),
   );
   React.useEffect(() => {
-    if (!currentSessionId || !extensionEditorOps || extensionEditorOps.length === 0) return;
+    if (
+      !currentSessionId ||
+      !extensionEditorSelection ||
+      extensionEditorSelection.sessionId !== currentSessionId
+    ) {
+      return;
+    }
+    const { ops } = extensionEditorSelection;
+    if (!ops || ops.length === 0) return;
     const previousSequence =
       appliedExtensionEditorBySessionRef.current.get(currentSessionId) ?? -1;
-    const pendingOps = extensionEditorOps.filter(
+    const pendingOps = ops.filter(
       (op) => op.sequence > previousSequence,
     );
     if (pendingOps.length === 0) return;
@@ -378,7 +388,28 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       if (op.sequence > maxSequence) {
         maxSequence = op.sequence;
       }
-      if (op.mode === "paste") {
+    }
+
+    let lastSetIndex = -1;
+    for (let i = pendingOps.length - 1; i >= 0; i--) {
+      if (pendingOps[i]?.mode !== 'paste') {
+        lastSetIndex = i;
+        break;
+      }
+    }
+
+    if (lastSetIndex !== -1) {
+      const lastSet = pendingOps[lastSetIndex]!;
+      const pasteSuffix = pendingOps
+        .slice(lastSetIndex + 1)
+        .map((op) => op.text)
+        .join('');
+      const finalText = lastSet.text + pasteSuffix;
+      confirmedMentionsRef.current.clear();
+      setMessage(finalText);
+      closeAutocomplete();
+    } else {
+      for (const op of pendingOps) {
         const editor = composerRef.current;
         if (editor) {
           editor.insertText(op.text);
@@ -386,12 +417,9 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         } else {
           setMessage((prev) => prev + op.text);
         }
-      } else {
-        confirmedMentionsRef.current.clear();
-        setMessage(op.text);
-        closeAutocomplete();
       }
     }
+
     appliedExtensionEditorBySessionRef.current.set(
       currentSessionId,
       maxSequence,
@@ -400,7 +428,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       currentSessionId,
       maxSequence,
     );
-  }, [closeAutocomplete, currentSessionId, extensionEditorOps]);
+  }, [closeAutocomplete, currentSessionId, extensionEditorSelection]);
   const fallbackDirectory = useDirectoryStore((s) => s.currentDirectory);
   const currentDirectory = useEffectiveDirectory() ?? fallbackDirectory;
   const currentSessionDirectoryForSync = useSessionUIStore(
