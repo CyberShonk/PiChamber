@@ -3,6 +3,8 @@ import * as React from 'react';
 import { usePiSessionSnapshot } from '@/sync/pi-session-context';
 import { useUIStore } from '@/stores/useUIStore';
 import { useDirectoryStore } from '@/stores/useDirectoryStore';
+import { useDeviceInfo } from '@/lib/device';
+import { ExtensionsSurface } from '@/components/chat/extension/ExtensionsSurface';
 import { AnsiText } from '@/components/chat/AnsiText';
 import { stripAnsi } from '@/lib/pi/ansi';
 import { Icon } from '@/components/icon/Icon';
@@ -26,6 +28,8 @@ interface ExtensionContentCounts {
 export const ExtensionStatusStrip: React.FC<{ sessionId?: string | null }> = ({ sessionId }) => {
   const selectedSessionId = usePiSessionSnapshot((state) => state.selectedSessionId);
   const activeSessionId = sessionId ?? selectedSessionId;
+  const { isMobile } = useDeviceInfo();
+  const [mobileExpanded, setMobileExpanded] = React.useState(false);
 
   const statuses = usePiSessionSnapshot(
     (state) => {
@@ -50,21 +54,33 @@ export const ExtensionStatusStrip: React.FC<{ sessionId?: string | null }> = ({ 
     `session:${activeSessionId ?? ''}`,
   );
 
+  React.useEffect(() => {
+    if (widgetsCount === 0) {
+      setMobileExpanded(false);
+    }
+  }, [widgetsCount]);
+
   // The rail chip counts Pi-native `ctx.ui.setWidget` content only.
   const contentSummary = widgetsCount === 0
     ? ''
     : widgetsCount === 1 ? '1 widget' : `${widgetsCount} widgets`;
 
   const handleOpenExtensions = React.useCallback(() => {
+    if (isMobile) {
+      // On mobile runtime, ContextPanel is not rendered so openContextSurface does nothing.
+      // Toggle inline ExtensionsSurface below the status pill instead.
+      setMobileExpanded((prev) => !prev);
+      return;
+    }
     const dir = sessionDirectory || useDirectoryStore.getState().currentDirectory || '';
-    // Toggles: closes the panel when the Extensions tab is already active and open.
+    // Desktop runtime: toggles ContextPanel Extensions surface.
     useUIStore.getState().openContextSurface(dir, 'extensions');
-  }, [sessionDirectory]);
+  }, [isMobile, sessionDirectory]);
 
   if (statuses.length === 0 && !contentSummary) return null;
 
   return (
-    <div className="chat-input-column">
+    <div className="chat-input-column flex flex-col gap-2">
       <div className="flex min-w-0 items-center justify-between gap-2 overflow-hidden rounded-full border border-border/40 bg-card px-3 py-1.5 shadow-sm transition-[opacity,transform] duration-150">
         <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
           <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-interactive-hover text-muted-foreground">
@@ -90,6 +106,7 @@ export const ExtensionStatusStrip: React.FC<{ sessionId?: string | null }> = ({ 
             size="xs"
             onClick={handleOpenExtensions}
             aria-label="Open extensions panel"
+            aria-expanded={isMobile ? mobileExpanded : undefined}
             className="shrink-0 gap-1 rounded-full border border-border/50 bg-muted/40 px-2 py-0.5 typography-micro font-medium text-muted-foreground hover:bg-interactive-hover hover:text-foreground active:bg-interactive-active"
           >
             <Icon name="layout-right" className="size-3" />
@@ -97,6 +114,11 @@ export const ExtensionStatusStrip: React.FC<{ sessionId?: string | null }> = ({ 
           </Button>
         )}
       </div>
+      {isMobile && mobileExpanded && (
+        <div className="max-h-60 overflow-y-auto rounded-xl border border-border/80 bg-card p-2 shadow-md">
+          <ExtensionsSurface sessionId={activeSessionId} className="h-auto" />
+        </div>
+      )}
     </div>
   );
 };

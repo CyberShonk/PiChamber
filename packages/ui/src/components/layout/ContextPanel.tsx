@@ -27,6 +27,7 @@ import { getGitRailPresentation } from '@/lib/surfaces/registry';
 import { useIsGitRepo } from '@/stores/useGitStore';
 import { ContextPanelContent } from './ContextSidebarTab';
 import { ExtensionsSurface } from '@/components/chat/extension/ExtensionsSurface';
+import { useSessionUIStore } from '@/sync/session-ui-store';
 import { Icon } from "@/components/icon/Icon";
 import { CONTEXT_SURFACE_DEFAULT_WIDTH_FRACTION } from '@/lib/surfaces/registry';
 import { isTerminalEventTarget } from '@/lib/terminalFocus';
@@ -202,6 +203,7 @@ export const ContextPanel: React.FC = () => {
   const openContextPreview = useUIStore((state) => state.openContextPreview);
   const contextEditorTreeVisible = useUIStore((state) => state.contextEditorTreeVisible);
   const toggleContextEditorTree = useUIStore((state) => state.toggleContextEditorTree);
+  const currentSessionId = useSessionUIStore((s) => s.currentSessionId);
 
   const tabs = React.useMemo(() => panelState?.tabs ?? [], [panelState?.tabs]);
   const activeTab = tabs.find((tab) => tab.id === panelState?.activeTabId) ?? tabs[tabs.length - 1] ?? null;
@@ -475,7 +477,7 @@ export const ContextPanel: React.FC = () => {
   const activeContent = activeTab?.mode === 'context'
         ? <ContextPanelContent />
         : activeTab?.mode === 'extensions'
-            ? <ExtensionsSurface />
+            ? <ExtensionsSurface sessionId={currentSessionId} />
             : activeTab?.mode === 'git'
                 ? <React.Suspense fallback={null}><GitView isActive={isOpen} gitHeaderSlot={activeTab?.mode === 'git' ? gitHeaderSlot : null} /></React.Suspense>
             : activeTab?.mode === 'pull-requests'
