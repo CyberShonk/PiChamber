@@ -59,6 +59,10 @@ const PrBadgeButton: React.FC<{
       role="button"
       tabIndex={0}
       onClick={openPr}
+      onDoubleClick={(event) => {
+        event.stopPropagation();
+        event.preventDefault();
+      }}
       onKeyDown={(event) => {
         if (event.key === 'Enter' || event.key === ' ') {
           openPr(event);
