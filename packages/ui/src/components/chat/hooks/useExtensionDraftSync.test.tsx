@@ -352,4 +352,39 @@ describe('useExtensionDraftSync', () => {
     expect(draftCalls[0].sessionId).toBe('sess-fail');
     expect(draftCalls[0].text).toBe('retryable draft');
   });
+  test('resends when a session re-tracked in the background becomes current again', async () => {
+    const track = (sequence: number, enabled: boolean) => emitStoreEvent({
+      protocolVersion: 1,
+      kind: 'event',
+      name: 'extension.editor.track',
+      sequence,
+      sessionId: 'sess-a',
+      directory: '/work',
+      payload: { enabled },
+    });
+
+    await act(async () => {
+      root.render(<Harness sessionId="sess-a" directory="/work" text="same draft" debounceMs={20} />);
+    });
+    await act(async () => { track(1, true); });
+    await flush(10);
+    expect(draftCalls).toHaveLength(1);
+
+    await act(async () => {
+      root.render(<Harness sessionId="sess-b" directory="/work" text="same draft" debounceMs={20} />);
+    });
+    // Tracking resets while sess-a is in the background (daemon mirror cleared).
+    await act(async () => { track(2, false); });
+    await act(async () => { track(3, true); });
+    await flush(10);
+    expect(draftCalls).toHaveLength(1);
+
+    await act(async () => {
+      root.render(<Harness sessionId="sess-a" directory="/work" text="same draft" debounceMs={20} />);
+    });
+    await flush(10);
+    expect(draftCalls).toHaveLength(2);
+    expect(draftCalls[1].sessionId).toBe('sess-a');
+    expect(draftCalls[1].text).toBe('same draft');
+  });
 });

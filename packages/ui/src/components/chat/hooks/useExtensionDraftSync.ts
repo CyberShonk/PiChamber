@@ -54,6 +54,19 @@ export function useExtensionDraftSync({
   const timerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const trackedSessionsRef = React.useRef<Set<string>>(new Set());
 
+  // Forget per-session sync state when a session stops being current, so it
+  // gets a fresh immediate send when it becomes current again (tracking may
+  // have been reset in the background, leaving the daemon mirror empty).
+  React.useEffect(() => {
+    if (!sessionId) return;
+    const trackedSessions = trackedSessionsRef.current;
+    const lastSentTextBySession = lastSentTextBySessionRef.current;
+    return () => {
+      trackedSessions.delete(sessionId);
+      lastSentTextBySession.delete(sessionId);
+    };
+  }, [sessionId]);
+
   const sendDraft = React.useCallback((targetSessionId: string, textToSend: string) => {
     if (!isDocumentActive()) return;
     lastSentTextBySessionRef.current.set(targetSessionId, textToSend);

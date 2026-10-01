@@ -64,9 +64,14 @@ const PrBadgeButton: React.FC<{
         event.preventDefault();
       }}
       onKeyDown={(event) => {
-        if (event.key === 'Enter' || event.key === ' ') {
-          openPr(event);
+        if (event.key !== 'Enter' && event.key !== ' ') return;
+        if (event.repeat) {
+          // A held key must not reopen the PR surface on every repeat.
+          event.stopPropagation();
+          event.preventDefault();
+          return;
         }
+        openPr(event);
       }}
       className="inline-flex shrink-0 cursor-pointer items-center gap-1 rounded hover:bg-interactive-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
       style={prIconColor ? { color: prIconColor } : undefined}

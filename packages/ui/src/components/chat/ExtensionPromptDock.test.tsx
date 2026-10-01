@@ -58,6 +58,13 @@ describe('ExtensionPromptDock', () => {
     expect(markup).toContain('Fast');
     expect(markup).toContain('Balanced');
     expect(markup).toContain('Deep');
+    expect(markup).toContain('role="dialog"');
+    const describedBy = markup.match(/aria-describedby="([^"]+)"/)?.[1];
+    expect(describedBy).toBeTruthy();
+    expect(markup).toContain(`id="${describedBy}"`);
+    // Roving tabindex: only the highlighted option is in the tab order.
+    expect(markup.match(/role="option"[^>]*tabindex="0"/g)?.length).toBe(1);
+    expect(markup.match(/role="option"[^>]*tabindex="-1"/g)?.length).toBe(2);
   });
 
   test('renders form dialog with number min and max constraints', () => {

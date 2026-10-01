@@ -98,6 +98,7 @@ const isNonEmptyEditableElement = (el: Element | null): boolean => {
 interface SelectBodyProps {
   request: PiExtensionDialogPayload;
   onRespond: (answer: DialogAnswer) => void;
+  messageId: string;
   highlightedIndex: number;
   setHighlightedIndex: React.Dispatch<React.SetStateAction<number>>;
 }
@@ -105,6 +106,7 @@ interface SelectBodyProps {
 const SelectBody: React.FC<SelectBodyProps> = ({
   request,
   onRespond,
+  messageId,
   highlightedIndex,
   setHighlightedIndex,
 }) => {
@@ -113,7 +115,7 @@ const SelectBody: React.FC<SelectBodyProps> = ({
   return (
     <div>
       {request.message && (
-        <p className="mb-2 text-sm text-muted-foreground"><AnsiText text={request.message} /></p>
+        <p id={messageId} className="mb-2 text-sm text-muted-foreground"><AnsiText text={request.message} /></p>
       )}
       <div
         className="flex flex-col gap-1 max-h-60 overflow-y-auto"
@@ -130,6 +132,7 @@ const SelectBody: React.FC<SelectBodyProps> = ({
               type="button"
               role="option"
               aria-selected={isHighlighted}
+              tabIndex={isHighlighted ? 0 : -1}
               onMouseEnter={() => setHighlightedIndex(index)}
               onFocus={() => setHighlightedIndex(index)}
               onClick={() => onRespond({ value: option })}
@@ -162,13 +165,14 @@ const SelectBody: React.FC<SelectBodyProps> = ({
 interface ConfirmBodyProps {
   request: PiExtensionDialogPayload;
   onRespond: (answer: DialogAnswer) => void;
+  messageId: string;
 }
 
-const ConfirmBody: React.FC<ConfirmBodyProps> = ({ request, onRespond }) => {
+const ConfirmBody: React.FC<ConfirmBodyProps> = ({ request, onRespond, messageId }) => {
   return (
     <div>
       {request.message && (
-        <p className="mb-3 text-sm text-muted-foreground"><AnsiText text={request.message} /></p>
+        <p id={messageId} className="mb-3 text-sm text-muted-foreground"><AnsiText text={request.message} /></p>
       )}
       <div className="flex items-center justify-end gap-2">
         <Button
@@ -195,9 +199,10 @@ const ConfirmBody: React.FC<ConfirmBodyProps> = ({ request, onRespond }) => {
 interface InputEditorBodyProps {
   request: PiExtensionDialogPayload;
   onRespond: (answer: DialogAnswer) => void;
+  messageId: string;
 }
 
-const InputEditorBody: React.FC<InputEditorBodyProps> = ({ request, onRespond }) => {
+const InputEditorBody: React.FC<InputEditorBodyProps> = ({ request, onRespond, messageId }) => {
   const isEditor = request.method === 'editor';
   const [value, setValue] = React.useState(isEditor ? (request.prefill ?? '') : '');
 
@@ -208,7 +213,7 @@ const InputEditorBody: React.FC<InputEditorBodyProps> = ({ request, onRespond })
   return (
     <div>
       {request.message && (
-        <p className="mb-2 text-sm text-muted-foreground"><AnsiText text={request.message} /></p>
+        <p id={messageId} className="mb-2 text-sm text-muted-foreground"><AnsiText text={request.message} /></p>
       )}
       {isEditor ? (
         <textarea
@@ -269,9 +274,10 @@ const InputEditorBody: React.FC<InputEditorBodyProps> = ({ request, onRespond })
 interface FormBodyProps {
   request: PiExtensionDialogPayload;
   onRespond: (answer: DialogAnswer) => void;
+  messageId: string;
 }
 
-const FormBody: React.FC<FormBodyProps> = ({ request, onRespond }) => {
+const FormBody: React.FC<FormBodyProps> = ({ request, onRespond, messageId }) => {
   const initial: Record<string, string> = {};
   for (const field of request.fields ?? []) {
     if (field.type === 'checkbox') initial[field.id] = field.initial === 'true' ? 'true' : 'false';
@@ -309,7 +315,7 @@ const FormBody: React.FC<FormBodyProps> = ({ request, onRespond }) => {
       }}
     >
       {request.message && (
-        <p className="mb-2 text-sm text-muted-foreground"><AnsiText text={request.message} /></p>
+        <p id={messageId} className="mb-2 text-sm text-muted-foreground"><AnsiText text={request.message} /></p>
       )}
       <div className="flex max-h-60 flex-col gap-2.5 overflow-y-auto">
         {(request.fields ?? []).map((field) => {
@@ -469,7 +475,11 @@ export const ExtensionPromptDock: React.FC<ExtensionPromptDockProps> = ({ sessio
   const respondingRef = React.useRef(false);
 
   const dockRef = React.useRef<HTMLDivElement | null>(null);
+  const messageId = React.useId();
 
+  // Keyed on request identity, not the target object: a queue-length change
+  // for the same request must not clear the in-flight guard or highlight.
+  const targetKey = target ? `${target.sessionId}\u0000${target.request.requestId}` : null;
   React.useEffect(() => {
     respondingRef.current = false;
     setResponding(false);
@@ -478,14 +488,14 @@ export const ExtensionPromptDock: React.FC<ExtensionPromptDockProps> = ({ sessio
 
     // Autofocus dock on appearance if not already focused inside and not typing in an editable element
     if (
-      target &&
+      targetKey !== null &&
       dockRef.current &&
       !dockRef.current.contains(document.activeElement) &&
       !isNonEmptyEditableElement(document.activeElement)
     ) {
       dockRef.current.focus();
     }
-  }, [target]);
+  }, [targetKey]);
 
   const remainingSeconds = useCountdown(target?.request.timeoutMs, target?.request.requestId);
 
@@ -581,8 +591,9 @@ export const ExtensionPromptDock: React.FC<ExtensionPromptDockProps> = ({ sessio
     <div className="chat-input-column mb-2">
       <div
         ref={dockRef}
-        role="region"
+        role="dialog"
         aria-label={stripAnsi(target.request.title)}
+        aria-describedby={target.request.message ? messageId : undefined}
         tabIndex={-1}
         onKeyDown={handleKeyDown}
         className="overflow-hidden rounded-xl border border-border/80 bg-card p-3 shadow-md transition-[opacity,transform] duration-150 outline-none"
@@ -631,18 +642,19 @@ export const ExtensionPromptDock: React.FC<ExtensionPromptDockProps> = ({ sessio
             <SelectBody
               request={target.request}
               onRespond={submit}
+              messageId={messageId}
               highlightedIndex={highlightedIndex}
               setHighlightedIndex={setHighlightedIndex}
             />
           )}
           {target.request.method === 'confirm' && (
-            <ConfirmBody request={target.request} onRespond={submit} />
+            <ConfirmBody request={target.request} onRespond={submit} messageId={messageId} />
           )}
           {(target.request.method === 'input' || target.request.method === 'editor') && (
-            <InputEditorBody request={target.request} onRespond={submit} />
+            <InputEditorBody request={target.request} onRespond={submit} messageId={messageId} />
           )}
           {target.request.method === 'form' && (
-            <FormBody request={target.request} onRespond={submit} />
+            <FormBody request={target.request} onRespond={submit} messageId={messageId} />
           )}
         </div>
 
