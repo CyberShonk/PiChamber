@@ -457,7 +457,7 @@ export const ContextPanelRail: React.FC = () => {
   const extensionWidgets = usePiSessionSnapshot(
     (state) => (currentSessionId ? state.reducer.bySession.get(currentSessionId)?.extensionWidgets : undefined),
     (a, b) => a === b,
-    currentSessionId ? `session:${currentSessionId}` : '*',
+    currentSessionId ? `session:${currentSessionId}` : 'chrome',
   );
   const extensionSignature = React.useMemo(() => {
     if (!extensionWidgets?.size) return '';

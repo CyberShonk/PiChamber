@@ -27,7 +27,7 @@ export const ExtensionsSurface: React.FC<ExtensionsSurfaceProps> = ({ sessionId,
   const widgetMap = usePiSessionSnapshot(
     (state) => (activeSessionId ? state.reducer.bySession.get(activeSessionId)?.extensionWidgets : undefined),
     (a, b) => a === b,
-    activeSessionId ? `session:${activeSessionId}` : '*',
+    activeSessionId ? `session:${activeSessionId}` : 'chrome',
   );
   const widgets = React.useMemo(() => [...(widgetMap?.entries() ?? [])], [widgetMap]);
 
