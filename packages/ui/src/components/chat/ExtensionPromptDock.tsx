@@ -460,6 +460,7 @@ export const ExtensionPromptDock: React.FC<ExtensionPromptDockProps> = ({ sessio
       a?.request.requestId === b?.request.requestId &&
       a?.queueLength === b?.queueLength,
     'dialogs',
+    sessionId ?? '',
   );
 
   const [responding, setResponding] = React.useState(false);

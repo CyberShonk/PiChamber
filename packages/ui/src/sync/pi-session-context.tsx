@@ -102,27 +102,37 @@ export function usePiSessionSnapshot<T>(
   selector: (state: PiSessionStoreState) => T,
   isEqual?: (a: T, b: T) => boolean,
   topic?: PiSessionTopic,
+  cacheKey?: string,
 ): T;
 export function usePiSessionSnapshot<T>(
   selector?: (state: PiSessionStoreState) => T,
   isEqual?: (a: T, b: T) => boolean,
   topic: PiSessionTopic = '*',
+  cacheKey = '',
 ): T {
   const store = usePiSessionStore();
   const selectorRef = useRef(selector);
   selectorRef.current = selector;
   const isEqualRef = useRef(isEqual);
   isEqualRef.current = isEqual;
-  const cacheRef = useRef<ReturnType<typeof createSnapshotSelectorCache<PiSessionStoreState, T>> | null>(null);
-  cacheRef.current ??= createSnapshotSelectorCache<PiSessionStoreState, T>();
+  const cacheRef = useRef<{
+    key: string;
+    select: ReturnType<typeof createSnapshotSelectorCache<PiSessionStoreState, T>>;
+  } | null>(null);
 
-  // The cache keys on store snapshot identity, not selector identity. Entity
-  // ids must be read outside this hook (subscribe to the map, then `.get(id)`).
+  // The cache keys on store snapshot identity, not selector identity, so it is
+  // rebuilt whenever the topic or `cacheKey` changes. A selector that closes
+  // over an id must carry that id in its topic (`session:${id}`) or `cacheKey`;
+  // otherwise switching ids without a store commit returns the previous entity.
+  const fullCacheKey = `${topic}\u0000${cacheKey}`;
+  if (cacheRef.current?.key !== fullCacheKey) {
+    cacheRef.current = { key: fullCacheKey, select: createSnapshotSelectorCache<PiSessionStoreState, T>() };
+  }
 
   const getSelection = useCallback(() => {
     const select = (selectorRef.current ?? identitySnapshot) as (state: PiSessionStoreState) => T;
     const equal = typeof isEqualRef.current === 'function' ? isEqualRef.current : Object.is;
-    return cacheRef.current!(store.getState(), select, equal);
+    return cacheRef.current!.select(store.getState(), select, equal);
   }, [store]);
 
   // `useSyncExternalStore` requires a stable `subscribe` reference per

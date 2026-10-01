@@ -196,7 +196,7 @@ That leaves the case with no observable answer: a turn that ended, and another t
 
 Permission handling is server-owned. Pi follows its normal no-permission-popup default. The former permission/question sync hooks, dismissal helpers, and optimistic bridge were removed without replacement; blocking user prompts remain served by Pi extension dialogs. A disconnected client does not invent a reply or claim that a request was resolved.
 
-`usePiSessionSnapshot` caches by store snapshot identity. Selectors that close over a session or message id will keep returning the previous entity when the store has not emitted. Subscribe to the collection (`reducer.bySession`, `sessions`, `hydratedSessionIds`) and look the id up in the hook body.
+`usePiSessionSnapshot` caches by store snapshot identity and rebuilds that cache when its `topic` or optional `cacheKey` argument changes. A selector that closes over a session or message id must carry the id in its topic (`session:${id}`) or `cacheKey`; otherwise switching ids without a store emit keeps returning the previous entity. Alternatively subscribe to the collection (`reducer.bySession`, `sessions`, `hydratedSessionIds`) and look the id up in the hook body.
 
 ## Session message loading
 
