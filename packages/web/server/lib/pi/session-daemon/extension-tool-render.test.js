@@ -454,6 +454,38 @@ describe('extension-tool-render', () => {
     });
   });
 
+  describe('getLiveRender', () => {
+    it('tracks the latest published render until the tool ends or the session clears', () => {
+      let currentTime = 1000;
+      const renderer = createExtensionToolRenderer({
+        theme: createExtensionTheme(),
+        schedule: () => 1,
+        cancel: () => {},
+        now: () => currentTime,
+      });
+      const definition = {
+        renderCall: () => ({ render: () => ['call'] }),
+        renderResult: (res, { expanded }) => ({ render: () => [`${res.step}:${expanded}`] }),
+      };
+      const base = { sessionId: 's1', toolCallId: 't1', definition, args: {}, cwd: '/' };
+
+      expect(renderer.getLiveRender('s1', 't1')).toBeUndefined();
+      renderer.onStart(base);
+      expect(renderer.getLiveRender('s1', 't1')).toEqual({ call: ['call'] });
+
+      currentTime = 2000;
+      renderer.onUpdate({ ...base, partialResult: { step: 1 }, publish: () => {} });
+      expect(renderer.getLiveRender('s1', 't1')).toEqual({ call: ['call'], result: ['1:false'], resultExpanded: ['1:true'] });
+
+      renderer.onEnd({ ...base, result: { step: 2 }, isError: false });
+      expect(renderer.getLiveRender('s1', 't1')).toBeUndefined();
+
+      renderer.onStart({ ...base, toolCallId: 't2' });
+      renderer.clearSession('s1');
+      expect(renderer.getLiveRender('s1', 't2')).toBeUndefined();
+    });
+  });
+
   describe('renderSettled and memoization', () => {
     it('memoizes settled render by result object via WeakMap', () => {
       const renderer = createExtensionToolRenderer({ theme: createExtensionTheme() });

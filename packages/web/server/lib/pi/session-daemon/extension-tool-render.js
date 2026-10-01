@@ -123,7 +123,9 @@ export function createExtensionToolRenderer({
     if (entry.callLines && entry.callLines.length > 0) render.call = entry.callLines;
     if (resultLines && resultLines.length > 0) render.result = resultLines;
     if (resultExpandedLines && resultExpandedLines.length > 0) render.resultExpanded = resultExpandedLines;
-    return Object.keys(render).length > 0 ? render : undefined;
+    if (Object.keys(render).length === 0) return undefined;
+    entry.liveRender = render;
+    return render;
   };
 
   const resolve = (session, toolName) => {
@@ -171,10 +173,15 @@ export function createExtensionToolRenderer({
       entry.callLines = renderCallSlot(entry, definition, args, cwd);
     }
     if (entry.callLines && entry.callLines.length > 0) {
-      return { call: entry.callLines };
+      entry.liveRender = { call: entry.callLines };
+      return entry.liveRender;
     }
     return undefined;
   };
+
+  // Latest render published for a running tool, so a client that opens the
+  // session mid-run sees the working state without waiting for the next update.
+  const getLiveRender = (sessionId, toolCallId) => entries.get(`${sessionId}\u0000${toolCallId}`)?.liveRender;
 
   const onUpdate = ({ sessionId, toolCallId, definition, args, cwd, partialResult, publish }) => {
     const key = `${sessionId}\u0000${toolCallId}`;
@@ -348,6 +355,7 @@ export function createExtensionToolRenderer({
     onStart,
     onUpdate,
     onEnd,
+    getLiveRender,
     renderSettled,
     clearSession,
     dispose,

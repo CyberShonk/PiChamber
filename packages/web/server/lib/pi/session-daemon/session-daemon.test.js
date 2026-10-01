@@ -2274,6 +2274,34 @@ describe('Pi session daemon spike', () => {
       resultExpanded: ['custom_result:part-1:true'],
     });
 
+    // A client opening the session mid-run receives the latest live render.
+    session.isStreaming = true;
+    session.entries = [
+      { type: 'message', id: 'user-1', timestamp: '2026-01-01T00:00:00.000Z', message: { role: 'user', content: 'run tool' } },
+      {
+        type: 'message',
+        id: 'assistant-1',
+        timestamp: '2026-01-01T00:00:01.000Z',
+        message: {
+          role: 'assistant',
+          provider: 'test',
+          model: 'model',
+          content: [{ type: 'toolCall', id: 'call-1', name: 'custom_tool', arguments: { target: 'alpha' } }],
+        },
+      },
+    ];
+    const midRun = await client.request('sessions.open', { sessionId: 'pi-session-ext-tool', directory: root });
+    const runningPart = midRun.result.messages
+      .flatMap((entry) => entry.parts)
+      .find((part) => part.type === 'tool');
+    expect(runningPart.state).toBe('running');
+    expect(runningPart.render).toEqual({
+      call: ['custom_call:alpha'],
+      result: ['custom_result:part-1:false'],
+      resultExpanded: ['custom_result:part-1:true'],
+    });
+    session.isStreaming = false;
+
     session.emit({
       type: 'tool_execution_end',
       toolCallId: 'call-1',

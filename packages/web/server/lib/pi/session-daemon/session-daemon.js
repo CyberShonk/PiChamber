@@ -1647,7 +1647,10 @@ export function createSessionDaemon({
           const interrupted = !running && !result;
           const metadata = mergeToolPresentationMetadata(result?.metadata, activeRuntime, targetDir, part.name, part.arguments);
           let resolveRender;
-          if (!running) {
+          if (running) {
+            const liveRender = extensionToolRenderer.getLiveRender?.(session.sessionId, part.id);
+            if (liveRender) resolveRender = () => liveRender;
+          } else {
             const definition = extensionToolRenderer.resolve(session, part.name);
             if (definition && result?.message) {
               const toolCwd = activeRuntime?.cwd || targetDir;
