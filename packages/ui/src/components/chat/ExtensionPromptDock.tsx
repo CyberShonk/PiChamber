@@ -10,6 +10,7 @@ import { AnsiText } from '@/components/chat/AnsiText';
 import { Button } from '@/components/ui/button';
 import { Icon } from '@/components/icon/Icon';
 import { cn } from '@/lib/utils';
+import { resolveSelectKeyAction } from './extensionPromptKeys';
 
 /**
  * Blocking pi extension dialogs (ctx.ui.select / confirm / input / editor / form).
@@ -545,43 +546,31 @@ export const ExtensionPromptDock: React.FC<ExtensionPromptDockProps> = ({ sessio
 
     if (target.request.method === 'select') {
       const options = target.request.options ?? [];
-      if (options.length === 0) return;
+      const action = resolveSelectKeyAction(event.key, highlightedIndex, options.length);
+      if (!action) return;
 
-      if (event.key === 'ArrowDown') {
+      const eventTarget = event.target instanceof HTMLElement ? event.target : null;
+      const isOptionTarget = eventTarget?.getAttribute('role') === 'option';
+
+      if (action.kind === 'highlight') {
         event.preventDefault();
-        setHighlightedIndex((prev) => (prev + 1) % options.length);
-        return;
-      }
-      if (event.key === 'ArrowUp') {
-        event.preventDefault();
-        setHighlightedIndex((prev) => (prev - 1 + options.length) % options.length);
-        return;
-      }
-      if (event.key === 'Home') {
-        event.preventDefault();
-        setHighlightedIndex(0);
-        return;
-      }
-      if (event.key === 'End') {
-        event.preventDefault();
-        setHighlightedIndex(options.length - 1);
-        return;
-      }
-      if (event.key === 'Enter') {
-        event.preventDefault();
-        const selected = options[highlightedIndex];
-        if (selected !== undefined) {
-          submit({ value: selected });
+        setHighlightedIndex(action.index);
+        // Once focus is on an option, it follows the highlight so native
+        // activation can never hit a different option than the one shown.
+        if (isOptionTarget) {
+          dockRef.current?.querySelectorAll<HTMLElement>('[role="option"]')[action.index]?.focus();
         }
         return;
       }
-      if (event.key >= '1' && event.key <= '9') {
-        const num = parseInt(event.key, 10) - 1;
-        if (num < options.length && options[num] !== undefined) {
-          event.preventDefault();
-          submit({ value: options[num] });
-        }
-      }
+
+      // Enter/Space on another control (e.g. Dismiss) keep their native action.
+      const isActivationKey = event.key === 'Enter' || event.key === ' ';
+      if (isActivationKey && !isOptionTarget && event.target !== event.currentTarget) return;
+
+      const selected = options[action.index];
+      if (selected === undefined) return;
+      event.preventDefault();
+      submit({ value: selected });
     }
   };
 

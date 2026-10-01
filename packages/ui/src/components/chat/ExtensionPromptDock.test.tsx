@@ -4,6 +4,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { getPiSessionStore } from '@/apps/pi-session-store';
 import { createReducerPartMap, type PiReducerSessionState } from '@/lib/pi/reducers/reducerTypes';
 import { ExtensionPromptDock } from './ExtensionPromptDock';
+import { resolveSelectKeyAction } from './extensionPromptKeys';
 
 const createTestSession = (sessionId: string, directory = '/repo'): PiReducerSessionState => ({
   sessionId,
@@ -117,5 +118,32 @@ describe('ExtensionPromptDock', () => {
     expect(markup).toContain('Are you sure you want to proceed?');
     expect(markup).toContain('Yes (Y)');
     expect(markup).toContain('No (N)');
+  });
+});
+
+describe('resolveSelectKeyAction', () => {
+  test('navigation keys move the highlight and wrap', () => {
+    expect(resolveSelectKeyAction('ArrowDown', 0, 3)).toEqual({ kind: 'highlight', index: 1 });
+    expect(resolveSelectKeyAction('ArrowDown', 2, 3)).toEqual({ kind: 'highlight', index: 0 });
+    expect(resolveSelectKeyAction('ArrowUp', 0, 3)).toEqual({ kind: 'highlight', index: 2 });
+    expect(resolveSelectKeyAction('Home', 2, 3)).toEqual({ kind: 'highlight', index: 0 });
+    expect(resolveSelectKeyAction('End', 0, 3)).toEqual({ kind: 'highlight', index: 2 });
+  });
+
+  test('Space submits the highlighted option, same as Enter', () => {
+    expect(resolveSelectKeyAction('Enter', 1, 3)).toEqual({ kind: 'submit', index: 1 });
+    expect(resolveSelectKeyAction(' ', 1, 3)).toEqual({ kind: 'submit', index: 1 });
+  });
+
+  test('quick keys submit only options that exist', () => {
+    expect(resolveSelectKeyAction('2', 0, 3)).toEqual({ kind: 'submit', index: 1 });
+    expect(resolveSelectKeyAction('4', 0, 3)).toBeNull();
+    expect(resolveSelectKeyAction('0', 0, 3)).toBeNull();
+  });
+
+  test('ignores unrelated keys and empty option lists', () => {
+    expect(resolveSelectKeyAction('a', 0, 3)).toBeNull();
+    expect(resolveSelectKeyAction('F1', 0, 3)).toBeNull();
+    expect(resolveSelectKeyAction('Enter', 0, 0)).toBeNull();
   });
 });
