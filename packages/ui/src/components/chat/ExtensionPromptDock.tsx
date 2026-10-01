@@ -64,17 +64,35 @@ const useCountdown = (timeoutMs?: number, requestId?: string): number | null => 
       return;
     }
     const startedAt = Date.now();
+    let interval: ReturnType<typeof setInterval> | null = null;
     const update = () => {
       const elapsed = Date.now() - startedAt;
       const remaining = Math.max(0, Math.ceil((timeoutMs - elapsed) / 1000));
       setRemainingSeconds(remaining);
+      if (remaining <= 0 && interval !== null) {
+        clearInterval(interval);
+        interval = null;
+      }
     };
     update();
-    const interval = setInterval(update, 1000);
-    return () => clearInterval(interval);
+    interval = setInterval(update, 1000);
+    return () => {
+      if (interval !== null) clearInterval(interval);
+    };
   }, [timeoutMs, requestId]);
 
   return remainingSeconds;
+};
+
+const isNonEmptyEditableElement = (el: Element | null): boolean => {
+  if (!el) return false;
+  if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
+    return el.value.trim().length > 0;
+  }
+  if ((el as HTMLElement).isContentEditable) {
+    return (el.textContent ?? '').trim().length > 0;
+  }
+  return false;
 };
 
 interface SelectBodyProps {
@@ -97,7 +115,11 @@ const SelectBody: React.FC<SelectBodyProps> = ({
       {request.message && (
         <p className="mb-2 text-sm text-muted-foreground"><AnsiText text={request.message} /></p>
       )}
-      <div className="flex flex-col gap-1 max-h-60 overflow-y-auto" role="listbox">
+      <div
+        className="flex flex-col gap-1 max-h-60 overflow-y-auto"
+        role="listbox"
+        aria-label={stripAnsi(request.title)}
+      >
         {options.map((option, index) => {
           const isHighlighted = index === highlightedIndex;
           const quickKey = index < 9 ? index + 1 : undefined;
@@ -109,6 +131,7 @@ const SelectBody: React.FC<SelectBodyProps> = ({
               role="option"
               aria-selected={isHighlighted}
               onMouseEnter={() => setHighlightedIndex(index)}
+              onFocus={() => setHighlightedIndex(index)}
               onClick={() => onRespond({ value: option })}
               className={cn(
                 'flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-left text-sm transition-colors outline-none',
@@ -263,14 +286,25 @@ const FormBody: React.FC<FormBodyProps> = ({ request, onRespond }) => {
   const missingRequired = (request.fields ?? []).filter(
     (field) => field.required && (values[field.id] ?? '').length === 0,
   );
-  const blocked = touchedSubmit && missingRequired.length > 0;
+  const invalidNumbers = (request.fields ?? []).filter((field) => {
+    if (field.type !== 'number') return false;
+    const val = values[field.id] ?? '';
+    if (val.length === 0) return false;
+    const num = Number(val);
+    if (!Number.isFinite(num)) return true;
+    if ('min' in field && typeof field.min === 'number' && num < field.min) return true;
+    if ('max' in field && typeof field.max === 'number' && num > field.max) return true;
+    return false;
+  });
+
+  const blocked = touchedSubmit && (missingRequired.length > 0 || invalidNumbers.length > 0);
 
   return (
     <form
       onSubmit={(event) => {
         event.preventDefault();
         setTouchedSubmit(true);
-        if (missingRequired.length > 0) return;
+        if (missingRequired.length > 0 || invalidNumbers.length > 0) return;
         onRespond({ values: { ...values } });
       }}
     >
@@ -279,7 +313,9 @@ const FormBody: React.FC<FormBodyProps> = ({ request, onRespond }) => {
       )}
       <div className="flex max-h-60 flex-col gap-2.5 overflow-y-auto">
         {(request.fields ?? []).map((field) => {
-          const invalid = blocked && field.required && (values[field.id] ?? '').length === 0;
+          const isMissing = blocked && field.required && (values[field.id] ?? '').length === 0;
+          const isInvalidNumber = blocked && invalidNumbers.some((f) => f.id === field.id);
+          const invalid = isMissing || isInvalidNumber;
           const value = values[field.id] ?? '';
           const setValue = (next: string) =>
             setValues((previous) => ({ ...previous, [field.id]: next }));
@@ -355,7 +391,11 @@ const FormBody: React.FC<FormBodyProps> = ({ request, onRespond }) => {
       </div>
       {blocked && (
         <p role="alert" className="mt-2 text-xs text-status-error">
-          Fill in all required fields before submitting.
+          {missingRequired.length > 0 && invalidNumbers.length > 0
+            ? 'Fill in all required fields and enter valid numbers within the allowed range before submitting.'
+            : invalidNumbers.length > 0
+              ? 'Enter valid numbers within the allowed range before submitting.'
+              : 'Fill in all required fields before submitting.'}
         </p>
       )}
       <div className="mt-2.5 flex justify-end gap-2">
@@ -425,16 +465,23 @@ export const ExtensionPromptDock: React.FC<ExtensionPromptDockProps> = ({ sessio
   const [responding, setResponding] = React.useState(false);
   const [responseError, setResponseError] = React.useState(false);
   const [highlightedIndex, setHighlightedIndex] = React.useState(0);
+  const respondingRef = React.useRef(false);
 
   const dockRef = React.useRef<HTMLDivElement | null>(null);
 
   React.useEffect(() => {
+    respondingRef.current = false;
     setResponding(false);
     setResponseError(false);
     setHighlightedIndex(0);
 
-    // Autofocus dock on appearance if not already focused inside
-    if (target && dockRef.current && !dockRef.current.contains(document.activeElement)) {
+    // Autofocus dock on appearance if not already focused inside and not typing in an editable element
+    if (
+      target &&
+      dockRef.current &&
+      !dockRef.current.contains(document.activeElement) &&
+      !isNonEmptyEditableElement(document.activeElement)
+    ) {
       dockRef.current.focus();
     }
   }, [target]);
@@ -443,7 +490,8 @@ export const ExtensionPromptDock: React.FC<ExtensionPromptDockProps> = ({ sessio
 
   const submit = React.useCallback(
     (answer: DialogAnswer) => {
-      if (!target || responding) return;
+      if (!target || responding || respondingRef.current) return;
+      respondingRef.current = true;
       setResponding(true);
       setResponseError(false);
       void respond(target.sessionId, target.request, answer)
@@ -454,6 +502,7 @@ export const ExtensionPromptDock: React.FC<ExtensionPromptDockProps> = ({ sessio
           setResponseError(true);
         })
         .finally(() => {
+          respondingRef.current = false;
           setResponding(false);
         });
     },
