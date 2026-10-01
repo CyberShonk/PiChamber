@@ -334,6 +334,7 @@ describe('extension-tool-render', () => {
       expect(first).toEqual({
         call: ['call v1'],
         result: ['result v1: 1'],
+        resultExpanded: ['result v2: 1'],
       });
       expect(publishMock).not.toHaveBeenCalled();
 
@@ -375,7 +376,8 @@ describe('extension-tool-render', () => {
       expect(publishMock).toHaveBeenCalledTimes(1);
       expect(publishMock).toHaveBeenCalledWith({
         call: ['call v1'], // Call output was cached
-        result: ['result v2: 3'],
+        result: ['result v3: 3'],
+        resultExpanded: ['result v4: 3'],
       });
     });
 
@@ -434,7 +436,8 @@ describe('extension-tool-render', () => {
         publish: publishMock,
       });
 
-      expect(renderCount).toBe(1);
+      // Partial updates render both the collapsed and expanded slots.
+      expect(renderCount).toBe(2);
 
       // Now component calls invalidate()
       savedContext.invalidate();
@@ -445,7 +448,8 @@ describe('extension-tool-render', () => {
 
       expect(publishMock).toHaveBeenCalledTimes(1);
       expect(publishMock).toHaveBeenCalledWith({
-        result: ['render count 2'],
+        result: ['render count 3'],
+        resultExpanded: ['render count 4'],
       });
     });
   });

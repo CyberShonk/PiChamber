@@ -12,7 +12,7 @@ mock.module('@/components/chat/markdown/markdown-worker', () => ({
 const { default: ToolPart } = await import('./ToolPart');
 
 describe('ToolPart extension rendering', () => {
-  test('renders always-visible ANSI lines below header when collapsed', () => {
+  test('collapsed rows show only the header, not the extension block', () => {
     const part: ToolPartType = {
       id: 'part-ext-1',
       type: 'tool',
@@ -37,15 +37,9 @@ describe('ToolPart extension rendering', () => {
       />
     );
 
-    // Header is rendered
     expect(markup).toContain('Subagent');
-    // Extension render block is rendered
-    expect(markup).toContain('data-chat-tool-extension-render="true"');
-    expect(markup).toContain('Subagent Task:');
-    expect(markup).toContain('Analyze repo');
-    expect(markup).toContain('Found 5 issues');
-    expect(markup).toContain('Summary complete');
-    // Collapsed does NOT render resultExpanded
+    expect(markup).not.toContain('data-chat-tool-extension-render="true"');
+    expect(markup).not.toContain('Summary complete');
     expect(markup).not.toContain('Found 5 issues in detail');
   });
 
@@ -79,9 +73,10 @@ describe('ToolPart extension rendering', () => {
     expect(markup).toContain('Found 5 issues in detail');
     expect(markup).toContain('Issue 1: test error');
     expect(markup).toContain('Issue 2: lint warning');
+    expect(markup).not.toContain('>Found 5 issues<');
   });
 
-  test('renders inline block for running tool without expansion', () => {
+  test('expanded running tool falls back to the collapsed result lines', () => {
     const part: ToolPartType = {
       id: 'part-ext-3',
       type: 'tool',
@@ -99,7 +94,7 @@ describe('ToolPart extension rendering', () => {
     const markup = renderToStaticMarkup(
       <ToolPart
         part={part}
-        isExpanded={false}
+        isExpanded={true}
         onToggle={() => {}}
         isMobile={false}
       />

@@ -261,8 +261,12 @@ const ToolPartContent: React.FC<ToolPartProps> = ({
         }
     }, [hasExtensionRender, isExpanded, isTaskTool, shouldNotifyStructuralChange]);
 
+    const extensionRenderWasExpandedRef = React.useRef(isExpanded);
     React.useEffect(() => {
-        if (!hasExtensionRender) {
+        const toggled = extensionRenderWasExpandedRef.current !== isExpanded;
+        extensionRenderWasExpandedRef.current = isExpanded;
+        // Collapsed rows draw no extension block, so live render updates only matter while expanded.
+        if (!hasExtensionRender || (!isExpanded && !toggled)) {
             return;
         }
         onContentChangeRef.current?.('structural');
@@ -732,14 +736,12 @@ const ToolPartContent: React.FC<ToolPartProps> = ({
             </div>
 
             {}
-            {hasExtensionRender ? (
+            {hasExtensionRender && isExpanded ? (
                 <ExtensionRenderBlock
                     call={toolRender?.call}
                     result={
-                        isExpanded
-                            ? ((toolRender?.resultExpanded && toolRender.resultExpanded.length > 0)
-                                ? toolRender.resultExpanded
-                                : toolRender?.result)
+                        (toolRender?.resultExpanded && toolRender.resultExpanded.length > 0)
+                            ? toolRender.resultExpanded
                             : toolRender?.result
                     }
                 />

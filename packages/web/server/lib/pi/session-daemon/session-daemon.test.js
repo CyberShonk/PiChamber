@@ -2271,6 +2271,7 @@ describe('Pi session daemon spike', () => {
     expect(trailingUpdate.payload.render).toEqual({
       call: ['custom_call:alpha'],
       result: ['custom_result:part-1:false'],
+      resultExpanded: ['custom_result:part-1:true'],
     });
 
     session.emit({

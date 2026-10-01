@@ -102,25 +102,28 @@ export function createExtensionToolRenderer({
       if (!latest || typeof latest.publish !== 'function' || !latest.definition) return;
       const { definition, args, cwd, result, isError, publish } = latest;
 
-      if (entry.callLines === undefined && typeof definition.renderCall === 'function') {
-        entry.callLines = renderCallSlot(entry, definition, args, cwd);
-      }
-      const resultLines = renderResultSlot(entry, definition, result, {
-        expanded: false,
-        isPartial: true,
-        isError: isError ?? false,
-        args,
-        cwd,
-      });
-
-      const render = {};
-      if (entry.callLines && entry.callLines.length > 0) render.call = entry.callLines;
-      if (resultLines && resultLines.length > 0) render.result = resultLines;
-
-      if (Object.keys(render).length > 0) {
+      const render = renderPartial(entry, definition, { args, cwd, result, isError: isError ?? false });
+      if (render) {
         publish(render);
       }
     }, delay);
+  };
+
+  // Partial renders include the expanded slot too, so an expanded row never shows
+  // the collapsed render (and its "expand" hints) while the tool is still running.
+  const renderPartial = (entry, definition, { args, cwd, result, isError }) => {
+    if (entry.callLines === undefined && typeof definition?.renderCall === 'function') {
+      entry.callLines = renderCallSlot(entry, definition, args, cwd);
+    }
+    const options = { isPartial: true, isError, args, cwd };
+    const resultLines = renderResultSlot(entry, definition, result, { ...options, expanded: false });
+    const resultExpandedLines = renderResultSlot(entry, definition, result, { ...options, expanded: true });
+
+    const render = {};
+    if (entry.callLines && entry.callLines.length > 0) render.call = entry.callLines;
+    if (resultLines && resultLines.length > 0) render.result = resultLines;
+    if (resultExpandedLines && resultExpandedLines.length > 0) render.resultExpanded = resultExpandedLines;
+    return Object.keys(render).length > 0 ? render : undefined;
   };
 
   const resolve = (session, toolName) => {
@@ -207,22 +210,7 @@ export function createExtensionToolRenderer({
       }
       entry.lastRenderAt = currentTime;
 
-      if (entry.callLines === undefined && typeof definition?.renderCall === 'function') {
-        entry.callLines = renderCallSlot(entry, definition, args, cwd);
-      }
-      const resultLines = renderResultSlot(entry, definition, partialResult, {
-        expanded: false,
-        isPartial: true,
-        isError: false,
-        args,
-        cwd,
-      });
-
-      const render = {};
-      if (entry.callLines && entry.callLines.length > 0) render.call = entry.callLines;
-      if (resultLines && resultLines.length > 0) render.result = resultLines;
-
-      return Object.keys(render).length > 0 ? render : undefined;
+      return renderPartial(entry, definition, { args, cwd, result: partialResult, isError: false });
     }
 
     scheduleTrailing(entry);
