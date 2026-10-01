@@ -31,6 +31,7 @@ import {
   isDisplayedExtensionEntryType,
   isIddExtensionEntry,
 } from './extension-bridge.js';
+import { resolveExtensionName } from './extension-name.js';
 import { createExtensionTheme } from './extension-theme.js';
 import {
   createExtensionToolRenderer,
@@ -4091,7 +4092,7 @@ export function createSessionDaemon({
               // browser (see DOCUMENTATION.md route invariants).
               .map((extensionPath) => ({
                 id: createHash('sha256').update(extensionPath).digest('hex').slice(0, 16),
-                name: basename(extensionPath).replace(/\.(ts|js)$/, ''),
+                name: resolveExtensionName(extensionSession, extensionPath),
               })),
             commands: (Array.isArray(registeredCommands) ? registeredCommands : [])
               .filter((command) => command && typeof command.invocationName === 'string')

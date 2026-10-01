@@ -5,6 +5,7 @@ import {
   sanitizeExtensionFormFields,
   validateExtensionFormValues,
 } from '../extension-protocol.js';
+import { resolveExtensionName } from './extension-name.js';
 import { createExtensionTheme } from './extension-theme.js';
 
 const MAX_EXTENSION_PANELS_PER_SESSION = 24;
@@ -627,7 +628,10 @@ export const createExtensionBridge = ({
       shutdownHandler: () => requestSessionShutdown?.(session.sessionId),
       onError: (error) => {
         publishForSession('extension.error', {
-          source: typeof error?.extensionPath === 'string' ? error.extensionPath : 'unknown',
+          // Publish the extension display name instead of the server path.
+          source: typeof error?.extensionPath === 'string' && error.extensionPath.length > 0
+            ? resolveExtensionName(session, error.extensionPath)
+            : 'unknown',
           ...(typeof error?.event === 'string' ? { event: error.event } : {}),
           message: String(error?.error ?? 'Unknown extension error.'),
         }, session.sessionId);

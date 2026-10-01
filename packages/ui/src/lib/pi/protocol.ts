@@ -1083,7 +1083,7 @@ export interface PiExtensionListResponse {
 export type PiExtensionErrorEvent = PiEventEnvelope<
   'extension.error',
   {
-    /** Extension path or `<runtime>` source label reported by pi. */
+    /** Path-free extension display name or `<runtime>` source label; server paths are never sent. */
     source: string;
     event?: string;
     message: string;

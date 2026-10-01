@@ -310,10 +310,13 @@ describe('Pi session daemon extension bridging', () => {
     session.boundBindings.onError({ extensionPath: '/tmp/ext.ts', event: 'tool_call', error: 'boom' });
     const errorEvent = await client.next((message) => message.event === 'extension.error');
     expect(errorEvent.payload).toMatchObject({
-      source: '/tmp/ext.ts',
+      source: 'ext',
       event: 'tool_call',
       message: 'boom',
     });
+    expect(errorEvent.payload.source).not.toContain('/tmp');
+    const { directory: _dir, ...errorPayload } = errorEvent.payload;
+    expect(JSON.stringify(errorPayload)).not.toContain('/tmp');
   });
 
   it('projects appended custom entries and custom messages as extension events', async () => {
@@ -598,6 +601,24 @@ describe('Pi session daemon extension panels, apps, and forms', () => {
     expect(result.extensions[0].name).toBe('modes');
     expect(JSON.stringify(result)).not.toContain('/home/someone');
     expect(result.extensions[0].id).not.toContain('/');
+  });
+
+  it('lists directory-based extensions with directory names and opaque ids', async () => {
+    const { client, session } = await startWithExtensibleSession();
+    session.extensionRunner = {
+      getExtensionPaths: () => [
+        '/home/someone/secret/extensions/browser/index.ts',
+        '/home/someone/secret/extensions/web-search/index.js',
+        '/home/someone/secret/extensions/modes.ts',
+      ],
+      getRegisteredCommands: () => [],
+    };
+
+    const result = (await client.request('extensions.list', {})).result;
+    expect(result.extensions.map((e) => e.name)).toEqual(['browser', 'web-search', 'modes']);
+    const ids = new Set(result.extensions.map((e) => e.id));
+    expect(ids.size).toBe(3);
+    expect(JSON.stringify(result)).not.toContain('/home/someone');
   });
 
   it('emits extension.editor with mode paste for pasteToEditor and mode set for setEditorText', async () => {
