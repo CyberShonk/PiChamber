@@ -273,6 +273,8 @@ export function createExtensionToolRenderer({
     return Object.keys(render).length > 0 ? render : undefined;
   };
 
+  // Memoized by the toolResult message alone: one result object belongs to one
+  // history entry, so its tool call's args, cwd, and isError never vary.
   const renderSettled = (definition, { toolCallId, args, cwd, result, isError }) => {
     if (result && (typeof result === 'object' || typeof result === 'function')) {
       if (settledMemo.has(result)) {

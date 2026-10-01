@@ -518,6 +518,11 @@ export const createExtensionBridge = ({
         publishForSession('extension.title', title ? { title } : {}, sessionId);
       },
       custom: async () => undefined,
+      // The browser inserts pasted text at its selection; the mirror appends.
+      // The revision is intentionally left unchanged (browser revisions are
+      // client-clock based, so a daemon bump could reject a skewed client): any
+      // divergence or older in-flight update is corrected by the browser's next
+      // draft sync, which follows the paste/set it applies.
       pasteToEditor: (value) => {
         const text = String(value ?? '').slice(0, MAX_EXTENSION_EDITOR_TEXT_CHARS);
         const current = extensionDraftBySession.get(sessionId);
