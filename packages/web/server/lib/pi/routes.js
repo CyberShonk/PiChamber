@@ -238,6 +238,27 @@ const sanitizeNavigation = (value) => {
   };
 };
 
+export const projectToolRender = (render) => {
+  if (!render || typeof render !== 'object' || Array.isArray(render)) return undefined;
+  const projected = {};
+  for (const key of ['call', 'result', 'resultExpanded']) {
+    const lines = render[key];
+    if (Array.isArray(lines)) {
+      const sanitized = [];
+      for (const line of lines) {
+        if (typeof line === 'string') {
+          sanitized.push(line.slice(0, 2000));
+          if (sanitized.length >= 200) break;
+        }
+      }
+      if (sanitized.length > 0) {
+        projected[key] = sanitized;
+      }
+    }
+  }
+  return Object.keys(projected).length > 0 ? projected : undefined;
+};
+
 const projectFilePart = (part) => {
   // Optional fields degrade instead of failing the whole message. The daemon
   // only emits inline data URLs; never pass a filesystem or remote URL on.
@@ -282,12 +303,14 @@ const projectSessionDetail = (value) => {
         return { type: part.type, id: part.id, index: part.index, text: part.text };
       }
       if (part.type === 'tool' && typeof part.toolCallId === 'string' && typeof part.name === 'string') {
+        const render = projectToolRender(part.render);
         return {
           type: 'tool', id: part.id, index: part.index, toolCallId: part.toolCallId, name: part.name,
           ...(part.input !== undefined ? { input: part.input } : {}),
           ...(part.output !== undefined ? { output: part.output } : {}),
           ...(typeof part.error === 'string' ? { error: part.error } : {}),
           ...(part.metadata !== undefined ? { metadata: part.metadata } : {}),
+          ...(render ? { render } : {}),
           ...(part.isError === true ? { isError: true } : {}),
           ...(Number.isFinite(part.startedAt) ? { startedAt: part.startedAt } : {}),
           ...(Number.isFinite(part.endedAt) ? { endedAt: part.endedAt } : {}),
@@ -681,20 +704,24 @@ export const projectEventFrame = (frame) => {
     case 'session.interrupted': return { ...common, payload: { reason: frame.payload.reason, streaming: frame.payload.streaming === true } };
     case 'session.tool.start':
     case 'session.tool.update':
-    case 'session.tool.end': return {
-      ...common,
-      payload: {
-        toolCallId: frame.payload.toolCallId, partId: frame.payload.partId, messageId: frame.payload.messageId, name: frame.payload.name, state: frame.payload.state,
-        ...(frame.payload.input !== undefined ? { input: frame.payload.input } : {}),
-        ...(frame.payload.output !== undefined ? { output: frame.payload.output } : {}),
-        ...(typeof frame.payload.error === 'string' ? { error: frame.payload.error } : {}),
-        ...(frame.payload.metadata !== undefined ? { metadata: frame.payload.metadata } : {}),
-        ...(frame.payload.isError === true ? { isError: true } : {}),
-        ...(Number.isFinite(frame.payload.startedAt) ? { startedAt: frame.payload.startedAt } : {}),
-        ...(Number.isFinite(frame.payload.endedAt) ? { endedAt: frame.payload.endedAt } : {}),
-        ...(Number.isFinite(frame.payload.serverNow) ? { serverNow: frame.payload.serverNow } : {}),
-      },
-    };
+    case 'session.tool.end': {
+      const render = projectToolRender(frame.payload.render);
+      return {
+        ...common,
+        payload: {
+          toolCallId: frame.payload.toolCallId, partId: frame.payload.partId, messageId: frame.payload.messageId, name: frame.payload.name, state: frame.payload.state,
+          ...(frame.payload.input !== undefined ? { input: frame.payload.input } : {}),
+          ...(frame.payload.output !== undefined ? { output: frame.payload.output } : {}),
+          ...(typeof frame.payload.error === 'string' ? { error: frame.payload.error } : {}),
+          ...(frame.payload.metadata !== undefined ? { metadata: frame.payload.metadata } : {}),
+          ...(render ? { render } : {}),
+          ...(frame.payload.isError === true ? { isError: true } : {}),
+          ...(Number.isFinite(frame.payload.startedAt) ? { startedAt: frame.payload.startedAt } : {}),
+          ...(Number.isFinite(frame.payload.endedAt) ? { endedAt: frame.payload.endedAt } : {}),
+          ...(Number.isFinite(frame.payload.serverNow) ? { serverNow: frame.payload.serverNow } : {}),
+        },
+      };
+    }
     case 'extension.entry': {
       if (typeof frame.payload.id !== 'string' || frame.payload.id.length === 0 || frame.payload.id.length > 512) return null;
       if (typeof frame.payload.customType !== 'string' || frame.payload.customType.length === 0 || frame.payload.customType.length > 256) return null;

@@ -31,6 +31,11 @@ import {
   isDisplayedExtensionEntryType,
   isIddExtensionEntry,
 } from './extension-bridge.js';
+import { createExtensionTheme } from './extension-theme.js';
+import {
+  createExtensionToolRenderer,
+  installExtensionGlobalTheme,
+} from './extension-tool-render.js';
 import {
   SESSION_DAEMON_DEFAULT_MESSAGE_PAGE_LIMIT,
   SESSION_DAEMON_MAX_FRAME_BYTES as MAX_FRAME_BYTES,
@@ -200,6 +205,7 @@ export function createSessionDaemon({
       return error?.code === 'EPERM';
     }
   },
+  extensionToolRenderer: injectExtensionToolRenderer,
 } = {}) {
   if (!isLocalSessionDaemonEndpoint(endpoint, platform)) {
     throw new SessionDaemonProtocolError('INVALID_ENDPOINT', 'The session daemon endpoint must be local.');
@@ -219,6 +225,9 @@ export function createSessionDaemon({
 
   let server;
   let runtime;
+  const extensionTheme = createExtensionTheme();
+  installExtensionGlobalTheme(extensionTheme);
+  const extensionToolRenderer = injectExtensionToolRenderer ?? createExtensionToolRenderer({ theme: extensionTheme });
   let ownerServerInstanceId = typeof serverInstanceId === 'string' && serverInstanceId.length > 0 ? serverInstanceId : null;
   let ownerServerPid = Number.isInteger(serverPid) && serverPid > 0 ? serverPid : null;
   const leaseOwner = () => {
@@ -743,6 +752,7 @@ export function createSessionDaemon({
 
   const disposeRuntime = async () => {
     clearAllIdleDisposals();
+    extensionToolRenderer.dispose();
     activeSessionInputs.clear();
     pendingResourceReloads.clear();
     await resourceReloadQueue.catch(() => {});
@@ -1003,6 +1013,7 @@ export function createSessionDaemon({
         // dismiss event so no extension thread blocks forever on a
         // disposed runtime.
         clearExtensionState(sessionId);
+        extensionToolRenderer.clearSession(sessionId);
         await runtimeRegistry.dispose(targetRuntime);
         // Positively determine ephemerality while the resident lease is
         // still held, before any release. A stat success means persisted;
@@ -1526,6 +1537,7 @@ export function createSessionDaemon({
         ...projectToolResult(entry.message, entry.message.isError === true),
         isError: entry.message.isError === true,
         endedAt: Date.parse(entry.timestamp),
+        message: entry.message,
       });
     }
     let latestUserMessageId;
@@ -1633,6 +1645,20 @@ export function createSessionDaemon({
           const running = streaming && !result;
           const interrupted = !running && !result;
           const metadata = mergeToolPresentationMetadata(result?.metadata, activeRuntime, targetDir, part.name, part.arguments);
+          let render;
+          if (!running) {
+            const definition = extensionToolRenderer.resolve(session, part.name);
+            if (definition && result?.message) {
+              const toolCwd = activeRuntime?.cwd || targetDir;
+              render = extensionToolRenderer.renderSettled(definition, {
+                toolCallId: part.id,
+                args: part.arguments,
+                cwd: toolCwd,
+                result: result.message,
+                isError: result.isError === true,
+              });
+            }
+          }
           return [{
             type: 'tool',
             id: `${entry.id}:tool:${part.id}`,
@@ -1647,6 +1673,7 @@ export function createSessionDaemon({
               : interrupted
                 ? { error: 'Tool was interrupted before completion.' }
                 : {}),
+            ...(render ? { render } : {}),
             ...(result?.isError || interrupted ? { isError: true } : {}),
             ...(metadata ? { metadata } : {}),
             ...(Number.isFinite(startedAt) ? { startedAt } : {}),
@@ -3393,6 +3420,7 @@ export function createSessionDaemon({
       latestAssistantMessageIds.delete(sessionId);
       toolInputBySession.delete(sessionId);
       clearToolTimingsForSession(sessionId);
+      extensionToolRenderer.clearSession(sessionId);
       // Explicit typed deletion: every connected and replaying client drops
       // catalog, transcript, activity, and caches. Archive and directory moves
       // keep the session id and never publish this event.
@@ -3536,6 +3564,18 @@ export function createSessionDaemon({
         const metadata = mergeToolPresentationMetadata(undefined, activeRuntime, directory, event.toolName, event.args);
         toolStartedAt.set(toolTimingKey(sessionId, event.toolCallId), startedAt);
         rememberToolInput(sessionId, event.toolCallId, event.args);
+        const definition = extensionToolRenderer.resolve(activeRuntime?.session, event.toolName);
+        let render;
+        if (definition) {
+          const toolCwd = activeRuntime?.cwd || directory;
+          render = extensionToolRenderer.onStart({
+            sessionId,
+            toolCallId: event.toolCallId,
+            definition,
+            args: event.args,
+            cwd: toolCwd,
+          });
+        }
         publish('session.tool.start', {
           toolCallId: event.toolCallId,
           partId: `${messageId}:tool:${event.toolCallId}`,
@@ -3545,6 +3585,7 @@ export function createSessionDaemon({
           state: 'running',
           ...(event.args !== undefined ? { input: redactAttachmentValues(event.args) } : {}),
           ...(metadata ? { metadata } : {}),
+          ...(render ? { render } : {}),
           startedAt,
           serverNow: startedAt,
         }, sessionId, directory);
@@ -3558,6 +3599,33 @@ export function createSessionDaemon({
         const toolArgs = event.args ?? getToolInput(sessionId, event.toolCallId);
         const projected = projectToolResult(event.partialResult, false);
         const metadata = mergeToolPresentationMetadata(projected.metadata, activeRuntime, directory, event.toolName, toolArgs);
+        const definition = extensionToolRenderer.resolve(activeRuntime?.session, event.toolName);
+        let render;
+        if (definition) {
+          const toolCwd = activeRuntime?.cwd || directory;
+          const partId = `${messageId}:tool:${event.toolCallId}`;
+          render = extensionToolRenderer.onUpdate({
+            sessionId,
+            toolCallId: event.toolCallId,
+            definition,
+            args: toolArgs,
+            cwd: toolCwd,
+            partialResult: event.partialResult,
+            publish: (trailingRender) => {
+              publish('session.tool.update', {
+                toolCallId: event.toolCallId,
+                partId,
+                messageId,
+                name: event.toolName,
+                toolName: event.toolName,
+                state: 'running',
+                ...(Number.isFinite(startedAt) ? { startedAt } : {}),
+                serverNow: Date.now(),
+                ...(trailingRender ? { render: trailingRender } : {}),
+              }, sessionId, directory);
+            },
+          });
+        }
         publish('session.tool.update', {
           toolCallId: event.toolCallId,
           partId: `${messageId}:tool:${event.toolCallId}`,
@@ -3568,6 +3636,7 @@ export function createSessionDaemon({
           ...(event.args !== undefined ? { input: redactAttachmentValues(event.args) } : {}),
           ...projected,
           ...(metadata ? { metadata } : {}),
+          ...(render ? { render } : {}),
           ...(Number.isFinite(startedAt) ? { startedAt } : {}),
           serverNow,
         }, sessionId, directory);
@@ -3585,6 +3654,20 @@ export function createSessionDaemon({
         const activeRuntime = runtimeRegistry?.get({ cwd: directory, sessionId }) || runtime;
         const projected = projectToolResult(event.result, event.isError === true);
         const metadata = mergeToolPresentationMetadata(projected.metadata, activeRuntime, directory, event.toolName, toolArgs);
+        const definition = extensionToolRenderer.resolve(activeRuntime?.session, event.toolName);
+        let render;
+        if (definition) {
+          const toolCwd = activeRuntime?.cwd || directory;
+          render = extensionToolRenderer.onEnd({
+            sessionId,
+            toolCallId: event.toolCallId,
+            definition,
+            args: toolArgs,
+            cwd: toolCwd,
+            result: event.result,
+            isError: event.isError === true,
+          });
+        }
         publish('session.tool.end', {
           toolCallId: event.toolCallId,
           partId: `${messageId}:tool:${event.toolCallId}`,
@@ -3595,6 +3678,7 @@ export function createSessionDaemon({
           isError: event.isError === true,
           ...projected,
           ...(metadata ? { metadata } : {}),
+          ...(render ? { render } : {}),
           ...(Number.isFinite(startedAt) ? { startedAt } : {}),
           endedAt,
           serverNow: endedAt,
@@ -3656,6 +3740,7 @@ export function createSessionDaemon({
         latestAssistantMessageIds.delete(sessionId);
         toolInputBySession.delete(sessionId);
         clearToolTimingsForSession(sessionId, { keepCompleted: true });
+        extensionToolRenderer.clearSession(sessionId);
         publish('session.lifecycle', { state: 'idle', serverNow: Date.now() }, sessionId, directory);
         if (!completeRequestedShutdown(sessionId)) {
           void flushPendingResourceReload(owningRuntime).then(() => {

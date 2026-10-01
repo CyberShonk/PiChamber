@@ -1,7 +1,12 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import express from 'express';
 
-import { projectEventFrame, projectExtensionList, registerPiRuntimeRoutes } from './routes.js';
+import {
+  projectEventFrame,
+  projectExtensionList,
+  projectToolRender,
+  registerPiRuntimeRoutes,
+} from './routes.js';
 
 const frame = (event, payload, sequence = 1) => ({
   protocolVersion: 1,
@@ -281,3 +286,131 @@ describe('POST /api/pi/sessions/:sessionId/editor-draft', () => {
     await expect(badDirRes.json()).resolves.toEqual({ error: { code: 'INVALID_ARGUMENT' } });
   });
 });
+
+describe('projectToolRender and tool render route passthrough', () => {
+  it('sanitizes tool render shapes and bounds lines', () => {
+    expect(projectToolRender(null)).toBeUndefined();
+    expect(projectToolRender('not-an-object')).toBeUndefined();
+    expect(projectToolRender([])).toBeUndefined();
+    expect(projectToolRender({})).toBeUndefined();
+    expect(projectToolRender({ call: [] })).toBeUndefined();
+
+    const longLine = 'a'.repeat(2500);
+    const manyLines = Array.from({ length: 250 }, (_, i) => `line-${i}`);
+    const sanitized = projectToolRender({
+      call: [longLine, 123, null, 'valid'],
+      result: manyLines,
+      resultExpanded: ['expanded'],
+    });
+
+    expect(sanitized.call).toHaveLength(2);
+    expect(sanitized.call[0]).toHaveLength(2000);
+    expect(sanitized.call[1]).toBe('valid');
+    expect(sanitized.result).toHaveLength(200);
+    expect(sanitized.resultExpanded).toEqual(['expanded']);
+  });
+
+  it('projects session.tool.start, update, and end frames with sanitized render', () => {
+    const start = projectEventFrame(frame('session.tool.start', {
+      toolCallId: 't1',
+      partId: 'm1:tool:t1',
+      messageId: 'm1',
+      name: 'subagent',
+      state: 'running',
+      render: {
+        call: ['running subagent'],
+      },
+    }));
+    expect(start?.payload.render).toEqual({
+      call: ['running subagent'],
+    });
+
+    const update = projectEventFrame(frame('session.tool.update', {
+      toolCallId: 't1',
+      partId: 'm1:tool:t1',
+      messageId: 'm1',
+      name: 'subagent',
+      state: 'running',
+      render: {
+        call: ['running subagent'],
+        result: ['partial progress'],
+      },
+    }));
+    expect(update?.payload.render).toEqual({
+      call: ['running subagent'],
+      result: ['partial progress'],
+    });
+
+    const end = projectEventFrame(frame('session.tool.end', {
+      toolCallId: 't1',
+      partId: 'm1:tool:t1',
+      messageId: 'm1',
+      name: 'subagent',
+      state: 'completed',
+      render: {
+        call: ['running subagent'],
+        result: ['collapsed result'],
+        resultExpanded: ['expanded result full details'],
+      },
+    }));
+    expect(end?.payload.render).toEqual({
+      call: ['running subagent'],
+      result: ['collapsed result'],
+      resultExpanded: ['expanded result full details'],
+    });
+  });
+
+  it('passes sanitized render on session detail tool parts', async () => {
+    const runtime = {
+      request: async (command) => {
+        if (command === 'sessions.open') {
+          return {
+            session: { id: 'sess-tool', directory: '/work', createdAt: 1000, updatedAt: 1000 },
+            messages: [{
+              message: { id: 'm1', sessionId: 'sess-tool', directory: '/work', role: 'assistant', createdAt: 1000 },
+              parts: [{
+                type: 'tool',
+                id: 'm1:tool:t1',
+                index: 0,
+                toolCallId: 't1',
+                name: 'custom_tool',
+                state: 'completed',
+                render: {
+                  call: ['call output'],
+                  result: ['result output'],
+                  resultExpanded: ['result expanded'],
+                },
+              }],
+            }],
+            lastSequence: 1,
+            isStreaming: false,
+            lifecycle: 'idle',
+          };
+        }
+        throw new Error(`Unexpected command ${command}`);
+      },
+    };
+
+    const app = express();
+    app.use(express.json());
+    registerPiRuntimeRoutes(app, { getPiSessionDaemonRuntime: () => runtime });
+    const server = await new Promise((resolve, reject) => {
+      const s = app.listen(0, '127.0.0.1', () => resolve(s));
+      s.once('error', reject);
+    });
+
+    try {
+      const res = await fetch(`http://127.0.0.1:${server.address().port}/api/pi/sessions/sess-tool?directory=%2Fwork`);
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data.messages[0].parts[0].render).toEqual({
+        call: ['call output'],
+        result: ['result output'],
+        resultExpanded: ['result expanded'],
+      });
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+});
+
