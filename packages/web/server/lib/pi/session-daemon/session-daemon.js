@@ -1633,6 +1633,7 @@ export function createSessionDaemon({
       const text = redactAttachmentPaths(textFromContent(entry.message.content));
       const thinking = redactAttachmentPaths(entry.message.content.filter((part) => part?.type === 'thinking').map((part) => part.thinking).join(''));
       const usage = projectUsage(entry.message.usage);
+      const pendingRenders = [];
       const parts = entry.message.content.flatMap((part, index) => {
         if (part?.type === 'text') return [{ type: 'text', id: `${entry.id}:text:${index}`, index, text: redactAttachmentPaths(part.text) }];
         if (part?.type === 'thinking') return [{ type: 'thinking', id: `${entry.id}:thinking:${index}`, index, text: redactAttachmentPaths(part.thinking) }];
@@ -1645,12 +1646,12 @@ export function createSessionDaemon({
           const running = streaming && !result;
           const interrupted = !running && !result;
           const metadata = mergeToolPresentationMetadata(result?.metadata, activeRuntime, targetDir, part.name, part.arguments);
-          let render;
+          let resolveRender;
           if (!running) {
             const definition = extensionToolRenderer.resolve(session, part.name);
             if (definition && result?.message) {
               const toolCwd = activeRuntime?.cwd || targetDir;
-              render = extensionToolRenderer.renderSettled(definition, {
+              resolveRender = () => extensionToolRenderer.renderSettled(definition, {
                 toolCallId: part.id,
                 args: part.arguments,
                 cwd: toolCwd,
@@ -1659,7 +1660,7 @@ export function createSessionDaemon({
               });
             }
           }
-          return [{
+          const toolPart = {
             type: 'tool',
             id: `${entry.id}:tool:${part.id}`,
             index,
@@ -1673,7 +1674,6 @@ export function createSessionDaemon({
               : interrupted
                 ? { error: 'Tool was interrupted before completion.' }
                 : {}),
-            ...(render ? { render } : {}),
             ...(result?.isError || interrupted ? { isError: true } : {}),
             ...(metadata ? { metadata } : {}),
             ...(Number.isFinite(startedAt) ? { startedAt } : {}),
@@ -1684,11 +1684,13 @@ export function createSessionDaemon({
                 : interrupted
                   ? { endedAt: createdAt }
                   : {}),
-          }];
+          };
+          if (resolveRender) pendingRenders.push({ part: toolPart, resolve: resolveRender });
+          return [toolPart];
         }
         return [];
       });
-      return [{
+      const projected = {
         message: {
           id: entry.id, sessionId: session.sessionId, directory: targetDir, role: 'assistant', text, thinking, createdAt,
           ...(latestUserMessageId ? { parentId: latestUserMessageId } : {}),
@@ -1698,8 +1700,24 @@ export function createSessionDaemon({
           ...(usage ? { usage } : {}),
         },
         parts,
-      }];
+      };
+      if (pendingRenders.length > 0) pendingToolRenders.set(projected, pendingRenders);
+      return [projected];
     });
+  };
+
+  // Settled extension tool renders run extension code, so they are resolved
+  // only for messages a page actually selects, not for the whole branch.
+  const pendingToolRenders = new WeakMap();
+  const materializeToolRenders = (projected) => {
+    const pending = projected && pendingToolRenders.get(projected);
+    if (!pending) return projected;
+    pendingToolRenders.delete(projected);
+    for (const { part, resolve } of pending) {
+      const render = resolve();
+      if (render) part.render = render;
+    }
+    return projected;
   };
 
   const projectMessagePage = (messages, options = {}) => {
@@ -1719,7 +1737,7 @@ export function createSessionDaemon({
     let start = end;
     let pageBytes = 2;
     while (start > 0 && end - start < requestedLimit) {
-      const candidate = messages[start - 1];
+      const candidate = materializeToolRenders(messages[start - 1]);
       const candidateBytes = Buffer.byteLength(JSON.stringify(candidate));
       if (start < end && pageBytes + candidateBytes + 1 > SESSION_DAEMON_MESSAGE_PAGE_TARGET_BYTES) break;
       start -= 1;
@@ -1730,7 +1748,7 @@ export function createSessionDaemon({
     const firstMessage = selected[0]?.message;
     if (firstMessage?.role === 'assistant' && typeof firstMessage.parentId === 'string') {
       anchorIndex = messages.findIndex((entry, index) => index < start && entry?.message?.id === firstMessage.parentId);
-      if (anchorIndex >= 0) selected.unshift(messages[anchorIndex]);
+      if (anchorIndex >= 0) selected.unshift(materializeToolRenders(messages[anchorIndex]));
     }
     const beginsAtAdjacentAnchor = anchorIndex === start - 1;
     const cursorIndex = beginsAtAdjacentAnchor ? anchorIndex : start;

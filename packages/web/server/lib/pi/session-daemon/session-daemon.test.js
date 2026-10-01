@@ -2336,6 +2336,73 @@ describe('Pi session daemon spike', () => {
     await client.close();
   });
 
+  it('renders settled extension tools only for the selected history page', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'pichamber-pi-daemon-extension-tool-page-'));
+    const endpoint = testDaemonEndpoint(root);
+    const session = new FakeSession('pi-session-ext-tool-page');
+    const renderedResults = new Set();
+    const customToolDef = {
+      renderCall: (args) => ({ render: () => [`call:${args.n}`] }),
+      renderResult: (result) => {
+        renderedResults.add(result.content?.[0]?.text);
+        return { render: () => [`result:${result.content?.[0]?.text}`] };
+      },
+    };
+    session.extensionRunner = {
+      getToolDefinition: (name) => (name === 'custom_tool' ? customToolDef : undefined),
+    };
+    const toolCount = 200;
+    const historyEntries = [
+      { type: 'message', id: 'user-0', timestamp: '2026-01-01T00:00:00.000Z', message: { role: 'user', content: 'go' } },
+      ...Array.from({ length: toolCount }, (_, n) => [
+        {
+          type: 'message',
+          id: `assistant-${n}`,
+          timestamp: '2026-01-01T00:00:01.000Z',
+          message: {
+            role: 'assistant',
+            provider: 'test',
+            model: 'model',
+            content: [{ type: 'toolCall', id: `call-${n}`, name: 'custom_tool', arguments: { n } }],
+          },
+        },
+        {
+          type: 'message',
+          id: `result-${n}`,
+          timestamp: '2026-01-01T00:00:02.000Z',
+          message: { role: 'toolResult', toolCallId: `call-${n}`, content: [{ type: 'text', text: `r${n}` }], isError: false },
+        },
+      ]).flat(),
+    ];
+
+    daemon = createSessionDaemon({ endpoint, credential, cwd: root, createRuntime: async () => ({ session, async dispose() {} }) });
+    await daemon.start();
+    const client = connectClient(endpoint);
+    await client.authenticate();
+    await client.request('sessions.create', { cwd: root });
+    session.entries = historyEntries;
+
+    const opened = (await client.request('sessions.open', { sessionId: 'pi-session-ext-tool-page', directory: root })).result;
+    const pageTools = opened.messages.flatMap((entry) => entry.parts).filter((part) => part.type === 'tool');
+    expect(pageTools.length).toBeGreaterThan(0);
+    expect(pageTools.length).toBeLessThan(toolCount);
+    expect(pageTools.every((part) => part.render?.result?.[0] === `result:r${part.input.n}`)).toBe(true);
+    // Only the selected tail (plus at most the one boundary candidate) ran extension renderers.
+    expect(renderedResults.size).toBeLessThanOrEqual(pageTools.length + 1);
+    expect(renderedResults.has('r0')).toBe(false);
+
+    const older = (await client.request('sessions.messages', {
+      sessionId: 'pi-session-ext-tool-page',
+      directory: root,
+      before: opened.beforeCursor,
+    })).result;
+    const olderTools = older.messages.flatMap((entry) => entry.parts).filter((part) => part.type === 'tool');
+    expect(olderTools.length).toBeGreaterThan(0);
+    expect(olderTools.every((part) => Array.isArray(part.render?.result))).toBe(true);
+
+    await client.close();
+  });
+
   it('publishes extension-authored session names through the catalog event', async () => {
     const root = await mkdtemp(join(tmpdir(), 'pichamber-pi-daemon-session-name-'));
     const endpoint = testDaemonEndpoint(root);
