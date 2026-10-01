@@ -136,12 +136,12 @@ export const createExtensionBridge = ({
       if (widgets.size === 0) extensionWidgetsBySession.delete(sessionId);
       else extensionWidgetsBySession.set(sessionId, widgets);
 
-      publish('extension.widget', {
+      publishForSession('extension.widget', {
         key,
         ...(lines.length > 0 ? { lines, placement: entry.placement } : {}),
       }, sessionId);
     } catch (error) {
-      publish('extension.error', {
+      publishForSession('extension.error', {
         source: 'extension.widget',
         event: 'render',
         message: String(error?.message ?? error ?? 'Extension widget render error.'),
@@ -152,11 +152,12 @@ export const createExtensionBridge = ({
         widgets.delete(key);
         if (widgets.size === 0) extensionWidgetsBySession.delete(sessionId);
       }
-      publish('extension.widget', { key }, sessionId);
+      publishForSession('extension.widget', { key }, sessionId);
     }
   };
 
   const scheduleComponentWidgetsRender = (sessionId) => {
+    if (!extensionComponentWidgetsBySession.has(sessionId)) return;
     if (extensionWidgetRenderTimersBySession.has(sessionId)) return;
     const timer = setTimeout(() => {
       extensionWidgetRenderTimersBySession.delete(sessionId);
@@ -328,7 +329,7 @@ export const createExtensionBridge = ({
           clearTimeout(timer);
           signal?.removeEventListener('abort', onAbort);
           pendingExtensionDialogs.delete(requestId);
-          publish('extension.dialog.dismiss', { requestId, reason }, sessionId);
+          publishForSession('extension.dialog.dismiss', { requestId, reason }, sessionId);
           resolve(parseResponse(response));
         };
         const onAbort = () => settle({}, 'aborted');
@@ -344,7 +345,7 @@ export const createExtensionBridge = ({
           ...(Number.isFinite(opts?.timeout) ? { timeoutMs: opts.timeout } : {}),
         };
         pendingExtensionDialogs.set(requestId, { sessionId, settle, timer, payload });
-        publish('extension.dialog', payload, sessionId);
+        publishForSession('extension.dialog', payload, sessionId);
       });
     };
 
@@ -388,7 +389,7 @@ export const createExtensionBridge = ({
         (response) => (typeof response?.value === 'string' ? response.value : undefined),
       ),
       notify: (message, level) => {
-        publish('extension.notify', {
+        publishForSession('extension.notify', {
           message: String(message ?? ''),
           ...(level === 'warning' || level === 'error' ? { level } : { level: 'info' }),
         }, sessionId);
@@ -401,7 +402,7 @@ export const createExtensionBridge = ({
         else statuses.delete(key);
         if (statuses.size === 0) extensionStatusesBySession.delete(sessionId);
         else extensionStatusesBySession.set(sessionId, statuses);
-        publish('extension.status', {
+        publishForSession('extension.status', {
           key,
           ...(typeof text === 'string' && text.length > 0 ? { text: String(text).slice(0, 1000) } : {}),
         }, sessionId);
@@ -427,10 +428,10 @@ export const createExtensionBridge = ({
                 widgets.delete(key);
                 if (widgets.size === 0) extensionWidgetsBySession.delete(sessionId);
               }
-              publish('extension.widget', { key }, sessionId);
+              publishForSession('extension.widget', { key }, sessionId);
             }
           } catch (error) {
-            publish('extension.error', {
+            publishForSession('extension.error', {
               source: 'extension.widget',
               event: 'factory',
               message: String(error?.message ?? error ?? 'Extension widget factory error.'),
@@ -440,15 +441,16 @@ export const createExtensionBridge = ({
               widgets.delete(key);
               if (widgets.size === 0) extensionWidgetsBySession.delete(sessionId);
             }
-            publish('extension.widget', { key }, sessionId);
+            publishForSession('extension.widget', { key }, sessionId);
           }
           return;
         }
 
-        if (content !== undefined && !Array.isArray(content)) return;
+        if (content !== undefined && content !== null && !Array.isArray(content)) return;
 
         const widgets = extensionWidgetsBySession.get(sessionId) ?? new Map();
-        if (Array.isArray(content) && content.length > 0) {
+        const hasLines = Array.isArray(content) && content.length > 0;
+        if (hasLines) {
           const lines = content.map((line) => String(line).slice(0, 2000)).slice(0, 100);
           widgets.set(key, { lines, placement });
         } else {
@@ -456,10 +458,12 @@ export const createExtensionBridge = ({
         }
         if (widgets.size === 0) extensionWidgetsBySession.delete(sessionId);
         else extensionWidgetsBySession.set(sessionId, widgets);
-        publish('extension.widget', {
+        publishForSession('extension.widget', {
           key,
-          ...(Array.isArray(content) && content.length > 0 ? { lines: content.map((line) => String(line).slice(0, 2000)).slice(0, 100) } : {}),
-          ...(options?.placement === 'belowEditor' ? { placement: 'belowEditor' } : Array.isArray(content) && content.length > 0 ? { placement: 'aboveEditor' } : {}),
+          ...(hasLines ? {
+            lines: content.map((line) => String(line).slice(0, 2000)).slice(0, 100),
+            placement,
+          } : {}),
         }, sessionId);
       },
       // Terminal-only surfaces have no PiChamber equivalent yet.
@@ -480,7 +484,7 @@ export const createExtensionBridge = ({
         } else {
           extensionWorkingBySession.set(sessionId, next);
         }
-        publish('extension.working', {
+        publishForSession('extension.working', {
           ...(next.message !== undefined ? { message: next.message } : {}),
           ...(next.visible !== undefined ? { visible: next.visible } : {}),
         }, sessionId);
@@ -498,7 +502,7 @@ export const createExtensionBridge = ({
         } else {
           extensionWorkingBySession.set(sessionId, next);
         }
-        publish('extension.working', {
+        publishForSession('extension.working', {
           ...(next.message !== undefined ? { message: next.message } : {}),
           ...(next.visible !== undefined ? { visible: next.visible } : {}),
         }, sessionId);
@@ -572,6 +576,8 @@ export const createExtensionBridge = ({
     } finally {
       if (providerObserver) providerObserver.suppress = false;
     }
+    const entries = session.sessionManager?.getBranch?.() ?? session.sessionManager?.getEntries?.();
+    rebuildSessionPanelsAndApps(session.sessionId, Array.isArray(entries) ? entries : []);
     publishCatalogChange(session.sessionId, { providers: true, resources: true, commands: true });
   };
 
@@ -600,6 +606,10 @@ export const createExtensionBridge = ({
             replaceInstructions: navigateOptions?.replaceInstructions,
             label: navigateOptions?.label,
           });
+          if (result?.cancelled !== true) {
+            const entries = session.sessionManager?.getBranch?.() ?? session.sessionManager?.getEntries?.();
+            rebuildSessionPanelsAndApps(session.sessionId, Array.isArray(entries) ? entries : []);
+          }
           return { cancelled: result.cancelled };
         },
         switchSession: async (sessionPath, switchOptions) => {
@@ -611,7 +621,7 @@ export const createExtensionBridge = ({
       },
       shutdownHandler: () => requestSessionShutdown?.(session.sessionId),
       onError: (error) => {
-        publish('extension.error', {
+        publishForSession('extension.error', {
           source: typeof error?.extensionPath === 'string' ? error.extensionPath : 'unknown',
           ...(typeof error?.event === 'string' ? { event: error.event } : {}),
           message: String(error?.error ?? 'Unknown extension error.'),

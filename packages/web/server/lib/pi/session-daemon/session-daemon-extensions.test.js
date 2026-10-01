@@ -431,6 +431,37 @@ describe('Pi session daemon extension bridging', () => {
     await expect(dialogPromise).resolves.toBe(false);
     await client.close();
   });
+
+  it('clears extension state and cancels pending dialogs when an active session is deleted', async () => {
+    const { client, session } = await startWithExtensibleSession();
+    const ui = session.boundBindings.uiContext;
+
+    ui.setStatus('del-status', 'pending');
+    ui.setWidget('del-widget', ['w1']);
+    ui.setWorkingMessage('busy deleting');
+    ui.getEditorText(); // tracks draft
+
+    const dialogPromise = ui.confirm('Delete now?', 'Proceed with deletion');
+    const dialogMsg = await client.next((message) => message.event === 'extension.dialog');
+    expect(dialogMsg.payload.title).toBe('Delete now?');
+
+    const deleteRes = await client.request('sessions.delete', { sessionId: session.sessionId });
+    expect(deleteRes.result).toBeTruthy();
+
+    await expect(dialogPromise).resolves.toBe(false);
+    const dismissEvent = await client.next((message) => message.event === 'extension.dialog.dismiss'
+      && message.payload?.requestId === dialogMsg.payload.requestId);
+    expect(dismissEvent.payload.reason).toBe('session-closed');
+
+    // Draft updates are rejected because session extension state was cleared
+    const draftRes = await client.request('extensions.draft', {
+      sessionId: session.sessionId,
+      text: 'late text',
+      revision: 1,
+    });
+    expect(draftRes.result).toEqual({ accepted: false });
+    await client.close();
+  });
 });
 
 describe('Pi session daemon extension panels, apps, and forms', () => {

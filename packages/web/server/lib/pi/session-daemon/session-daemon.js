@@ -3361,6 +3361,7 @@ export function createSessionDaemon({
       const activeSessionFile = active?.session?.sessionManager?.getSessionFile?.();
       if (active) {
         if (active.session?.isStreaming) await active.session.abort();
+        clearExtensionState(sessionId);
         await runtimeRegistry?.dispose(active);
         if (runtime === active) runtime = undefined;
       }
