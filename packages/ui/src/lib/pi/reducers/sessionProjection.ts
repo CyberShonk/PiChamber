@@ -2,6 +2,7 @@ import type {
   PiExtensionAppPayload,
   PiExtensionDialogPayload,
   PiExtensionPanelPayload,
+  PiToolRender,
 } from '../protocol';
 import { resolveExistingSessionComposerSelection } from '../thinking';
 import { toClientTimestamp } from '../server-clock';
@@ -291,6 +292,7 @@ export const hydrateSessionFromDetail = (
         name?: string;
         input?: unknown;
         output?: unknown;
+        render?: PiToolRender;
         error?: string;
         metadata?: Record<string, unknown>;
         isError?: boolean;
@@ -392,6 +394,7 @@ export const hydrateSessionFromDetail = (
                 name: part.name ?? 'unknown',
                 ...(part.input !== undefined ? { input: part.input } : {}),
                 ...(part.output !== undefined ? { output: part.output } : {}),
+                ...(part.render !== undefined ? { render: part.render } : {}),
                 ...(typeof part.error === 'string' ? { error: part.error } : {}),
                 ...(part.metadata !== undefined ? { metadata: part.metadata } : {}),
                 ...(part.isError !== undefined ? { isError: part.isError } : {}),

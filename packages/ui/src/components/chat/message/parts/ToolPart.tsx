@@ -3,7 +3,9 @@ import React from 'react';
 import { RuntimeAPIContext } from '@/contexts/runtimeAPIContext';
 import { cn } from '@/lib/utils';
 import { getToolMetadata } from '@/lib/toolHelpers';
+import { AnsiText } from '@/components/chat/AnsiText';
 import type { ToolPart as ToolPartType } from '@/lib/chat/types';
+import type { PiToolRender } from '@/lib/pi/protocol';
 import { useEffectiveDirectory } from '@/hooks/useEffectiveDirectory';
 import { useSessionUIStore } from '@/sync/session-ui-store';
 import { useSessionMessageRecords, useEnsureSessionMessages, useSessionReducerPart } from '@/sync/sync-context';
@@ -93,6 +95,58 @@ const LiveDuration: React.FC<{ start: number; end?: number; active: boolean }> =
 };
 
 
+const areLineArraysEqual = (a?: string[], b?: string[]): boolean => {
+    if (a === b) return true;
+    if (!a || !b) return false;
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) {
+        if (a[i] !== b[i]) return false;
+    }
+    return true;
+};
+
+interface ExtensionRenderBlockProps {
+    call?: string[];
+    result?: string[];
+}
+
+const areExtensionRenderBlockPropsEqual = (
+    prev: ExtensionRenderBlockProps,
+    next: ExtensionRenderBlockProps,
+): boolean => {
+    return areLineArraysEqual(prev.call, next.call) && areLineArraysEqual(prev.result, next.result);
+};
+
+const ExtensionRenderBlock: React.FC<ExtensionRenderBlockProps> = React.memo(({ call, result }) => {
+    const hasCall = Array.isArray(call) && call.length > 0;
+    const hasResult = Array.isArray(result) && result.length > 0;
+
+    if (!hasCall && !hasResult) {
+        return null;
+    }
+
+    return (
+        <div
+            className={cn(
+                'my-1 ml-5 overflow-x-auto rounded-md border border-[var(--interactive-border)] bg-[var(--surface-elevated)] p-2',
+                'font-mono typography-micro whitespace-pre max-h-80 overflow-y-auto',
+            )}
+            data-chat-tool-extension-render="true"
+        >
+            {hasCall && call.map((line, idx) => (
+                <div key={`call-${idx}`} className="leading-relaxed min-h-[1.25em]">
+                    <AnsiText text={line} />
+                </div>
+            ))}
+            {hasResult && result.map((line, idx) => (
+                <div key={`res-${idx}`} className="leading-relaxed min-h-[1.25em]">
+                    <AnsiText text={line} />
+                </div>
+            ))}
+        </div>
+    );
+}, areExtensionRenderBlockPropsEqual);
+
 const ToolPartContent: React.FC<ToolPartProps> = ({
     part,
     isExpanded,
@@ -115,6 +169,15 @@ const ToolPartContent: React.FC<ToolPartProps> = ({
     const metadata = stateWithData.metadata;
     const input = stateWithData.input;
     const currentDirectory = useEffectiveDirectory() ?? '';
+
+    const toolRender = (state as { render?: PiToolRender } | undefined)?.render;
+    const hasExtensionRender = Boolean(
+        toolRender && (
+            (Array.isArray(toolRender.call) && toolRender.call.length > 0) ||
+            (Array.isArray(toolRender.result) && toolRender.result.length > 0) ||
+            (Array.isArray(toolRender.resultExpanded) && toolRender.resultExpanded.length > 0)
+        )
+    );
 
     const normalizedPartTool = normalizeToolName(part.tool);
     const isTaskTool = normalizedPartTool === 'task';
@@ -174,14 +237,14 @@ const ToolPartContent: React.FC<ToolPartProps> = ({
         });
     }, [currentDirectory, input, isFinalized, isSuccessfullyFinalized, metadata, normalizedPartTool]);
 
-    const shouldNotifyStructuralChange = isFinalized || isTaskTool;
+    const shouldNotifyStructuralChange = isFinalized || isTaskTool || hasExtensionRender;
 
     const onContentChangeRef = React.useRef(onContentChange);
     onContentChangeRef.current = onContentChange;
     const expandedContentRef = React.useRef<HTMLDivElement>(null);
 
     React.useLayoutEffect(() => {
-        if (isTaskTool) {
+        if (isTaskTool || hasExtensionRender) {
             return;
         }
 
@@ -196,7 +259,14 @@ const ToolPartContent: React.FC<ToolPartProps> = ({
         if (shouldNotifyStructuralChange) {
             onContentChangeRef.current?.('structural');
         }
-    }, [isExpanded, isTaskTool, shouldNotifyStructuralChange]);
+    }, [hasExtensionRender, isExpanded, isTaskTool, shouldNotifyStructuralChange]);
+
+    React.useEffect(() => {
+        if (!hasExtensionRender) {
+            return;
+        }
+        onContentChangeRef.current?.('structural');
+    }, [hasExtensionRender, isExpanded, toolRender?.call, toolRender?.result, toolRender?.resultExpanded]);
 
     const partMetadata = (part as unknown as { metadata?: unknown }).metadata;
     const time = stateWithData.time;
@@ -435,7 +505,7 @@ const ToolPartContent: React.FC<ToolPartProps> = ({
     };
 
     const handleMainClick = (e: { stopPropagation: () => void }) => {
-        if (isTaskTool || !runtime?.editor) {
+        if (isTaskTool || hasExtensionRender || !runtime?.editor) {
             onToggle(part.id);
             return;
         }
@@ -480,7 +550,7 @@ const ToolPartContent: React.FC<ToolPartProps> = ({
     const iconStyle = !isTaskTool && isError ? TOOL_ERROR_ICON_STYLE : TOOL_NORMAL_ICON_STYLE;
     const titleStyle = !isTaskTool && isError ? TOOL_ERROR_TITLE_STYLE : TOOL_NORMAL_TITLE_STYLE;
     const shouldRenderTaskSummary = useDeferredExpandedContent(isTaskTool && (taskSummaryEntries.length > 0 || isActive || shouldTreatAsFinalized || !!taskSessionId));
-    const shouldRenderExpandedContent = useDeferredExpandedContent(!isTaskTool && isExpanded);
+    const shouldRenderExpandedContent = useDeferredExpandedContent(!isTaskTool && !hasExtensionRender && isExpanded);
 
     if (!shouldTreatAsFinalized && !isActive && !isTaskTool) {
         return null;
@@ -662,6 +732,19 @@ const ToolPartContent: React.FC<ToolPartProps> = ({
             </div>
 
             {}
+            {hasExtensionRender ? (
+                <ExtensionRenderBlock
+                    call={toolRender?.call}
+                    result={
+                        isExpanded
+                            ? ((toolRender?.resultExpanded && toolRender.resultExpanded.length > 0)
+                                ? toolRender.resultExpanded
+                                : toolRender?.result)
+                            : toolRender?.result
+                    }
+                />
+            ) : null}
+
             {shouldRenderTaskSummary ? (
                 <TaskToolSummary
                     entries={taskSummaryEntries}
@@ -676,7 +759,7 @@ const ToolPartContent: React.FC<ToolPartProps> = ({
                 />
             ) : null}
 
-            {!isTaskTool ? (
+            {!isTaskTool && !hasExtensionRender ? (
                 <div
                     ref={expandedContentRef}
                     aria-hidden={!isExpanded}

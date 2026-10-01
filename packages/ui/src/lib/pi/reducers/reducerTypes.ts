@@ -3,6 +3,7 @@ import type {
   PiExtensionAppPayload,
   PiExtensionDialogPayload,
   PiExtensionPanelPayload,
+  PiToolRender,
 } from '../protocol';
 import type {
   PiAttachment,
@@ -29,6 +30,8 @@ export interface PiReducerMessagePart {
     name: string;
     input?: unknown;
     output?: unknown;
+    /** Custom ANSI line rendering for extension tools. */
+    render?: PiToolRender;
     /** Error message when the tool ended in an error state. */
     error?: string;
     /** Renderer metadata (edit diffs, truncation notes). */

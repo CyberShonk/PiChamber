@@ -267,6 +267,7 @@ export type PiSessionMessagePart =
       name: string;
       input?: unknown;
       output?: unknown;
+      render?: PiToolRender;
       isError?: boolean;
       state: 'pending' | 'running' | 'completed' | 'error' | 'cancelled';
       startedAt?: number;
@@ -813,6 +814,12 @@ export type PiAssistantThinkingDeltaEvent = PiEventEnvelope<
   PiAssistantThinkingDeltaPayload
 >;
 
+export interface PiToolRender {
+  call?: string[];
+  result?: string[];
+  resultExpanded?: string[];
+}
+
 export interface PiToolUpdatePayload {
   toolCallId: string;
   partId: string;
@@ -821,6 +828,8 @@ export interface PiToolUpdatePayload {
   state: 'pending' | 'running' | 'completed' | 'error' | 'cancelled';
   input?: unknown;
   output?: unknown;
+  /** Custom ANSI line rendering for extension tools. */
+  render?: PiToolRender;
   /** Tool error message when the execution ended in an error state. */
   error?: string;
   /** Renderer metadata (edit diffs, truncation notes) without temp paths. */

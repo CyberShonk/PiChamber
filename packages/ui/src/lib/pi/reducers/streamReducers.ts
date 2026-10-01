@@ -183,6 +183,7 @@ export const reduceTool = (
         toolCallId: payload.toolCallId,
         name: payload.name,
         ...(payload.input !== undefined ? { input: payload.input } : {}),
+        ...(payload.render !== undefined ? { render: payload.render } : {}),
         state: payload.state,
         ...(startedAt !== undefined ? { startedAt } : {}),
       },
@@ -197,6 +198,9 @@ export const reduceTool = (
   if (!part || part.type !== 'tool') return false;
   const nextPart = { ...part };
   const previous = part.tool;
+  const render = payload.render !== undefined
+    ? { ...(previous?.render ?? {}), ...payload.render }
+    : previous?.render;
   nextPart.tool = {
     toolCallId: payload.toolCallId,
     name: payload.name,
@@ -210,6 +214,7 @@ export const reduceTool = (
       : previous?.output !== undefined
         ? { output: previous.output }
         : {}),
+    ...(render !== undefined ? { render } : {}),
     ...(payload.error !== undefined
       ? { error: payload.error }
       : previous?.error !== undefined

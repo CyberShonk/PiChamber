@@ -1,3 +1,5 @@
+import type { PiToolRender } from '@/lib/pi/protocol';
+
 /**
  * PiChamber-owned render/session types used by the restored PiChamber UI.
  */
@@ -70,6 +72,8 @@ export interface ToolState {
   status?: string;
   input?: unknown;
   output?: unknown;
+  /** Custom ANSI line rendering for extension tools. */
+  render?: PiToolRender;
   error?: string;
   title?: string;
   metadata?: Record<string, unknown>;
