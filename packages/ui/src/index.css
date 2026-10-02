@@ -324,6 +324,25 @@ div[data-chat-input-footer="true"] {
   );
 }
 
+/* By-folder sticky folder header. Sticky offsets resolve inside the scroller's
+   top padding, so the header paints a cover over that strip (its ::before).
+   Rows scrolling under a stuck header fade out through this overlay. The stuck
+   state comes from a scroll-state container query; engines without it keep a
+   hard edge instead of a fade. */
+.oc-sidebar-sticky-header {
+  container-type: scroll-state;
+}
+
+.oc-sidebar-sticky-header-fade {
+  opacity: 0;
+}
+
+@container scroll-state(stuck: top) {
+  .oc-sidebar-sticky-header-fade {
+    opacity: 1;
+  }
+}
+
 /* Sidebar session row while its agent is working: the working indicator sits
    over the right edge of the row and the row content fades out beneath it. A
    mask (not a painted gradient) keeps this independent of the row's hover,

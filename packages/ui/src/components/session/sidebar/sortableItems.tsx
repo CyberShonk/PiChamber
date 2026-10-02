@@ -110,6 +110,10 @@ export const SortableProjectItem: React.FC<SortableProjectItemProps> = ({
   const menuInstanceKey = `project:${id}`;
   const isMenuOpen = openSidebarMenuKey === menuInstanceKey;
   const [isContextMenuOpen, setIsContextMenuOpen] = React.useState(false);
+  // A collapsed folder is only as tall as its header, so the header has nothing to
+  // stick over. Leaving it out keeps a long list of collapsed folders free of
+  // sticky boxes and scroll-state containers the scroller would track every frame.
+  const isSticky = stickyHeader && !isCollapsed;
 
   const handleMenuOpenChange = React.useCallback((open: boolean) => {
     if (open) setIsContextMenuOpen(false);
@@ -176,9 +180,10 @@ export const SortableProjectItem: React.FC<SortableProjectItemProps> = ({
               <div
                 className={cn(
                   'text-left group/project select-none',
-                  stickyHeader && 'sticky top-0 z-20 bg-sidebar',
+                  // The ::before covers the scroller's top padding above a stuck header.
+                  isSticky && 'oc-sidebar-sticky-header sticky top-0 z-20 bg-sidebar before:pointer-events-none before:absolute before:inset-x-0 before:bottom-full before:h-2 before:bg-sidebar',
                 )}
-                data-sidebar-sticky-header={stickyHeader ? 'true' : undefined}
+                data-sidebar-sticky-header={isSticky ? 'true' : undefined}
                 onContextMenu={(event) => {
                   if (hideDirectoryControls || isDragging) return;
                   event.preventDefault();
@@ -292,6 +297,12 @@ export const SortableProjectItem: React.FC<SortableProjectItemProps> = ({
                 </div>
               ) : null}
             </div>
+            {isSticky ? (
+              <span
+                aria-hidden
+                className="oc-sidebar-sticky-header-fade pointer-events-none absolute inset-x-0 top-full h-4 bg-gradient-to-b from-sidebar to-transparent"
+              />
+            ) : null}
           </ContextMenuTrigger>
           <ContextMenuContent className="min-w-[180px]">
             {renderProjectMenuItems(ContextMenuItem)}

@@ -526,6 +526,7 @@ describe('SidebarProjectsList view modes', () => {
           homeDirectory: '/home/tester',
           collapsedProjects: collapsedSet,
           hideDirectoryControls: hideDir,
+          stickyFolderHeaders: true,
           onOpenDirectoryDialog: noop,
           projectRepoStatus: new Map(),
           mobileVariant: false,
@@ -566,6 +567,9 @@ describe('SidebarProjectsList view modes', () => {
     // Folder 2 header has aria-expanded="false"
     expect(markupCollapsed).toContain('aria-expanded="false"');
 
+    // Only the expanded folders (f1, f3) get a sticky header: a collapsed one has nothing to stick over
+    expect(markupCollapsed.split('data-sidebar-sticky-header="true"').length - 1).toBe(2);
+
     // The folder icon stays on every header and the collapse chevron is a separate, always-rendered marker
     expect(markupCollapsed.split(iconHref('folder')).length - 1).toBe(4);
     expect(markupCollapsed.split(iconHref('arrow-down-s')).length - 1).toBe(3);
@@ -582,6 +586,7 @@ describe('SidebarProjectsList view modes', () => {
     const markupSearching = renderFolderTree(new Set(['f2']), true, false);
     expect(markupSearching).toContain('Folder Two');
     expect(renderedGroupKeys).toContain('f2|f2:group-f2');
+    expect(markupSearching.split('data-sidebar-sticky-header="true"').length - 1).toBe(3);
 
     // When hideDirectoryControls is true: "Add folder" is hidden
     const markupHideControls = renderFolderTree(new Set(), false, true);
@@ -637,6 +642,7 @@ describe('SidebarProjectsList view modes', () => {
         homeDirectory: '/home/tester',
         collapsedProjects: allCollapsed,
         hideDirectoryControls: false,
+        stickyFolderHeaders: true,
         projectRepoStatus: new Map(),
         mobileVariant: false,
         alwaysShowActions: false,
@@ -655,6 +661,10 @@ describe('SidebarProjectsList view modes', () => {
     );
 
     expect(renderGroupSessionsCalls).toBe(0);
+    // Collapsed folders must not become sticky boxes or scroll-state containers:
+    // the scroller tracks each of those on every scroll frame.
+    expect(markup).not.toContain('data-sidebar-sticky-header');
+    expect(markup).not.toContain('oc-sidebar-sticky-header');
     for (let i = 0; i < 200; i++) {
       expect(markup).toContain(`Project ${i}`);
     }
