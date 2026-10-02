@@ -651,20 +651,35 @@ function SessionNodeItemComponent(props: SessionNodeItemProps): React.ReactNode 
               <span
                 data-session-working
                 className={cn(
-                  'pointer-events-none absolute inset-y-0 right-3 flex items-center gap-1.5 transition-opacity',
+                  'pointer-events-none absolute inset-y-0 right-0 flex items-center rounded-r-[inherit] pr-3 transition-opacity',
                   showQuickArchiveAction && 'group-hover:opacity-0 group-focus-within:opacity-0',
                 )}
               >
-                {showActivityDuration ? (
-                  <SessionActivityDuration sessionId={session.id} running={isStreaming} className="text-[11px]" />
-                ) : null}
-                <AgentThinkingLoader
-                  variant="inline"
-                  text={null}
-                  animationType="spinner"
-                  speedMs={80}
-                  className="text-primary text-xs shrink-0"
+                {/* A soft glow breathing in from the edge marks the row as live. */}
+                <span
+                  aria-hidden="true"
+                  className="oc-session-row-working-aura absolute inset-y-0 right-0 w-24 rounded-r-[inherit] bg-gradient-to-l from-primary/15 to-transparent"
                 />
+                {/* Stacked on the row's two lines: the indicator stands where the
+                    timestamp is, the turn time where the details line ends. */}
+                <span className="relative flex flex-col items-end gap-1">
+                  <span className="flex h-5 items-center">
+                    <AgentThinkingLoader
+                      variant="inline"
+                      text={null}
+                      animationType="spinner"
+                      speedMs={80}
+                      className="text-primary text-xs shrink-0"
+                    />
+                  </span>
+                  {showActivityDuration ? (
+                    <SessionActivityDuration
+                      sessionId={session.id}
+                      running={isStreaming}
+                      className="text-[11px] leading-4"
+                    />
+                  ) : null}
+                </span>
               </span>
             ) : null}
           </ContextMenu.Trigger>
