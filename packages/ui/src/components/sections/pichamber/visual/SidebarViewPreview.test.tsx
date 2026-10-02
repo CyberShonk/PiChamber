@@ -46,8 +46,13 @@ describe('SidebarViewPreview', () => {
       }),
     );
 
-    expect(markupSelected).toContain('aria-pressed="true"');
+    // The tile is the only radio: the dot inside it is decorative, so each
+    // option is one tab stop and one announced control.
+    expect(markupSelected.match(/role="radio"/g)).toHaveLength(1);
+    expect(markupSelected).not.toContain('aria-pressed');
     expect(markupSelected).toContain('aria-checked="true"');
+    expect(markupSelected).toContain('aria-label="Workspace"');
+    expect(/<button[^>]*aria-hidden="true"[^>]*tabindex="-1"/.test(markupSelected)).toBe(true);
     expect(markupSelected).toContain('data-testid="custom-preview"');
     expect(markupSelected).toContain('aria-hidden="true"');
 
@@ -61,7 +66,7 @@ describe('SidebarViewPreview', () => {
       }),
     );
 
-    expect(markupUnselected).toContain('aria-pressed="false"');
+    expect(markupUnselected).not.toContain('aria-pressed');
     expect(markupUnselected).toContain('aria-checked="false"');
   });
 });

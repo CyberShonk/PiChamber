@@ -544,9 +544,10 @@ export const SettingsPreviewOption: React.FC<SettingsPreviewOptionProps> = ({
         disabled && 'cursor-not-allowed opacity-60',
         className,
       )}
-      role="button"
+      role="radio"
       tabIndex={disabled ? -1 : 0}
-      aria-pressed={selected}
+      aria-checked={selected}
+      aria-label={ariaLabel}
       aria-disabled={disabled || undefined}
       onClick={() => {
         if (!disabled) onSelect();
@@ -575,7 +576,7 @@ export const SettingsPreviewOption: React.FC<SettingsPreviewOptionProps> = ({
           checked={selected}
           onChange={onSelect}
           disabled={disabled}
-          ariaLabel={ariaLabel}
+          decorative
         />
         <span
           className={cn(
