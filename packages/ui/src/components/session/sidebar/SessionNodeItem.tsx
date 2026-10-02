@@ -404,7 +404,8 @@ function SessionNodeItemComponent(props: SessionNodeItemProps): React.ReactNode 
                 }}
                 className={cn(
                   'group relative my-0.5 flex cursor-pointer rounded-xl px-3 transition-colors',
-                  isCard ? 'items-start py-1.5' : 'items-center py-2',
+                  'py-2',
+                  isCard ? 'items-start' : 'items-center',
                   !rowBackground && depth > 0
                     ? 'bg-secondary/30 hover:bg-interactive-hover'
                     : !rowBackground
@@ -486,7 +487,10 @@ function SessionNodeItemComponent(props: SessionNodeItemProps): React.ReactNode 
                     e.stopPropagation();
                     handleSessionDoubleClick(session.id, sessionTitle);
                   }}
-                  className="flex min-w-0 flex-1 cursor-pointer flex-col gap-0.5 overflow-hidden text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 text-foreground select-none"
+                  className={cn(
+                    'flex min-w-0 flex-1 cursor-pointer flex-col overflow-hidden text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 text-foreground select-none',
+                    isCard ? 'gap-1' : 'gap-0.5',
+                  )}
                 >
                   <div className="flex w-full items-center min-w-0 flex-1 gap-1.5 overflow-hidden">
                     <div

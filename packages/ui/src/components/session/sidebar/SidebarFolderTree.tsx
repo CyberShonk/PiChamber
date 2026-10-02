@@ -22,7 +22,7 @@ import { getProjectLabel } from './utils';
 
 // Rows keep the full sidebar width; the `tree` session row variant indents
 // its own content under the folder label.
-const folderBodyClassName = 'pb-1';
+const folderBodyClassName = 'pt-0.5 pb-1';
 
 interface SidebarFolderTreeProps {
   sections: ProjectSection[];
