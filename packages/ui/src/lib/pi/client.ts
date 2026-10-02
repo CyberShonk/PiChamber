@@ -1070,6 +1070,26 @@ export class PiService {
       method: 'POST', body: input, ...(scope?.runtimeKey ? { runtimeKey: scope.runtimeKey } : {}),
     });
   }
+
+  /** Update extension editor draft mirror text for a session. */
+  async updateExtensionDraft(
+    input: { sessionId: string; text: string; revision: number; directory?: string },
+    scope?: PiClientScope,
+  ): Promise<void> {
+    assertRuntimeUnchanged(scope);
+    await jsonRequest<{ text: string; revision: number; directory?: string }, undefined>(
+      `/api/pi/sessions/${encodeURIComponent(input.sessionId)}/editor-draft`,
+      {
+        method: 'POST',
+        body: {
+          text: input.text,
+          revision: input.revision,
+          ...(input.directory ? { directory: input.directory } : {}),
+        },
+        ...(scope?.runtimeKey ? { runtimeKey: scope.runtimeKey } : {}),
+      },
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------

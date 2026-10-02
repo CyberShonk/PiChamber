@@ -3,6 +3,7 @@ import type {
   PiExtensionAppPayload,
   PiExtensionDialogPayload,
   PiExtensionPanelPayload,
+  PiToolRender,
 } from '../protocol';
 import type {
   PiAttachment,
@@ -29,6 +30,8 @@ export interface PiReducerMessagePart {
     name: string;
     input?: unknown;
     output?: unknown;
+    /** Custom ANSI line rendering for extension tools. */
+    render?: PiToolRender;
     /** Error message when the tool ended in an error state. */
     error?: string;
     /** Renderer metadata (edit diffs, truncation notes). */
@@ -85,6 +88,12 @@ export const createReducerPartMap = (
   entries?: Iterable<readonly [string, PiReducerMessagePart]>,
 ): PiReducerPartMap => (entries ? CowMap.from(entries) : CowMap.empty());
 
+export interface PiExtensionEditorOp {
+  text: string;
+  mode: 'set' | 'paste';
+  sequence: number;
+}
+
 export interface PiReducerSessionState {
   sessionId: PiSessionId;
   directory: string;
@@ -139,10 +148,16 @@ export interface PiReducerSessionState {
   /** Low-frequency invalidation counters for extension-owned catalogs and labels. */
   extensionCatalogRevision?: number;
   sessionTreeRevision?: number;
-  /** Latest live standard-RPC editor replacement, applied once by the composer. */
-  extensionEditor?: { text: string; sequence: number };
+  /** Pending live standard-RPC editor operations, applied in order by the composer. */
+  extensionEditorOps?: PiExtensionEditorOp[];
+  /** Latest live standard-RPC editor operation, applied once by the composer. */
+  extensionEditor?: PiExtensionEditorOp;
   /** Session-scoped standard-RPC window/tab title. */
   extensionTitle?: string;
+  /** Live extension working message/visibility. */
+  extensionWorking?: { message?: string; visible?: boolean };
+  /** Whether the session daemon is tracking editor draft text for extensions. */
+  extensionDraftTracked?: boolean;
   /**
    * Last message a part-level or structural write touched. Live-tail freeze
    * uses this instead of walking every historical part on each token.

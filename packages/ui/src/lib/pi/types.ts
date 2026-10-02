@@ -17,6 +17,8 @@
  * The shapes are consumed directly by the Pi bootstrap and event reducers.
  */
 
+import type { PiToolRender } from './protocol';
+
 /**
  * Stable Pi session identity. Pi persists a unique `sessionId` per agent
  * session; the directory is the canonical workspace that owns the session.
@@ -228,6 +230,8 @@ export interface PiToolPart extends PiPartBase {
    */
   input?: unknown;
   output?: unknown;
+  /** Custom ANSI line rendering for extension tools. */
+  render?: PiToolRender;
   /** Set to true when the tool returned an error. */
   isError?: boolean;
   /** Tool execution state from Pi. */
@@ -305,6 +309,10 @@ export interface PiSessionSnapshot {
   extensionApps?: Array<import('./protocol').PiExtensionAppPayload>;
   /** Session-scoped window/tab title set by an extension. */
   extensionTitle?: string;
+  /** Live extension working message/visibility at snapshot time. */
+  extensionWorking?: { message?: string; visible?: boolean };
+  /** Whether the session daemon is tracking editor draft text for extensions. */
+  extensionDraftTracked?: boolean;
   /** Retry countdown/error context while `lifecycle` is `retry`. */
   retry?: PiRetryInfo;
   /** Latest active or completed compaction state. */

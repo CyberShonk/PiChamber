@@ -1,7 +1,7 @@
 import type { Session, Message, Part, SessionMessageRecord } from '@/lib/chat/types';
 import type { PiProjectedMessage, PiProjectedMessagePart, PiProjectedSession } from '@/lib/pi/event-reducer';
 import type { PiSession } from '@/lib/pi/types';
-import type { PiSessionListItem } from '@/lib/pi/protocol';
+import type { PiSessionListItem, PiToolRender } from '@/lib/pi/protocol';
 
 export const SETTLED_TOOL_RECORD_BUDGET_CHARS = 2048;
 
@@ -73,6 +73,18 @@ export const mapPart = (
     const outputOverBudget = !keepFull && measureUnknown(part.tool?.output) > SETTLED_TOOL_RECORD_BUDGET_CHARS;
     const metadata = keepFull ? part.tool?.metadata : stubSettledToolMetadata(part.tool?.metadata);
     const deferredBody = Boolean(!keepFull && (outputOverBudget || metadata?.deferredBody));
+    const toolRender = part.tool?.render;
+    let render: PiToolRender | undefined;
+    if (toolRender) {
+      if (deferredBody && toolRender.resultExpanded !== undefined) {
+        render = {
+          ...(toolRender.call !== undefined ? { call: toolRender.call } : {}),
+          ...(toolRender.result !== undefined ? { result: toolRender.result } : {}),
+        };
+      } else {
+        render = toolRender;
+      }
+    }
     return {
       id: part.id,
       type: 'tool',
@@ -85,6 +97,7 @@ export const mapPart = (
               : 'completed',
         input: part.tool?.input,
         ...(outputOverBudget ? {} : { output: part.tool?.output }),
+        ...(render !== undefined ? { render } : {}),
         error: part.tool?.error,
         time: { start: part.tool?.startedAt, end: part.tool?.endedAt },
         metadata,

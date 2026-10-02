@@ -3,6 +3,8 @@ import React from 'react';
 import type { AnimationHandlers, ContentChangeReason } from '@/hooks/useChatAutoFollow';
 import ChatMessage from '../ChatMessage';
 import { ExtensionMessageCard } from '../message/parts/extension/ExtensionMessageCard';
+import { ExtensionNoteRow } from '../message/parts/extension/ExtensionNoteRow';
+import { parseExtensionChatItem } from '@/lib/pi/extension-ui';
 import {
   areOptionalNeighborMessagesEqual,
   areRelevantTurnGroupingContextsEqual,
@@ -49,18 +51,37 @@ export const MessageRow = React.memo<MessageRowProps>(
       text?: string;
     };
 
-    // Extension-authored content renders through the extension card instead of
-    // the user/assistant turn pipeline.
+    // Extension-authored content renders through declarative UI cards when recognized,
+    // or compact note rows for custom text/fallback messages.
     if (info.role === 'extension') {
+      const parsed = parseExtensionChatItem({
+        customType: info.customType,
+        data: info.data,
+        details: info.details,
+        text: typeof info.text === 'string' ? info.text : undefined,
+      });
+
       return (
-        <ExtensionMessageCard
-          sessionId={info.sessionID}
-          messageId={message.info.id}
-          customType={info.customType}
-          text={typeof info.text === 'string' ? info.text : undefined}
-          data={info.data}
-          details={info.details}
-        />
+        <div className="chat-message-column">
+          {parsed.kind === 'ui' ? (
+            <ExtensionMessageCard
+              sessionId={info.sessionID}
+              messageId={message.info.id}
+              customType={info.customType}
+              text={typeof info.text === 'string' ? info.text : undefined}
+              data={info.data}
+              details={info.details}
+            />
+          ) : (
+            <ExtensionNoteRow
+              messageId={message.info.id}
+              customType={info.customType}
+              text={typeof info.text === 'string' ? info.text : undefined}
+              data={info.data}
+              details={info.details}
+            />
+          )}
+        </div>
       );
     }
 

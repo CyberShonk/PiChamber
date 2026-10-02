@@ -79,6 +79,7 @@ import {
   reduceExtensionTitle,
   reduceExtensionUi,
   reduceExtensionWidget,
+  reduceExtensionWorking,
 } from './reducers/extensionReducers';
 import {
   hydrateSessionFromDetail,
@@ -209,6 +210,16 @@ export const applyPiEvent = (
           session.extensionApps = apps;
         }
         session.extensionTitle = event.payload.snapshot.extensionTitle;
+        if (event.payload.snapshot.extensionWorking) {
+          session.extensionWorking = { ...event.payload.snapshot.extensionWorking };
+        } else {
+          delete session.extensionWorking;
+        }
+        if (event.payload.snapshot.extensionDraftTracked === true) {
+          session.extensionDraftTracked = true;
+        } else {
+          delete session.extensionDraftTracked;
+        }
         markHydratedLiveActivity(session, {
           isStreaming: event.payload.snapshot.isStreaming,
           lifecycle: session.lifecycle,
@@ -363,6 +374,13 @@ export const applyPiEvent = (
       break;
     case 'extension.app':
       reduceExtensionApp(session, event.payload);
+      break;
+    case 'extension.working':
+      reduceExtensionWorking(session, event.payload);
+      break;
+    case 'extension.editor.track':
+      if (event.payload.enabled) session.extensionDraftTracked = true;
+      else delete session.extensionDraftTracked;
       break;
     case 'extension.error':
       reduceExtensionError(session, event.payload);

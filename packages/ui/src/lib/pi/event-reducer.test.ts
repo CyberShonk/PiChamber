@@ -1125,4 +1125,97 @@ describe("Pi usage", () => {
     expect(session.model).toEqual({ providerId: "anthropic", modelId: "sonnet" })
     expect(session.thinking).toBe("high")
   })
+
+  test("merges extension tool render lines across start, update, and end phases", () => {
+    let state = applyPiEvent(createReducerState(), assistantStart()).state
+    // start sets render when present
+    state = applyPiEvent(state, baseEvent("session.tool.start", 2, {
+      toolCallId: "t1",
+      partId: "p-tool",
+      messageId: "m1",
+      name: "subagent",
+      state: "running",
+      render: { call: ["Starting subagent..."] },
+      startedAt: 1_500,
+    })).state
+    let part = state.bySession.get("sess-1")?.parts.get("p-tool")
+    expect(part?.tool?.render).toEqual({ call: ["Starting subagent..."] })
+
+    // update with no render keeps previous render
+    state = applyPiEvent(state, baseEvent("session.tool.update", 3, {
+      toolCallId: "t1",
+      partId: "p-tool",
+      messageId: "m1",
+      name: "subagent",
+      state: "running",
+      output: "intermediate",
+    })).state
+    part = state.bySession.get("sess-1")?.parts.get("p-tool")
+    expect(part?.tool?.render).toEqual({ call: ["Starting subagent..."] })
+
+    // update with render replaces/merges result
+    state = applyPiEvent(state, baseEvent("session.tool.update", 4, {
+      toolCallId: "t1",
+      partId: "p-tool",
+      messageId: "m1",
+      name: "subagent",
+      state: "running",
+      render: { result: ["Working on task step 1"] },
+    })).state
+    part = state.bySession.get("sess-1")?.parts.get("p-tool")
+    expect(part?.tool?.render).toEqual({
+      call: ["Starting subagent..."],
+      result: ["Working on task step 1"],
+    })
+
+    // end adds resultExpanded and finalizes result
+    state = applyPiEvent(state, baseEvent("session.tool.end", 5, {
+      toolCallId: "t1",
+      partId: "p-tool",
+      messageId: "m1",
+      name: "subagent",
+      state: "completed",
+      render: {
+        result: ["Completed subagent task"],
+        resultExpanded: ["Completed subagent task", "Details: 3 steps executed"],
+      },
+      endedAt: 2_000,
+    })).state
+    part = state.bySession.get("sess-1")?.parts.get("p-tool")
+    expect(part?.tool?.render).toEqual({
+      call: ["Starting subagent..."],
+      result: ["Completed subagent task"],
+      resultExpanded: ["Completed subagent task", "Details: 3 steps executed"],
+    })
+  })
+
+  test("hydrateSessionFromDetail copies extension tool render lines", () => {
+    const render = {
+      call: ["subagent call"],
+      result: ["subagent result"],
+      resultExpanded: ["subagent result", "extended details"],
+    }
+    const { session } = hydrateSessionFromDetail({
+      session: { id: "sess-1", directory: "/work" },
+      lastSequence: 10,
+      messages: [
+        {
+          message: { id: "a1", sessionId: "sess-1", directory: "/work", role: "assistant", createdAt: 1, text: "ok", thinking: "" },
+          parts: [
+            {
+              id: "p-tool",
+              index: 0,
+              type: "tool",
+              toolCallId: "t1",
+              name: "subagent",
+              state: "completed",
+              render,
+            },
+          ],
+        },
+      ],
+    })
+    const part = session.parts.get("p-tool")
+    expect(part?.tool?.render).toEqual(render)
+  })
 })

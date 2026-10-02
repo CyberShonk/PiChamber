@@ -188,6 +188,8 @@ export const mergeHydratedSession = (
           extensionPanels: existing.extensionPanels,
           extensionApps: existing.extensionApps,
           extensionTitle: existing.extensionTitle,
+          ...(existing.extensionWorking ? { extensionWorking: existing.extensionWorking } : {}),
+          ...(existing.extensionDraftTracked ? { extensionDraftTracked: true } : {}),
         }
       : {}),
     // These fields are local live state rather than part of the session detail
@@ -197,6 +199,7 @@ export const mergeHydratedSession = (
     extensionCatalogRevision: existing.extensionCatalogRevision,
     sessionTreeRevision: existing.sessionTreeRevision,
     extensionEditor: existing.extensionEditor,
+    extensionEditorOps: existing.extensionEditorOps,
     // The pre-echo marker is likewise local send state. The detail response
     // never carries it; keep it so a hydrate racing the user echo does not
     // reopen the window. The selector still self-resolves once the fetched

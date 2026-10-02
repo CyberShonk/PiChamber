@@ -2,10 +2,8 @@ import React from 'react';
 import type { Message } from '@/lib/chat/types';
 
 import { ChatInput } from './ChatInput';
-import { ExtensionDialogOverlay } from './ExtensionDialogOverlay';
-import { ExtensionStatusStrip, ExtensionNoticeToasts, ExtensionWidgetStrip } from './ExtensionStatusWidgets';
-import { ExtensionPanelDock } from './extension/ExtensionPanelDock';
-import { ExtensionAppSurfaces } from './extension/ExtensionAppSurfaces';
+import { ExtensionPromptDock } from './ExtensionPromptDock';
+import { ExtensionStatusStrip, ExtensionNoticeToasts } from './ExtensionStatusWidgets';
 import { ComposerCommandTriggers } from './composer/ui/ComposerCommandTriggers';
 import { useUIStore } from '@/stores/useUIStore';
 import { PiChamberLogo } from '@/components/ui/PiChamberLogo';
@@ -558,7 +556,15 @@ export const ChatContainer: React.FC<ChatContainerProps> = ({ active = true, aut
 								: 'flex-1 items-center justify-center bg-background px-0 pb-[6vh]'
 					)}
 				>
-					<ChatInput scrollToBottom={scrollToBottomOnSend} />
+					{/* A command-only session still has live extension surfaces: a
+					status such as a mode indicator set by a settled command, or a
+					dialog an extension opens while idle, must show before the first
+					transcript message exists. */}
+					<div className="flex w-full min-w-0 flex-col gap-2">
+						<ExtensionPromptDock sessionId={currentSessionId} />
+						<ExtensionStatusStrip sessionId={currentSessionId} />
+						<ChatInput scrollToBottom={scrollToBottomOnSend} />
+					</div>
 				</div>
 				{/* Extension notices (e.g. mode-switch confirmations) toast here too:
 				this branch owns sessions whose transcript is still empty. */}
@@ -611,15 +617,11 @@ export const ChatContainer: React.FC<ChatContainerProps> = ({ active = true, aut
                     />
                 )}
                 <ComposerCommandTriggers sessionId={currentSessionId} />
-                <ExtensionAppSurfaces sessionId={currentSessionId} />
-                <ExtensionPanelDock sessionId={currentSessionId} />
-                <ExtensionWidgetStrip sessionId={currentSessionId} placement="aboveEditor" />
+                <ExtensionPromptDock sessionId={currentSessionId} />
                 <ExtensionStatusStrip sessionId={currentSessionId} />
                 <ChatInput scrollToBottom={scrollToBottomOnSend} />
-                <ExtensionWidgetStrip sessionId={currentSessionId} placement="belowEditor" />
             </div>
 
-            <ExtensionDialogOverlay />
             <ExtensionNoticeToasts sessionId={currentSessionId} />
 
             <TimelineDialog

@@ -2,6 +2,7 @@ import type {
   PiExtensionAppPayload,
   PiExtensionDialogPayload,
   PiExtensionPanelPayload,
+  PiToolRender,
 } from '../protocol';
 import { resolveExistingSessionComposerSelection } from '../thinking';
 import { toClientTimestamp } from '../server-clock';
@@ -269,6 +270,8 @@ export const hydrateSessionFromDetail = (
     extensionPanels?: PiExtensionPanelPayload[];
     extensionApps?: PiExtensionAppPayload[];
     extensionTitle?: string;
+    extensionWorking?: { message?: string; visible?: boolean };
+    extensionDraftTracked?: boolean;
     messages: Array<{
       message: PiUserMessage | PiAssistantMessage | {
         id: string;
@@ -289,6 +292,7 @@ export const hydrateSessionFromDetail = (
         name?: string;
         input?: unknown;
         output?: unknown;
+        render?: PiToolRender;
         error?: string;
         metadata?: Record<string, unknown>;
         isError?: boolean;
@@ -336,8 +340,14 @@ export const hydrateSessionFromDetail = (
       .map((app) => [app.appId, app]));
   }
   session.extensionTitle = detail.extensionTitle;
+  if (detail.extensionWorking) {
+    session.extensionWorking = { ...detail.extensionWorking };
+  }
+  if (detail.extensionDraftTracked === true) {
+    session.extensionDraftTracked = true;
+  }
 
-  for (const { message, parts } of detail.messages) {
+  for (const { message, parts } of (detail.messages ?? [])) {
     const isExtension = message.role === 'extension';
     const reducerMessage: PiReducerMessage = {
       id: message.id,
@@ -384,6 +394,7 @@ export const hydrateSessionFromDetail = (
                 name: part.name ?? 'unknown',
                 ...(part.input !== undefined ? { input: part.input } : {}),
                 ...(part.output !== undefined ? { output: part.output } : {}),
+                ...(part.render !== undefined ? { render: part.render } : {}),
                 ...(typeof part.error === 'string' ? { error: part.error } : {}),
                 ...(part.metadata !== undefined ? { metadata: part.metadata } : {}),
                 ...(part.isError !== undefined ? { isError: part.isError } : {}),

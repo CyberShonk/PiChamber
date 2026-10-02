@@ -57,6 +57,7 @@ import { AttachedFilesList } from "./FileAttachment";
 import { lazyWithChunkRecovery } from "@/lib/chunkLoadRecovery";
 import type { ToolPopupContent } from "./message/types";
 import { QueuedMessageChips } from "./QueuedMessageChips";
+import { useExtensionDraftSync } from "./hooks/useExtensionDraftSync";
 import type { FileMentionHandle } from "./FileMentionAutocomplete";
 import type {
   CommandAutocompleteHandle,
@@ -337,34 +338,97 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     currentSessionId ? `session:${currentSessionId}` : "chrome",
   );
   const isSessionInUse = sessionLoadErrorCode === "SESSION_IN_USE";
-  const extensionEditor = usePiSessionSnapshot(
-    (state) =>
-      currentSessionId
-        ? state.reducer.bySession.get(currentSessionId)?.extensionEditor
-        : undefined,
-    (previous, next) => previous?.sequence === next?.sequence,
+  const extensionEditorSelection = usePiSessionSnapshot(
+    (state) => {
+      if (!currentSessionId) return undefined;
+      const session = state.reducer.bySession.get(currentSessionId);
+      if (!session) return undefined;
+      const ops =
+        session.extensionEditorOps ??
+        (session.extensionEditor ? [session.extensionEditor] : undefined);
+      if (!ops || ops.length === 0) return undefined;
+      return { sessionId: currentSessionId, ops };
+    },
+    (previous, next) => {
+      if (previous === next) return true;
+      if (!previous || !next) return false;
+      if (previous.sessionId !== next.sessionId) return false;
+      if (previous.ops.length !== next.ops.length) return false;
+      return previous.ops.every(
+        (op, idx) =>
+          op.sequence === next.ops[idx]?.sequence &&
+          op.text === next.ops[idx]?.text &&
+          op.mode === next.ops[idx]?.mode,
+      );
+    },
     currentSessionId ? `session:${currentSessionId}` : "chrome",
   );
   const appliedExtensionEditorBySessionRef = React.useRef(
     new Map<string, number>(),
   );
   React.useEffect(() => {
-    if (!currentSessionId || !extensionEditor) return;
+    if (
+      !currentSessionId ||
+      !extensionEditorSelection ||
+      extensionEditorSelection.sessionId !== currentSessionId
+    ) {
+      return;
+    }
+    const { ops } = extensionEditorSelection;
+    if (!ops || ops.length === 0) return;
     const previousSequence =
       appliedExtensionEditorBySessionRef.current.get(currentSessionId) ?? -1;
-    if (extensionEditor.sequence <= previousSequence) return;
+    const pendingOps = ops.filter(
+      (op) => op.sequence > previousSequence,
+    );
+    if (pendingOps.length === 0) return;
+
+    let maxSequence = previousSequence;
+    for (const op of pendingOps) {
+      if (op.sequence > maxSequence) {
+        maxSequence = op.sequence;
+      }
+    }
+
+    let lastSetIndex = -1;
+    for (let i = pendingOps.length - 1; i >= 0; i--) {
+      if (pendingOps[i]?.mode !== 'paste') {
+        lastSetIndex = i;
+        break;
+      }
+    }
+
+    if (lastSetIndex !== -1) {
+      const lastSet = pendingOps[lastSetIndex]!;
+      const pasteSuffix = pendingOps
+        .slice(lastSetIndex + 1)
+        .map((op) => op.text)
+        .join('');
+      const finalText = lastSet.text + pasteSuffix;
+      confirmedMentionsRef.current.clear();
+      setMessage(finalText);
+      closeAutocomplete();
+    } else {
+      for (const op of pendingOps) {
+        const editor = composerRef.current;
+        if (editor) {
+          editor.insertText(op.text);
+          editor.focus({ preventScroll: true });
+        } else {
+          setMessage((prev) => prev + op.text);
+        }
+      }
+    }
+
     appliedExtensionEditorBySessionRef.current.set(
       currentSessionId,
-      extensionEditor.sequence,
+      maxSequence,
     );
-    confirmedMentionsRef.current.clear();
-    setMessage(extensionEditor.text);
-    closeAutocomplete();
     getPiSessionStore().consumeExtensionEditor(
       currentSessionId,
-      extensionEditor.sequence,
+      maxSequence,
     );
-  }, [closeAutocomplete, currentSessionId, extensionEditor]);
+  }, [closeAutocomplete, currentSessionId, extensionEditorSelection]);
   const fallbackDirectory = useDirectoryStore((s) => s.currentDirectory);
   const currentDirectory = useEffectiveDirectory() ?? fallbackDirectory;
   const currentSessionDirectoryForSync = useSessionUIStore(
@@ -375,6 +439,12 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     ),
   );
   const activeRuntimeKey = getRuntimeKey();
+
+  useExtensionDraftSync({
+    sessionId: currentSessionId,
+    directory: currentSessionDirectoryForSync ?? currentDirectory,
+    text: message,
+  });
 
   // Keep the skill catalog warm for the active runtime/directory. The store
   // is not persisted and previously only filled on demand (autocomplete open

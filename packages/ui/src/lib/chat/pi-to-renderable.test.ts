@@ -283,4 +283,97 @@ describe('pi-to-renderable', () => {
     expect(second).toHaveLength(1);
     expect(second[0]).toBe(first[0]);
   });
+
+  test('carries extension tool render lines through mapPart and drops resultExpanded when deferred', () => {
+    const render = {
+      call: ['Starting extension tool...'],
+      result: ['Collapsed result line 1', 'Collapsed result line 2'],
+      resultExpanded: ['Expanded result line 1', 'Expanded detail line 2', 'Expanded line 3'],
+    };
+    const oversized = 'x'.repeat(SETTLED_TOOL_RECORD_BUDGET_CHARS + 10);
+
+    // Settled tool with budget deferral (oversized output)
+    const deferredTool: PiProjectedMessage = {
+      id: 'msg_deferred',
+      role: 'assistant',
+      createdAt: 1,
+      streaming: false,
+      text: '',
+      thinking: '',
+      parts: [{
+        id: 'tool_def',
+        type: 'tool',
+        text: '',
+        streaming: false,
+        tool: {
+          name: 'subagent',
+          toolCallId: 'c-def',
+          state: 'completed',
+          output: oversized,
+          render,
+          startedAt: 1,
+          endedAt: 2,
+        },
+      }],
+    };
+    const deferredRecord = piMessageToRecord(deferredTool, 'ses_1').parts[0] as {
+      state?: {
+        output?: unknown;
+        deferredBody?: unknown;
+        render?: { call?: string[]; result?: string[]; resultExpanded?: string[] };
+      };
+    };
+    expect(deferredRecord.state?.deferredBody).toBe(true);
+    expect(deferredRecord.state?.output).toBe(undefined);
+    // render.call and render.result MUST survive budget deferral
+    expect(deferredRecord.state?.render?.call).toEqual(render.call);
+    expect(deferredRecord.state?.render?.result).toEqual(render.result);
+    // resultExpanded MUST be dropped when deferred
+    expect(deferredRecord.state?.render?.resultExpanded).toBe(undefined);
+
+    // Full hydration (e.g. useSessionReducerPart with full: true)
+    const hydrated = mapPart(deferredTool.parts[0], { full: true }) as {
+      state?: {
+        output?: unknown;
+        deferredBody?: unknown;
+        render?: { call?: string[]; result?: string[]; resultExpanded?: string[] };
+      };
+    };
+    expect(hydrated.state?.deferredBody).toBe(undefined);
+    expect(hydrated.state?.output).toBe(oversized);
+    expect(hydrated.state?.render).toEqual(render);
+    expect(hydrated.state?.render?.resultExpanded).toEqual(render.resultExpanded);
+
+    // Non-deferred tool preserves exact render reference
+    const normalRender = { call: ['call line'], result: ['result line'] };
+    const normalTool: PiProjectedMessage = {
+      id: 'msg_normal',
+      role: 'assistant',
+      createdAt: 1,
+      streaming: false,
+      text: '',
+      thinking: '',
+      parts: [{
+        id: 'tool_norm',
+        type: 'tool',
+        text: '',
+        streaming: false,
+        tool: {
+          name: 'subagent',
+          toolCallId: 'c-norm',
+          state: 'completed',
+          output: 'small output',
+          render: normalRender,
+          startedAt: 1,
+          endedAt: 2,
+        },
+      }],
+    };
+    const normalRecord = piMessageToRecord(normalTool, 'ses_1').parts[0] as {
+      state?: {
+        render?: typeof normalRender;
+      };
+    };
+    expect(normalRecord.state?.render).toBe(normalRender);
+  });
 });

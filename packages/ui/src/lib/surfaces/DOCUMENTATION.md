@@ -18,6 +18,11 @@ edge (`components/layout/ContextPanelRail.tsx`) and rendered by
   repository, hidden while scope is loading with no result yet, and visible
   when scope resolution FAILED so the failure renders instead of looking
   absent. An open tab keeps its surface visible even if scope went away.
+  `availability: 'extensions'` surfaces (Extensions) are visible when the
+  selected session has Pi-native `ctx.ui.setWidget` content or an extensions
+  tab is already open. The surface renders only Pi SDK `ctx.ui` widgets;
+  statuses stay in the composer strip, and PiChamber-only `pichamber.ui` /
+  `pichamber.app` surfaces are intentionally not rendered here yet.
 - `CONTEXT_SURFACE_DEFAULT_WIDTH_FRACTION` is the panel width as a fraction of
   the content area for every surface. A user resize is stored once per
   directory (`contextPanelByDirectory[dir].width`) and applies to every rail
@@ -61,18 +66,22 @@ the `openContext*` actions in `useUIStore`.
 - Multi-instance and stateful surfaces (file/editor, browser, terminal) are
   keep-alive panes in `ContextPanel.tsx`: switching surfaces must not reset
   their state (open tabs, xterm session, scroll positions).
-  Singleton surfaces (git, context, pull-requests, issues) and preview tabs intentionally
+  Singleton surfaces (git, context, pull-requests, issues, extensions) and preview tabs intentionally
   remount on switch and must restore themselves from their stores/snapshots
   instead. Git embeds a stacked diff list of changed files, collapsed until
   the user expands a file. Pull requests / Issues restore list filters,
-  selection, and scroll from their stores. A Git remount serves cached
+  selection, and scroll from their stores. Extensions restores live widgets
+  from the live PiSession snapshot. A Git remount serves cached
   status/branches/log/remotes/ranged-logs immediately and revalidates only
   stale entries in the background (stale-while-revalidate, documented in
   `packages/ui/src/stores/DOCUMENTATION.md`); it must not refetch fresh data.
-- Runtime scope: desktop/web `MainLayout` only. The dedicated Capacitor mobile
+- Runtime scope: desktop/web `MainLayout` and hosted mobile. The dedicated Capacitor mobile
   shell has its own layout and does not consume this registry: phone drawer +
   tablet side panel/header tabs live in `apps/mobileWorkspaceTabs.ts` and
-  render the same `PullRequestsSurface` / `IssuesSurface`. Mobile reuses the
+  render the core tabs plus `PullRequestsSurface` / `IssuesSurface`. The Extensions
+  surface is intentionally omitted from the native Capacitor mobile drawer to preserve
+  the compact 5-tab drawer limit; hosted mobile / narrow web use the responsive rail path
+  directly (list → detail stack at narrow widths). Mobile reuses the
   same `github-repo` rule through `isGitHubRepoAvailable` /
   `toGitHubRailScopeState` (hidden while scope loads, visible with >=1 repo
   or on scope failure); unlike the rail it falls back to Changes instead of

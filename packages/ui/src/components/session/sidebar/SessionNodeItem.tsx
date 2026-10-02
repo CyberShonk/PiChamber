@@ -46,21 +46,41 @@ const PrBadgeButton: React.FC<{
       </span>
     );
   }
+  const openPr = (event: React.SyntheticEvent) => {
+    event.stopPropagation();
+    event.preventDefault();
+    openPullRequestInSurface(prDirectory, repo, prNumber);
+  };
+  // Rendered inside the session row's <button>, so it cannot be a <button>
+  // itself (invalid nesting); a focusable role="button" span keeps it
+  // keyboard-operable without breaking the row.
   return (
-    <button
-      type="button"
-      onClick={(event) => {
+    <span
+      role="button"
+      tabIndex={0}
+      onClick={openPr}
+      onDoubleClick={(event) => {
         event.stopPropagation();
-        openPullRequestInSurface(prDirectory, repo, prNumber);
+        event.preventDefault();
       }}
-      className="inline-flex shrink-0 items-center gap-1 rounded hover:bg-interactive-hover"
+      onKeyDown={(event) => {
+        if (event.key !== 'Enter' && event.key !== ' ') return;
+        if (event.repeat) {
+          // A held key must not reopen the PR surface on every repeat.
+          event.stopPropagation();
+          event.preventDefault();
+          return;
+        }
+        openPr(event);
+      }}
+      className="inline-flex shrink-0 cursor-pointer items-center gap-1 rounded hover:bg-interactive-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
       style={prIconColor ? { color: prIconColor } : undefined}
       title={prStatusLabel ? `PR #${prNumber} — ${prStatusLabel}. Open in Pull requests` : `Open PR #${prNumber} in Pull requests`}
       aria-label={prStatusLabel ? `Open pull request #${prNumber}, ${prStatusLabel}, in Pull requests` : `Open pull request #${prNumber} in Pull requests`}
     >
       <Icon name="git-pull-request" className="size-3.5 shrink-0" />
       <span>#{prNumber}</span>
-    </button>
+    </span>
   );
 };
 

@@ -214,6 +214,7 @@ describe('PiSessionStore topic-isolated notifiers', () => {
     }]);
     expect(store.getState().reducer.bySession.get('a')?.extensionEditor).toEqual({
       text: 'extension draft',
+      mode: 'set',
       sequence: 2,
     });
 

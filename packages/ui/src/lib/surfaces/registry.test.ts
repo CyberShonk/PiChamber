@@ -31,6 +31,17 @@ describe('getVisibleContextRailSurfaces', () => {
     expect(getVisibleContextRailSurfaces({ ...baseOptions, tabs: [{ mode: preview.mode }] }).some((s) => s.id === 'preview')).toBe(true);
   });
 
+  test('hides extensions surface until hasExtensionContent or a matching tab exists', () => {
+    const ext = CONTEXT_SURFACES.find((surface) => surface.id === 'extensions');
+    if (!ext) {
+      throw new Error('extensions surface missing from registry');
+    }
+    expect(ext.availability).toBe('extensions');
+    expect(getVisibleContextRailSurfaces(baseOptions).some((s) => s.id === 'extensions')).toBe(false);
+    expect(getVisibleContextRailSurfaces({ ...baseOptions, hasExtensionContent: true }).some((s) => s.id === 'extensions')).toBe(true);
+    expect(getVisibleContextRailSurfaces({ ...baseOptions, tabs: [{ mode: ext.mode }] }).some((s) => s.id === 'extensions')).toBe(true);
+  });
+
   test('respects the persisted user rail order', () => {
     const surfaces = getVisibleContextRailSurfaces({ ...baseOptions, railOrder: ['git', 'context'] });
     expect(surfaces.slice(0, 2).map((surface) => surface.id)).toEqual(['git', 'context']);
