@@ -175,6 +175,10 @@ function SidebarProjectsListComponent(props: Props): React.ReactNode {
     [allFolderSessions, allFoldersLimit],
   );
 
+  // `SessionSidebar` passes live boundaries (current day, week-start
+  // preference) whenever the timeline is shown, and `null` while the sidebar
+  // is hidden. The fallback only keeps hidden rows bucketed: it is read once,
+  // is not refreshed at midnight, and assumes a Monday week start.
   const resolvedTimelineBoundaries = React.useMemo(
     () => props.timelineBoundaries ?? getTimelineBoundaries(Date.now(), 1),
     [props.timelineBoundaries],
