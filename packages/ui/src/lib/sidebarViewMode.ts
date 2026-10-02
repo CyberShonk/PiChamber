@@ -8,7 +8,7 @@
  * Persisted server-side as the `sidebarViewMode` UI setting so every client
  * of a server renders the same view.
  */
-export const SIDEBAR_VIEW_MODES = ['workspace', 'folder', 'timeline'] as const;
+const SIDEBAR_VIEW_MODES =['workspace', 'folder', 'timeline'] as const;
 
 export type SidebarViewMode = (typeof SIDEBAR_VIEW_MODES)[number];
 

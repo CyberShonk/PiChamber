@@ -20,7 +20,7 @@ import { ProjectHeaderIdentity, SortableProjectItem, type SortableDragHandleProp
 import { SidebarSessionLikeButton } from './sidebarRowChrome';
 import { getProjectLabel } from './utils';
 
-export interface SidebarFolderTreeProps {
+interface SidebarFolderTreeProps {
   sections: ProjectSection[];
   homeSection?: ProjectSection | null;
   homeDirectory: string | null;
