@@ -329,7 +329,6 @@ function SidebarProjectsListComponent(props: Props): React.ReactNode {
         />
         </SessionRowVariantContext.Provider>
       ) : viewMode === 'timeline' && props.renderSessionNode ? (
-        <SessionRowVariantContext.Provider value="card">
         <div>
           {allFolderSessions.length === 0 ? (
             props.hasSessionSearchQuery ? props.searchEmptyState : props.emptyState
@@ -376,7 +375,6 @@ function SidebarProjectsListComponent(props: Props): React.ReactNode {
             </>
           )}
         </div>
-        </SessionRowVariantContext.Provider>
       ) : props.isAllFoldersView && props.renderSessionNode ? (
         <div>
           {allFolderSessions.length === 0 ? (

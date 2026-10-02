@@ -134,10 +134,8 @@ function SessionNodeItemComponent(props: SessionNodeItemProps): React.ReactNode 
     childRenderExtrasFor,
   } = props;
 
-  const rowVariant = React.useContext(SessionRowVariantContext);
-  const isCard = rowVariant !== 'default';
-  const isTree = rowVariant === 'tree';
-  const metaIconClassName = isCard ? 'size-3 shrink-0' : 'size-3.5 shrink-0';
+  const isTree = React.useContext(SessionRowVariantContext) === 'tree';
+  const metaIconClassName = 'size-3 shrink-0';
   const isElectron = React.useMemo(() => canUseElectronDesktopIPC(), []);
   const showQuickArchiveAction = !archivedBucket && allowQuickArchiveAction;
   const suppressNextSelectRef = React.useRef(false);
@@ -247,6 +245,34 @@ function SessionNodeItemComponent(props: SessionNodeItemProps): React.ReactNode 
 
   const showUnreadCompleteDot = !isStreaming && needsAttention && !isActive;
   const showActivityDuration = isStreaming && hasActivityDuration;
+  // Quick actions own the trailing edge whenever they are pinned visible.
+  const trailingStatusHidden = showQuickArchiveAction && (alwaysShowActions || isContextMenuOpen);
+  // Tree rows show the working indicator in their leading gutter instead.
+  const showWorkingOverlay = isStreaming && !isTree && !trailingStatusHidden && editingId !== session.id;
+  const showFolderLabel = Boolean(secondaryMeta?.showFolderLabel && tooltipProjectLabel);
+  const hasBranchMeta = Boolean(tooltipBranchLabel) || isGitRepo;
+  const showAgentName = Boolean(agentName && agentName !== 'default');
+  const hasPrBadge = Boolean(prSummary) && prNumber != null;
+  // The details line leads with the folder (mixed lists) or the branch (one
+  // folder); everything else is pushed to the right edge.
+  const hasTrailingMeta =
+    (showFolderLabel && hasBranchMeta) || hasPrBadge || subtaskCount > 0 || showAgentName || showActivityDuration;
+  const branchMeta = (shrinkable: boolean) =>
+    tooltipBranchLabel ? (
+      <span className={cn('inline-flex min-w-0 items-center gap-1', shrinkable ? 'shrink' : 'flex-1')}>
+        <Icon
+          name="git-branch"
+          className={metaIconClassName}
+          style={prIconColor ? { color: prIconColor } : undefined}
+        />
+        <span className="truncate">{tooltipBranchLabel}</span>
+      </span>
+    ) : isGitRepo ? (
+      <span className="inline-flex shrink-0 items-center gap-1">
+        <Icon name="git-repository" className={metaIconClassName} />
+        <span>git</span>
+      </span>
+    ) : null;
   const showPinnedMarker = isPinnedSession;
   const pinnedMarkerContent = (
     <Icon name="pushpin" className="h-3 w-3 flex-shrink-0 text-primary" aria-label={'Pinned session'} />
@@ -403,9 +429,7 @@ function SessionNodeItemComponent(props: SessionNodeItemProps): React.ReactNode 
                   ...(rowBackground ? { backgroundColor: rowBackground } : undefined),
                 }}
                 className={cn(
-                  'group relative my-0.5 flex cursor-pointer rounded-xl px-3 transition-colors',
-                  'py-2',
-                  isCard ? 'items-start' : 'items-center',
+                  'group relative my-0.5 flex cursor-pointer items-start rounded-xl px-3 py-2 transition-colors',
                   !rowBackground && depth > 0
                     ? 'bg-secondary/30 hover:bg-interactive-hover'
                     : !rowBackground
@@ -417,6 +441,10 @@ function SessionNodeItemComponent(props: SessionNodeItemProps): React.ReactNode 
               />
             }
           >
+            <div
+              className={cn('flex min-w-0 flex-1 items-start', showWorkingOverlay && 'oc-session-row-working-fade')}
+              data-clear-on-hover={showWorkingOverlay && showQuickArchiveAction ? 'true' : undefined}
+            >
             <div className={cn('flex min-w-0 flex-1 items-center', isTree ? treeRowGapClassName : 'gap-1.5')}>
               {isTree ? (
                 // Same width as the folder header icon, so the title starts under the folder label.
@@ -487,10 +515,7 @@ function SessionNodeItemComponent(props: SessionNodeItemProps): React.ReactNode 
                     e.stopPropagation();
                     handleSessionDoubleClick(session.id, sessionTitle);
                   }}
-                  className={cn(
-                    'flex min-w-0 flex-1 cursor-pointer flex-col overflow-hidden text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 text-foreground select-none',
-                    isCard ? 'gap-1' : 'gap-0.5',
-                  )}
+                  className="flex min-w-0 flex-1 cursor-pointer flex-col gap-1 overflow-hidden text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 text-foreground select-none"
                 >
                   <div className="flex w-full items-center min-w-0 flex-1 gap-1.5 overflow-hidden">
                     <div
@@ -501,76 +526,62 @@ function SessionNodeItemComponent(props: SessionNodeItemProps): React.ReactNode 
                     >
                       {renderHighlightedText(sessionTitle, normalizedSessionSearchQuery)}
                     </div>
+                    {isPinnedSession ? <Icon name="star-fill" className="h-3 w-3 text-primary shrink-0" /> : null}
+                    {/* Reserves the title-line width of the trailing status, which is
+                        positioned over the row so the details line can use the full width. */}
+                    <span aria-hidden="true" className="invisible ml-1 min-w-6 shrink-0 whitespace-nowrap text-[11px]">
+                      {showUnreadCompleteDot ? null : sessionCompactUpdatedLabel}
+                    </span>
                   </div>
 
-                  {(secondaryMeta?.showFolderLabel && tooltipProjectLabel) ||
-                  tooltipBranchLabel ||
-                  isGitRepo ||
-                  prSummary ||
-                  subtaskCount > 0 ||
-                  (agentName && agentName !== 'default') ||
-                  showActivityDuration ? (
-                    <div
-                      className={cn(
-                        'flex w-full min-w-0 items-center gap-2 overflow-hidden font-normal',
-                        isCard
-                          ? 'text-xs leading-4 text-muted-foreground/80'
-                          : 'pt-0.5 typography-ui-label text-muted-foreground',
+                  {showFolderLabel || hasBranchMeta || hasTrailingMeta ? (
+                    <div className="flex w-full min-w-0 items-center justify-between gap-2 overflow-hidden text-xs leading-4 font-normal text-muted-foreground/80">
+                      {showFolderLabel ? (
+                        <span className={cn('inline-flex min-w-0 items-center gap-1', hasTrailingMeta ? 'max-w-[60%] shrink-0' : 'flex-1')}>
+                          <Icon name="folder" className={metaIconClassName} />
+                          <span className="truncate">{tooltipProjectLabel}</span>
+                        </span>
+                      ) : (
+                        branchMeta(false)
                       )}
-                    >
-                      {secondaryMeta?.showFolderLabel && tooltipProjectLabel ? (
-                        isCard ? (
-                          <span className="inline-flex min-w-0 max-w-[120px] shrink-0 items-center gap-1">
-                            <Icon name="folder" className={metaIconClassName} />
-                            <span className="truncate">{tooltipProjectLabel}</span>
-                          </span>
-                        ) : (
-                          <span className="min-w-0 max-w-[110px] shrink-0 truncate">{tooltipProjectLabel}</span>
-                        )
-                      ) : null}
 
-                      {tooltipBranchLabel ? (
-                        <span className={cn('inline-flex min-w-0 items-center gap-1', isCard ? 'shrink' : 'max-w-[160px] shrink-0')}>
-                          <Icon
-                            name="git-branch"
-                            className={cn(metaIconClassName, !prIconColor && !isCard && 'text-muted-foreground')}
-                            style={prIconColor ? { color: prIconColor } : undefined}
-                          />
-                          <span className="truncate">{tooltipBranchLabel}</span>
+                      {hasTrailingMeta ? (
+                        <span
+                          className={cn(
+                            'ml-auto flex min-w-0 items-center justify-end gap-2 overflow-hidden',
+                            showFolderLabel ? 'flex-1' : 'shrink-0',
+                          )}
+                        >
+                          {showFolderLabel ? branchMeta(true) : null}
+
+                          {hasPrBadge ? (
+                            <PrBadgeButton
+                              prDirectory={prDirectory}
+                              prNumber={prNumber!}
+                              prStatusLabel={prStatusLabel}
+                              prIconColor={prIconColor}
+                            />
+                          ) : null}
+
+                          {subtaskCount > 0 ? (
+                            <span className="inline-flex shrink-0 items-center gap-1">
+                              <Icon name="node-tree" className={metaIconClassName} />
+                              <span>{subtaskCount}</span>
+                            </span>
+                          ) : null}
+
+                          {showAgentName ? (
+                            <span className="min-w-0 max-w-[80px] shrink-0 truncate">{agentName}</span>
+                          ) : null}
+
+                          {showActivityDuration ? (
+                            <SessionActivityDuration
+                              sessionId={session.id}
+                              running={isStreaming}
+                              className="shrink-0 text-muted-foreground/70"
+                            />
+                          ) : null}
                         </span>
-                      ) : isGitRepo ? (
-                        <span className="inline-flex shrink-0 items-center gap-1">
-                          <Icon name="git-repository" className={cn(metaIconClassName, !isCard && 'text-muted-foreground')} />
-                          <span>git</span>
-                        </span>
-                      ) : null}
-
-                      {prSummary && prNumber != null ? (
-                        <PrBadgeButton
-                          prDirectory={prDirectory}
-                          prNumber={prNumber}
-                          prStatusLabel={prStatusLabel}
-                          prIconColor={prIconColor}
-                        />
-                      ) : null}
-
-                      {subtaskCount > 0 ? (
-                        <span className="inline-flex shrink-0 items-center gap-1">
-                          <Icon name="node-tree" className="size-3.5 shrink-0" />
-                          <span>{subtaskCount}</span>
-                        </span>
-                      ) : null}
-
-                      {agentName && agentName !== 'default' ? (
-                        <span className="min-w-0 max-w-[80px] shrink-0 truncate">{agentName}</span>
-                      ) : null}
-
-                      {showActivityDuration ? (
-                        <SessionActivityDuration
-                          sessionId={session.id}
-                          running={isStreaming}
-                          className="text-muted-foreground/70"
-                        />
                       ) : null}
                     </div>
                   ) : null}
@@ -578,35 +589,23 @@ function SessionNodeItemComponent(props: SessionNodeItemProps): React.ReactNode 
               )}
             </div>
 
-            {isPinnedSession ? <Icon name="star-fill" className="h-3 w-3 text-primary shrink-0" /> : null}
-
             <div
               className={cn(
-                'relative ml-1 flex min-w-6 shrink-0 items-center justify-end',
-                isCard ? 'h-5' : 'h-6',
-                // The timestamp rides the title line; the working indicator is centered in the row.
-                isCard && !isTree && isStreaming && 'self-center',
+                'absolute right-3 top-2 flex h-5 min-w-6 items-center justify-end',
+                editingId === session.id && 'hidden',
               )}
             >
               <div
                 className={cn(
                   'flex items-center justify-end',
-                  showQuickArchiveAction && (alwaysShowActions || isContextMenuOpen)
+                  trailingStatusHidden
                     ? 'opacity-0'
                     : showQuickArchiveAction
                       ? 'group-hover:opacity-0 group-focus-within:opacity-0'
                       : null,
                 )}
               >
-                {isStreaming && !isTree ? (
-                  <AgentThinkingLoader
-                    variant="inline"
-                    text={null}
-                    animationType="spinner"
-                    speedMs={80}
-                    className="text-primary text-xs shrink-0"
-                  />
-                ) : showUnreadCompleteDot ? (
+                {showUnreadCompleteDot ? (
                   <SessionUnreadDot label={'Session complete'} />
                 ) : (
                   <span className="text-[11px] text-muted-foreground/75 whitespace-nowrap">
@@ -636,6 +635,24 @@ function SessionNodeItemComponent(props: SessionNodeItemProps): React.ReactNode 
                 </div>
               ) : null}
             </div>
+            </div>
+            {showWorkingOverlay ? (
+              <span
+                data-session-working
+                className={cn(
+                  'pointer-events-none absolute inset-y-0 right-3 flex items-center transition-opacity',
+                  showQuickArchiveAction && 'group-hover:opacity-0 group-focus-within:opacity-0',
+                )}
+              >
+                <AgentThinkingLoader
+                  variant="inline"
+                  text={null}
+                  animationType="spinner"
+                  speedMs={80}
+                  className="text-primary text-xs shrink-0"
+                />
+              </span>
+            ) : null}
           </ContextMenu.Trigger>
           {contextMenuContent}
         </ContextMenu.Root>

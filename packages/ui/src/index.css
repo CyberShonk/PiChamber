@@ -324,6 +324,27 @@ div[data-chat-input-footer="true"] {
   );
 }
 
+/* Sidebar session row while its agent is working: the working indicator sits
+   over the right edge of the row and the row content fades out beneath it. A
+   mask (not a painted gradient) keeps this independent of the row's hover,
+   selection, and fork backgrounds. Rows whose quick actions take that edge on
+   hover drop the fade while hovered or focused. */
+.oc-session-row-working-fade {
+  mask-image: linear-gradient(to left, transparent 0.875rem, #000 3rem);
+  -webkit-mask-image: linear-gradient(to left, transparent 0.875rem, #000 3rem);
+}
+
+.group:focus-within > .oc-session-row-working-fade[data-clear-on-hover="true"] {
+  mask-image: none;
+  -webkit-mask-image: none;
+}
+
+@media (hover: hover) {
+  .group:hover > .oc-session-row-working-fade[data-clear-on-hover="true"] {
+    mask-image: none;
+    -webkit-mask-image: none;
+  }
+}
 
 @keyframes spin-once {
   from {
