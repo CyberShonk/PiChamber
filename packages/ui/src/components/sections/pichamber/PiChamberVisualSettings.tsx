@@ -19,6 +19,7 @@ import { getStoredMobileLayoutPreference, setStoredMobileLayoutPreference, type 
 import { useRuntimeAPIs } from '@/hooks/useRuntimeAPIs';
 import type { TerminalShellOption } from '@/lib/api/types';
 import { subscribeRuntimeEndpointChanged } from '@/lib/runtime-switch';
+import type { SidebarViewMode } from '@/lib/sidebarViewMode';
 
 import {
   DEFAULT_PWA_INSTALL_NAME,
@@ -83,6 +84,8 @@ export const PiChamberVisualSettings: React.FC<PiChamberVisualSettingsProps> = (
     const setTimeFormatPreference = useUIStore(state => state.setTimeFormatPreference);
     const weekStartPreference = useUIStore(state => state.weekStartPreference);
     const setWeekStartPreference = useUIStore(state => state.setWeekStartPreference);
+    const sidebarViewMode = useUIStore(state => state.sidebarViewMode);
+    const setSidebarViewMode = useUIStore(state => state.setSidebarViewMode);
     const draftStartersVisible = useUIStore(state => state.draftStartersVisible);
     const setDraftStartersVisible = useUIStore(state => state.setDraftStartersVisible);
     const {
@@ -136,6 +139,11 @@ export const PiChamberVisualSettings: React.FC<PiChamberVisualSettingsProps> = (
         setWeekStartPreference(value);
         void updateDesktopSettings({ weekStartPreference: value });
     }, [setWeekStartPreference]);
+
+    const handleSidebarViewModeChange = React.useCallback((value: SidebarViewMode) => {
+        setSidebarViewMode(value);
+        void updateDesktopSettings({ sidebarViewMode: value });
+    }, [setSidebarViewMode]);
 
     const lightThemes = React.useMemo(
         () => availableThemes
@@ -245,7 +253,7 @@ export const PiChamberVisualSettings: React.FC<PiChamberVisualSettingsProps> = (
     const showMobileLayoutSetting = isMobile && isWebRuntime() && !isDesktopShell();
     const hasAppearanceSettings = (shouldShow('theme') || showMobileLayoutSetting || shouldShow('pwaInstallName') || shouldShow('pwaOrientation') || shouldShow('timeFormat') || shouldShow('weekStart'));
     const hasLayoutSettings = shouldShow('fontSize') || shouldShow('terminalFontSize') || shouldShow('editorFontSize') || shouldShow('spacing') || (shouldShow('inputBarOffset') && isMobile);
-    const hasNavigationSettings = shouldShow('terminalQuickKeys') || ((shouldShow('terminalShell') || shouldShow('terminalLoginShell'))) || shouldShow('fileEditorKeymap') || shouldShow('autoSaveEnabled') || shouldShow('expandedEditorToolbar');
+    const hasNavigationSettings = shouldShow('sidebarViewMode') || shouldShow('terminalQuickKeys') || ((shouldShow('terminalShell') || shouldShow('terminalLoginShell'))) || shouldShow('fileEditorKeymap') || shouldShow('autoSaveEnabled') || shouldShow('expandedEditorToolbar');
     const hasBehaviorSettings = shouldShow('diffLayout')
         || shouldShow('followUpBehavior');
     const showBehaviorMessageOptions = shouldShow('diffLayout')
@@ -515,6 +523,8 @@ export const PiChamberVisualSettings: React.FC<PiChamberVisualSettingsProps> = (
                 {hasNavigationSettings && (
                     <NavigationSection
                         shouldShow={shouldShow}
+                        sidebarViewMode={sidebarViewMode}
+                        onSidebarViewModeChange={handleSidebarViewModeChange}
                         fileEditorKeymap={fileEditorKeymap}
                         setFileEditorKeymap={setFileEditorKeymap}
                         autoSaveEnabled={autoSaveEnabled}
