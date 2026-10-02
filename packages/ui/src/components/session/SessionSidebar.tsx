@@ -993,7 +993,7 @@ const SessionSidebarComponent: React.FC<SessionSidebarProps> = ({
   const mobileHeaderActionButtonClass =
     'flex size-10 shrink-0 items-center justify-center rounded-full leading-none text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:cursor-not-allowed';
   const headerActionButtonClass = mobileVariant ? mobileHeaderActionButtonClass : desktopHeaderActionButtonClass;
-  const headerActionIconClass = mobileVariant ? 'size-5' : 'h-4.5 w-4.5';
+  const headerActionIconClass = mobileVariant ? 'size-5' : 'size-4';
 
   const renderSessionNode = useStableRenderCallback(
     (
@@ -1368,7 +1368,7 @@ const SessionSidebarComponent: React.FC<SessionSidebarProps> = ({
       {piConnection === 'error' || piConnection === 'unavailable' ? (
         <div
           role="alert"
-          className="mx-3 mb-2 rounded border border-[var(--status-error-border)] bg-[var(--status-error-background)] p-2 text-xs text-foreground"
+          className="mx-2 mb-2 rounded border border-[var(--status-error-border)] bg-[var(--status-error-background)] p-2 text-xs text-foreground"
         >
           {"Unable to reach server"}
         </div>
