@@ -1,4 +1,5 @@
 import React from 'react';
+import { Icon } from '@/components/icon/Icon';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Radio } from '@/components/ui/radio';
@@ -349,6 +350,31 @@ export const SettingsInset: React.FC<SettingsInsetProps> = ({
     </div>
   );
 };
+
+interface SettingsDisclosureProps {
+  /** Text of the toggle, e.g. "Show legacy options". */
+  label: React.ReactNode;
+  children: React.ReactNode;
+  /** Show a top border divider like a section. @default true */
+  divider?: boolean;
+  className?: string;
+  contentClassName?: string;
+}
+
+/**
+ * Collapsed-by-default block for rarely needed settings. A native <details>, so
+ * its content stays mounted while closed and settings search can open it to
+ * reveal a target inside.
+ */
+export const SettingsDisclosure: React.FC<SettingsDisclosureProps> = ({ label, children, divider = true, className, contentClassName }) => (
+  <details className={cn('group/disclosure', divider ? 'border-t border-border/60 py-6' : 'pb-6', className)}>
+    <summary className="flex w-fit cursor-pointer list-none items-center gap-1.5 rounded-md typography-ui-label text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--interactive-focus-ring)] [&::-webkit-details-marker]:hidden">
+      <Icon name="arrow-right-s" className="size-4 transition-transform group-open/disclosure:rotate-90" />
+      {label}
+    </summary>
+    <div className={cn('pt-4', contentClassName)}>{children}</div>
+  </details>
+);
 
 interface SettingsCheckboxRowProps {
   checked: boolean;

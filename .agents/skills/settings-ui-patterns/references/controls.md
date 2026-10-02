@@ -96,6 +96,11 @@ directly only next to raw labels/headings. Never build info icons from raw
 - Keep option dimensions and gaps consistent.
 - Use stable border/ring/background selection; avoid scale transforms that shift layout.
 
+## Rarely Needed Options
+
+Legacy / rarely needed controls go in `SettingsDisclosure` at the bottom of the
+page (native `<details>`, closed by default, content stays mounted).
+
 ## Dialogs
 
 Dialogs reuse the same primitives (`SettingsCheckboxRow`,
