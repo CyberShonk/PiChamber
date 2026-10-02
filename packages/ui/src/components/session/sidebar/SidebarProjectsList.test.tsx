@@ -17,6 +17,9 @@ const noop = () => undefined;
 const renderWithProviders = (element: React.ReactElement): string =>
   renderToStaticMarkup(React.createElement(TooltipProvider, null, element));
 
+/** The sprite reference an `Icon` renders, closed by its quote so `folder` does not match `folder-add`. */
+const iconHref = (name: string): string => `#oc-${name}"`;
+
 const renderList = (isAllFoldersView: boolean): string =>
   renderWithProviders(
     React.createElement(SidebarProjectsList, {
@@ -562,6 +565,11 @@ describe('SidebarProjectsList view modes', () => {
 
     // Folder 2 header has aria-expanded="false"
     expect(markupCollapsed).toContain('aria-expanded="false"');
+
+    // The folder icon stays on every header and the collapse chevron is a separate, always-rendered marker
+    expect(markupCollapsed.split(iconHref('folder')).length - 1).toBe(4);
+    expect(markupCollapsed.split(iconHref('arrow-down-s')).length - 1).toBe(3);
+    expect(markupCollapsed.split(iconHref('arrow-right-s')).length - 1).toBe(1);
 
     // "No folder" sessions are rendered
     expect(markupCollapsed).toContain('data-session="home-sess-1"');

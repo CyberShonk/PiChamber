@@ -25,42 +25,36 @@ type ProjectIdentityProps = {
 };
 
 type ProjectHeaderIdentityProps = ProjectIdentityProps & {
-  isCollapsed?: boolean;
-  alwaysShowActions?: boolean;
   mobileVariant?: boolean;
 };
 
 export const ProjectHeaderIdentity: React.FC<ProjectHeaderIdentityProps> = ({
   projectLabel,
-  isCollapsed,
-  alwaysShowActions = false,
   mobileVariant = false,
 }) => {
-  const hasCollapseControl = isCollapsed !== undefined;
-  const iconVisibilityClassName = hasCollapseControl
-    ? (alwaysShowActions ? 'hidden' : 'group-hover/project:hidden group-focus-within/project:hidden')
-    : undefined;
   const iconClassName = sidebarRowIconClass(mobileVariant);
   const labelClassName = sidebarRowLabelClass(mobileVariant);
 
   return (
     <>
       <span className={cn('inline-flex shrink-0 items-center justify-center', iconClassName)}>
-        {hasCollapseControl ? (
-          <span className={cn(
-            'items-center justify-center text-muted-foreground',
-            iconClassName,
-            alwaysShowActions ? 'inline-flex' : 'hidden group-hover/project:inline-flex group-focus-within/project:inline-flex',
-          )}>
-            <Icon name={isCollapsed ? 'arrow-right-s' : 'arrow-down-s'} className={iconClassName} />
-          </span>
-        ) : null}
-        <Icon name="folder" className={cn(iconClassName, 'text-muted-foreground/80', iconVisibilityClassName)} />
+        <Icon name="folder" className={cn(iconClassName, 'text-muted-foreground/80')} />
       </span>
       <span className={cn(labelClassName, 'text-foreground')}>{projectLabel}</span>
     </>
   );
 };
+
+/** Collapse marker on the right edge of a folder header; the folder icon on the left never changes. */
+export const ProjectHeaderChevron: React.FC<{
+  isCollapsed: boolean;
+  mobileVariant?: boolean;
+  className?: string;
+}> = ({ isCollapsed, mobileVariant = false, className }) => (
+  <span className={cn('ml-auto inline-flex shrink-0 items-center text-muted-foreground', className)}>
+    <Icon name={isCollapsed ? 'arrow-right-s' : 'arrow-down-s'} className={sidebarRowIconClass(mobileVariant)} />
+  </span>
+);
 
 export interface SortableProjectItemProps extends ProjectIdentityProps {
   disabled?: boolean;
@@ -207,22 +201,29 @@ export const SortableProjectItem: React.FC<SortableProjectItemProps> = ({
                     {...listeners}
                     className={cn(
                       treeRowGapClassName,
-                      'flex-1 min-w-0 flex items-center text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 rounded-md cursor-grab active:cursor-grabbing transition-[padding]',
-                      alwaysShowActions
-                        ? 'pr-14'
-                        : 'pr-2 group-hover/project:pr-14 group-focus-within/project:pr-14',
+                      'flex-1 min-w-0 flex items-center text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 rounded-md cursor-grab active:cursor-grabbing',
                     )}
                   >
                     <ProjectHeaderIdentity
                       id={id}
                       projectLabel={projectLabel}
-                      isCollapsed={isCollapsed}
-                      alwaysShowActions={alwaysShowActions}
                       mobileVariant={mobileVariant}
                     />
                     {statusIndicator ? (
                       <span className="ml-1 inline-flex flex-shrink-0 items-center">{statusIndicator}</span>
                     ) : null}
+                    {/* The left padding reserves the slot the hover actions take, so the label truncates before them. */}
+                    <ProjectHeaderChevron
+                      isCollapsed={isCollapsed}
+                      mobileVariant={mobileVariant}
+                      className={cn(
+                        'transition-[padding]',
+                        // Touch layouts keep the actions visible, and their 36px touch targets need the wider slot.
+                        alwaysShowActions
+                          ? 'pl-16'
+                          : 'pl-2 group-hover/project:pl-14 group-focus-within/project:pl-14',
+                      )}
+                    />
                   </button>
                 </TooltipTrigger>
                 <TooltipContent side="right" sideOffset={8}>
@@ -230,7 +231,8 @@ export const SortableProjectItem: React.FC<SortableProjectItemProps> = ({
                 </TooltipContent>
               </Tooltip>
 
-              <div className="absolute right-7 top-1/2 z-10 -translate-y-1/2">
+              {/* Left of the new-session button (right-7 plus its w-6); written out because 13 is not on the padding-scaled spacing scale. */}
+              <div className="absolute right-[calc(3.25rem*var(--padding-scale,1))] top-1/2 z-10 -translate-y-1/2">
                 {!hideDirectoryControls ? (
                   <DropdownMenu
                     open={isMenuOpen}
@@ -263,7 +265,7 @@ export const SortableProjectItem: React.FC<SortableProjectItemProps> = ({
               </div>
 
               {showCreateButtons && !hideDirectoryControls && onNewSession ? (
-                <div className="absolute right-0.5 top-1/2 z-10 -translate-y-1/2">
+                <div className="absolute right-7 top-1/2 z-10 -translate-y-1/2">
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <button

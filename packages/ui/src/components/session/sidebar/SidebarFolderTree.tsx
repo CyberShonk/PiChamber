@@ -16,7 +16,7 @@ import { formatPathForDisplay } from '@/lib/utils';
 import { useProjectsStore } from '@/stores/useProjectsStore';
 import type { MainTab } from '@/stores/useUIStore';
 import type { SessionGroup, SessionNode, ProjectSection } from './types';
-import { ProjectHeaderIdentity, SortableProjectItem, type SortableDragHandleProps } from './sortableItems';
+import { ProjectHeaderIdentity, ProjectHeaderChevron, SortableProjectItem, type SortableDragHandleProps } from './sortableItems';
 import { SidebarSessionLikeButton } from './sidebarRowChrome';
 import { getProjectLabel } from './utils';
 import { treeRowGapClassName } from './sessionRowVariant';
@@ -257,10 +257,9 @@ const SidebarFolderTreeComponent: React.FC<SidebarFolderTreeProps> = ({
               <ProjectHeaderIdentity
                 id="__home__"
                 projectLabel="No folder"
-                isCollapsed={isHomeCollapsed}
-                alwaysShowActions={alwaysShowActions}
                 mobileVariant={mobileVariant}
               />
+              <ProjectHeaderChevron isCollapsed={isHomeCollapsed} mobileVariant={mobileVariant} />
             </button>
           </div>
 
