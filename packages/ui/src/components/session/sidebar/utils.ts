@@ -1,5 +1,5 @@
 import type { Session } from '@/lib/chat/types';
-
+import { formatDirectoryName } from '@/lib/utils';
 import { normalizePath } from '@/lib/pathNormalization';
 export { normalizePath };
 
@@ -154,6 +154,17 @@ export const formatProjectLabel = (label: string): string => {
     .replace(/[-_]/g, ' ')
     .replace(/\b\w/g, (char) => char.toUpperCase());
 };
+
+export const getProjectLabel = (
+  project: { label?: string; normalizedPath: string },
+  homeDirectory: string | null,
+): string => (
+  formatProjectLabel(
+    project.label?.trim()
+    || formatDirectoryName(project.normalizedPath, homeDirectory)
+    || project.normalizedPath,
+  )
+);
 
 /** Shared column gutter for sidebar chrome and session-list content (`px-3`). The session scroller itself stays full-width so the overlay scrollbar can sit on the sidebar edge. */
 export const sidebarGutterX = '0.75rem';

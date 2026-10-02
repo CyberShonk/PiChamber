@@ -11,7 +11,6 @@ import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } 
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
 import { Icon } from '@/components/icon/Icon';
 import { cn } from '@/lib/utils';
-import { useSessionDisplayStore } from '@/stores/useSessionDisplayStore';
 import { sidebarRowIconClass, sidebarRowLabelClass } from './utils';
 
 export type SortableDragHandleProps = {
@@ -66,16 +65,14 @@ export interface SortableProjectItemProps extends ProjectIdentityProps {
   disabled?: boolean;
   projectDescription: string;
   isCollapsed: boolean;
-  isRepo: boolean;
-  isDesktopShell: boolean;
   hideDirectoryControls: boolean;
   mobileVariant: boolean;
   alwaysShowActions: boolean;
+  stickyHeader?: boolean;
   onToggle: () => void;
   onNewSession: () => void;
   onRenameStart: () => void;
   onClose: () => void;
-  sentinelRef: (el: HTMLDivElement | null) => void;
   children?: React.ReactNode;
   showCreateButtons?: boolean;
   hideHeader?: boolean;
@@ -91,16 +88,14 @@ export const SortableProjectItem: React.FC<SortableProjectItemProps> = ({
   projectLabel,
   projectDescription,
   isCollapsed,
-  isRepo,
-  isDesktopShell,
   hideDirectoryControls,
   mobileVariant,
   alwaysShowActions,
+  stickyHeader = false,
   onToggle,
   onNewSession,
   onRenameStart,
   onClose,
-  sentinelRef,
   children,
   showCreateButtons = true,
   hideHeader = false,
@@ -108,10 +103,7 @@ export const SortableProjectItem: React.FC<SortableProjectItemProps> = ({
   setOpenSidebarMenuKey,
   statusIndicator = null,
 }) => {
-  
-  const stickyZoneHeaders = useSessionDisplayStore((state) => state.stickyZoneHeaders);
   const {
-    attributes,
     listeners,
     setNodeRef,
     transform,
@@ -139,11 +131,11 @@ export const SortableProjectItem: React.FC<SortableProjectItemProps> = ({
       )}
       <Item onClick={onRenameStart}>
         <Icon name="pencil-ai" className="mr-1.5 h-4 w-4" />
-        {"Edit"}
+        {"Edit folder"}
       </Item>
       <Item onClick={onClose} className="text-destructive focus:text-destructive">
         <Icon name="close" className="mr-1.5 h-4 w-4" />
-        {"Close project"}
+        {"Close folder"}
       </Item>
     </>
   );
@@ -167,10 +159,7 @@ export const SortableProjectItem: React.FC<SortableProjectItemProps> = ({
   }, []);
 
   const handleToggleClick = React.useCallback((event: React.MouseEvent<HTMLButtonElement>) => {
-    // Drop mouse-click focus so hover-revealed chrome (chevron, actions)
-    // hides again on mouse-leave instead of sticking via :focus-within.
-    // Keyboard users keep their focus-visible ring (blur only fires here
-    // for pointer interactions that produced a click).
+    // Drop mouse-click focus so hover-revealed chrome hides again on mouse-leave
     event.currentTarget.blur();
     if (suppressNextToggleRef.current) {
       suppressNextToggleRef.current = false;
@@ -182,62 +171,46 @@ export const SortableProjectItem: React.FC<SortableProjectItemProps> = ({
   return (
     <div
       ref={setNodeRef}
-      style={{ transform: CSS.Transform.toString(transform), transition }}
-      className={cn('relative', isDragging && 'opacity-30')}
+      style={{ transform: CSS.Translate.toString(transform), transition }}
+      className={cn('relative', isDragging && 'opacity-60')}
     >
       {!hideHeader ? (
-        <>
-          {isDesktopShell && (
+        <ContextMenu open={isContextMenuOpen} onOpenChange={setIsContextMenuOpen}>
+          <ContextMenuTrigger
+            render={
+              <div
+                className={cn(
+                  'text-left group/project select-none',
+                  stickyHeader && 'sticky top-0 z-20 bg-sidebar',
+                )}
+                data-sidebar-sticky-header={stickyHeader ? 'true' : undefined}
+                onContextMenu={(event) => {
+                  if (hideDirectoryControls || isDragging) return;
+                  event.preventDefault();
+                  setIsContextMenuOpen(true);
+                }}
+              />
+            }
+          >
             <div
-              ref={sentinelRef}
-              data-project-id={id}
-              className="absolute top-0 h-px w-full pointer-events-none"
-              aria-hidden="true"
-            />
-          )}
-
-          <ContextMenu open={isContextMenuOpen} onOpenChange={setIsContextMenuOpen}>
-            <ContextMenuTrigger
-              render={
-                // Sticky zone header: this trigger div is a direct child of
-                // the project wrapper (which spans header + sessions), so it
-                // can stick for the whole zone.
-                // Full-bleed band: pull past the list container's padding so
-                // the section band spans the entire sidebar width (ref: edge-
-                // to-edge section headers, not rounded pills).
-                    <div
-                  className={cn(
-                    'text-left group/project select-none',
-                    stickyZoneHeaders && 'sticky top-0 z-20 bg-sidebar',
-                  )}
-                  data-sidebar-sticky-header={stickyZoneHeaders ? 'true' : undefined}
-                  onContextMenu={(event) => {
-                    // VS Code hides project actions entirely (hideDirectoryControls).
-                    if (hideDirectoryControls) return;
-                    event.preventDefault();
-                    setIsContextMenuOpen(true);
-                  }}
-                />
-              }
-            >
-            <div
-              className="relative flex items-center gap-1 py-1 px-3"
-              {...attributes}
+              className="relative flex items-center gap-1 py-1.5 px-3 rounded-xl transition-colors hover:bg-interactive-hover"
             >
               <Tooltip>
                 <TooltipTrigger asChild>
-                    <button
-                      type="button"
-                      onMouseDown={handleToggleMouseDown}
-                      onClick={handleToggleClick}
-                      {...listeners}
-                      className={cn(
-                        'flex-1 min-w-0 flex items-center gap-1.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 rounded-md cursor-grab active:cursor-grabbing transition-[padding]',
-                        isRepo && !hideDirectoryControls
-                          ? (alwaysShowActions ? 'pr-20' : 'pr-7 group-hover/project:pr-20 group-focus-within/project:pr-20')
-                          : (alwaysShowActions ? 'pr-14' : 'pr-7 group-hover/project:pr-14 group-focus-within/project:pr-14'),
-                      )}
-                    >
+                  <button
+                    type="button"
+                    aria-expanded={!isCollapsed}
+                    style={{ touchAction: 'manipulation' }}
+                    onMouseDown={handleToggleMouseDown}
+                    onClick={handleToggleClick}
+                    {...listeners}
+                    className={cn(
+                      'flex-1 min-w-0 flex items-center gap-1.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 rounded-md cursor-grab active:cursor-grabbing transition-[padding]',
+                      alwaysShowActions
+                        ? 'pr-14'
+                        : 'pr-2 group-hover/project:pr-14 group-focus-within/project:pr-14',
+                    )}
+                  >
                     <ProjectHeaderIdentity
                       id={id}
                       projectLabel={projectLabel}
@@ -255,39 +228,12 @@ export const SortableProjectItem: React.FC<SortableProjectItemProps> = ({
                 </TooltipContent>
               </Tooltip>
 
-              <div className={cn(
-                'absolute top-1/2 z-10 flex -translate-y-1/2 items-center gap-1',
-                showCreateButtons ? 'right-7' : 'right-0.5',
-              )}>
-                {showCreateButtons && !hideDirectoryControls && onNewSession ? (
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onNewSession();
-                        }}
-                        className={cn(
-                        'inline-flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 hover:text-foreground transition-opacity',
-                          alwaysShowActions ? 'opacity-100' : 'opacity-0 pointer-events-none group-hover/project:opacity-100 group-hover/project:pointer-events-auto group-focus-within/project:opacity-100 group-focus-within/project:pointer-events-auto',
-                        )}
-                        aria-label={"New session"}
-                      >
-                        <Icon name="add" className="h-4 w-4" />
-                      </button>
-                    </TooltipTrigger>
-                    <TooltipContent side="bottom" sideOffset={4}>
-                      <p>{"New session"}</p>
-                    </TooltipContent>
-                  </Tooltip>
-                ) : null}
-
+              <div className="absolute right-7 top-1/2 z-10 -translate-y-1/2">
                 {!hideDirectoryControls ? (
-                <DropdownMenu
-                  open={isMenuOpen}
-                  onOpenChange={handleMenuOpenChange}
-                >
+                  <DropdownMenu
+                    open={isMenuOpen}
+                    onOpenChange={handleMenuOpenChange}
+                  >
                     <DropdownMenuTrigger asChild>
                       <button
                         type="button"
@@ -299,7 +245,7 @@ export const SortableProjectItem: React.FC<SortableProjectItemProps> = ({
                               ? 'opacity-100'
                               : 'opacity-0 pointer-events-none group-hover/project:opacity-100 group-hover/project:pointer-events-auto group-focus-within/project:opacity-100 group-focus-within/project:pointer-events-auto',
                         )}
-                        aria-label={"Project menu"}
+                        aria-label={"Folder menu"}
                         onPointerDown={handleMenuTriggerPointerDown}
                         onMouseDown={handleMenuTriggerMouseDown}
                         onClick={handleMenuTriggerClick}
@@ -314,7 +260,7 @@ export const SortableProjectItem: React.FC<SortableProjectItemProps> = ({
                 ) : null}
               </div>
 
-              {showCreateButtons && onNewSession ? (
+              {showCreateButtons && !hideDirectoryControls && onNewSession ? (
                 <div className="absolute right-0.5 top-1/2 z-10 -translate-y-1/2">
                   <Tooltip>
                     <TooltipTrigger asChild>
@@ -326,30 +272,27 @@ export const SortableProjectItem: React.FC<SortableProjectItemProps> = ({
                         }}
                         className={cn(
                           'inline-flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 transition-opacity',
-                          alwaysShowActions ? 'opacity-100' : 'opacity-0 pointer-events-none group-hover/project:opacity-100 group-hover/project:pointer-events-auto group-focus-within/project:opacity-100 group-focus-within/project:pointer-events-auto',
+                          alwaysShowActions
+                            ? 'opacity-100'
+                            : 'opacity-0 pointer-events-none group-hover/project:opacity-100 group-hover/project:pointer-events-auto group-focus-within/project:opacity-100 group-focus-within/project:pointer-events-auto',
                         )}
-                        aria-label={isRepo
-                          ? "New draft session"
-                          : "New session"}
+                        aria-label={"New session"}
                       >
                         <Icon name="add" className="h-4 w-4" />
                       </button>
                     </TooltipTrigger>
                     <TooltipContent side="bottom" sideOffset={4}>
-                      <p>{isRepo
-                        ? "New draft session"
-                        : "New session"}</p>
+                      <p>{"New session"}</p>
                     </TooltipContent>
                   </Tooltip>
                 </div>
               ) : null}
             </div>
-            </ContextMenuTrigger>
-            <ContextMenuContent className="min-w-[180px]">
-              {renderProjectMenuItems(ContextMenuItem)}
-            </ContextMenuContent>
-          </ContextMenu>
-        </>
+          </ContextMenuTrigger>
+          <ContextMenuContent className="min-w-[180px]">
+            {renderProjectMenuItems(ContextMenuItem)}
+          </ContextMenuContent>
+        </ContextMenu>
       ) : null}
 
       {children}
