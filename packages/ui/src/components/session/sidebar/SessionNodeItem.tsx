@@ -134,7 +134,9 @@ function SessionNodeItemComponent(props: SessionNodeItemProps): React.ReactNode 
     childRenderExtrasFor,
   } = props;
 
-  const isCard = React.useContext(SessionRowVariantContext) === 'card';
+  const rowVariant = React.useContext(SessionRowVariantContext);
+  const isCard = rowVariant !== 'default';
+  const isTree = rowVariant === 'tree';
   const metaIconClassName = isCard ? 'size-3 shrink-0' : 'size-3.5 shrink-0';
   const isElectron = React.useMemo(() => canUseElectronDesktopIPC(), []);
   const showQuickArchiveAction = !archivedBucket && allowQuickArchiveAction;
@@ -415,6 +417,21 @@ function SessionNodeItemComponent(props: SessionNodeItemProps): React.ReactNode 
             }
           >
             <div className="flex min-w-0 flex-1 items-center gap-1.5">
+              {isTree ? (
+                // Same width as the folder header icon, so the title starts under the folder label.
+                // The working indicator is centered in it, across both lines of the row.
+                <span data-session-row-gutter className="inline-flex size-4 shrink-0 items-center justify-center">
+                  {isStreaming ? (
+                    <AgentThinkingLoader
+                      variant="inline"
+                      text={null}
+                      animationType="spinner"
+                      speedMs={80}
+                      className="text-primary text-xs shrink-0"
+                    />
+                  ) : null}
+                </span>
+              ) : null}
               {subsessionChevron}
               {leadingIndicators}
               {editingId === session.id ? (
@@ -559,7 +576,14 @@ function SessionNodeItemComponent(props: SessionNodeItemProps): React.ReactNode 
 
             {isPinnedSession ? <Icon name="star-fill" className="h-3 w-3 text-primary shrink-0" /> : null}
 
-            <div className={cn('relative ml-1 flex min-w-6 shrink-0 items-center justify-end', isCard ? 'h-5' : 'h-6')}>
+            <div
+              className={cn(
+                'relative ml-1 flex min-w-6 shrink-0 items-center justify-end',
+                isCard ? 'h-5' : 'h-6',
+                // The timestamp rides the title line; the working indicator is centered in the row.
+                isCard && !isTree && isStreaming && 'self-center',
+              )}
+            >
               <div
                 className={cn(
                   'flex items-center justify-end',
@@ -570,7 +594,7 @@ function SessionNodeItemComponent(props: SessionNodeItemProps): React.ReactNode 
                       : null,
                 )}
               >
-                {isStreaming ? (
+                {isStreaming && !isTree ? (
                   <AgentThinkingLoader
                     variant="inline"
                     text={null}

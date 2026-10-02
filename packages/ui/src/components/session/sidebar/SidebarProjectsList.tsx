@@ -295,7 +295,7 @@ function SidebarProjectsListComponent(props: Props): React.ReactNode {
           })()}
         </div>
       ) : viewMode === 'folder' ? (
-        <SessionRowVariantContext.Provider value="card">
+        <SessionRowVariantContext.Provider value="tree">
         <SidebarFolderTree
           sections={props.sectionsForRender}
           homeSection={props.allFoldersOnlySection}

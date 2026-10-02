@@ -20,9 +20,9 @@ import { ProjectHeaderIdentity, SortableProjectItem, type SortableDragHandleProp
 import { SidebarSessionLikeButton } from './sidebarRowChrome';
 import { getProjectLabel } from './utils';
 
-// Folder header icon (size-4) plus its gap-1.5: nested rows start under the
-// folder label so a folder reads apart from its sessions.
-const folderBodyClassName = 'pb-1 pl-[22px]';
+// Rows keep the full sidebar width; the `tree` session row variant indents
+// its own content under the folder label.
+const folderBodyClassName = 'pb-1';
 
 interface SidebarFolderTreeProps {
   sections: ProjectSection[];
