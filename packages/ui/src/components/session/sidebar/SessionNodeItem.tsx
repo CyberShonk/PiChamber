@@ -255,8 +255,11 @@ function SessionNodeItemComponent(props: SessionNodeItemProps): React.ReactNode 
   const hasPrBadge = Boolean(prSummary) && prNumber != null;
   // The details line leads with the folder (mixed lists) or the branch (one
   // folder); everything else is pushed to the right edge.
+  // The working overlay carries the turn time while it is shown, so a turn
+  // starting or ending never reflows the details line beneath it.
+  const showInlineActivityDuration = showActivityDuration && !showWorkingOverlay;
   const hasTrailingMeta =
-    (showFolderLabel && hasBranchMeta) || hasPrBadge || subtaskCount > 0 || showAgentName || showActivityDuration;
+    (showFolderLabel && hasBranchMeta) || hasPrBadge || subtaskCount > 0 || showAgentName || showInlineActivityDuration;
   const branchMeta = (shrinkable: boolean) =>
     tooltipBranchLabel ? (
       <span className={cn('inline-flex min-w-0 items-center gap-1', shrinkable ? 'shrink' : 'flex-1')}>
@@ -445,6 +448,7 @@ function SessionNodeItemComponent(props: SessionNodeItemProps): React.ReactNode 
             <div
               className={cn('flex min-w-0 flex-1 items-start', showWorkingOverlay && 'oc-session-row-working-fade')}
               data-clear-on-hover={showWorkingOverlay && showQuickArchiveAction ? 'true' : undefined}
+              data-working-duration={showWorkingOverlay && showActivityDuration ? 'true' : undefined}
             >
             <div className={cn('flex min-w-0 flex-1 items-center', isTree ? treeRowGapClassName : 'gap-1.5')}>
               {isTree ? (
@@ -580,7 +584,7 @@ function SessionNodeItemComponent(props: SessionNodeItemProps): React.ReactNode 
                             <span className="min-w-0 max-w-[80px] shrink-0 truncate">{agentName}</span>
                           ) : null}
 
-                          {showActivityDuration ? (
+                          {showInlineActivityDuration ? (
                             <SessionActivityDuration
                               sessionId={session.id}
                               running={isStreaming}
@@ -647,10 +651,13 @@ function SessionNodeItemComponent(props: SessionNodeItemProps): React.ReactNode 
               <span
                 data-session-working
                 className={cn(
-                  'pointer-events-none absolute inset-y-0 right-3 flex items-center transition-opacity',
+                  'pointer-events-none absolute inset-y-0 right-3 flex items-center gap-1.5 transition-opacity',
                   showQuickArchiveAction && 'group-hover:opacity-0 group-focus-within:opacity-0',
                 )}
               >
+                {showActivityDuration ? (
+                  <SessionActivityDuration sessionId={session.id} running={isStreaming} className="text-[11px]" />
+                ) : null}
                 <AgentThinkingLoader
                   variant="inline"
                   text={null}

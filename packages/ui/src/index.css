@@ -330,8 +330,15 @@ div[data-chat-input-footer="true"] {
    selection, and fork backgrounds. Rows whose quick actions take that edge on
    hover drop the fade while hovered or focused. */
 .oc-session-row-working-fade {
-  mask-image: linear-gradient(to left, transparent 0.875rem, #000 3rem);
-  -webkit-mask-image: linear-gradient(to left, transparent 0.875rem, #000 3rem);
+  /* Width of the fully hidden strip: the row padding plus the indicator. */
+  --oc-working-clear: 1.75rem;
+  mask-image: linear-gradient(to left, transparent var(--oc-working-clear), #000 calc(var(--oc-working-clear) + 1.5rem));
+  -webkit-mask-image: linear-gradient(to left, transparent var(--oc-working-clear), #000 calc(var(--oc-working-clear) + 1.5rem));
+}
+
+/* The indicator also carries the turn time. */
+.oc-session-row-working-fade[data-working-duration="true"] {
+  --oc-working-clear: 4.75rem;
 }
 
 .group:focus-within > .oc-session-row-working-fade[data-clear-on-hover="true"] {
