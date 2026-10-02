@@ -12,6 +12,7 @@ import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip
 import { Icon } from '@/components/icon/Icon';
 import { cn } from '@/lib/utils';
 import { sidebarRowIconClass, sidebarRowLabelClass } from './utils';
+import { treeRowGapClassName } from './sessionRowVariant';
 
 export type SortableDragHandleProps = {
   listeners: ReturnType<typeof useSortable>['listeners'];
@@ -205,7 +206,8 @@ export const SortableProjectItem: React.FC<SortableProjectItemProps> = ({
                     onClick={handleToggleClick}
                     {...listeners}
                     className={cn(
-                      'flex-1 min-w-0 flex items-center gap-1.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 rounded-md cursor-grab active:cursor-grabbing transition-[padding]',
+                      treeRowGapClassName,
+                      'flex-1 min-w-0 flex items-center text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 rounded-md cursor-grab active:cursor-grabbing transition-[padding]',
                       alwaysShowActions
                         ? 'pr-14'
                         : 'pr-2 group-hover/project:pr-14 group-focus-within/project:pr-14',

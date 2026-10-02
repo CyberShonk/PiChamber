@@ -25,7 +25,7 @@ import { areSessionNodeItemPropsEqual } from './sessionNodeComparators';
 import { useSessionNodeItemMetadata } from './useSessionNodeItemMetadata';
 import { useGitHubSelectedRepo } from '@/stores/useGitHubScopeStore';
 import { openPullRequestInSurface } from '@/components/views/github/openPullRequestInSurface';
-import { SessionRowVariantContext } from './sessionRowVariant';
+import { SessionRowVariantContext, treeRowGapClassName } from './sessionRowVariant';
 
 /** Clickable PR badge: opens the PR in the Pull requests surface (§6.6). */
 const PrBadgeButton: React.FC<{
@@ -417,7 +417,7 @@ function SessionNodeItemComponent(props: SessionNodeItemProps): React.ReactNode 
               />
             }
           >
-            <div className="flex min-w-0 flex-1 items-center gap-1.5">
+            <div className={cn('flex min-w-0 flex-1 items-center', isTree ? treeRowGapClassName : 'gap-1.5')}>
               {isTree ? (
                 // Same width as the folder header icon, so the title starts under the folder label.
                 // The working indicator is centered in it, across both lines of the row.

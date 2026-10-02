@@ -19,6 +19,7 @@ import type { SessionGroup, SessionNode, ProjectSection } from './types';
 import { ProjectHeaderIdentity, SortableProjectItem, type SortableDragHandleProps } from './sortableItems';
 import { SidebarSessionLikeButton } from './sidebarRowChrome';
 import { getProjectLabel } from './utils';
+import { treeRowGapClassName } from './sessionRowVariant';
 
 // Rows keep the full sidebar width; the `tree` session row variant indents
 // its own content under the folder label.
@@ -251,7 +252,7 @@ const SidebarFolderTreeComponent: React.FC<SidebarFolderTreeProps> = ({
               aria-expanded={!isHomeCollapsed}
               style={{ touchAction: 'manipulation' }}
               onClick={() => toggleProject('__home__')}
-              className="flex-1 min-w-0 flex items-center gap-1.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 rounded-md"
+              className={`${treeRowGapClassName} flex-1 min-w-0 flex items-center text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 rounded-md`}
             >
               <ProjectHeaderIdentity
                 id="__home__"

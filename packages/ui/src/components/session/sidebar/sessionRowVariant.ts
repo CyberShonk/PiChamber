@@ -13,4 +13,11 @@ import React from 'react';
  */
 type SessionRowVariant = 'default' | 'card' | 'tree';
 
+/**
+ * Gap between the leading icon column and the label in the by-folder tree.
+ * Folder headers, session rows, and session-shaped actions share it so every
+ * label starts on the same line under the folder name.
+ */
+export const treeRowGapClassName = 'gap-2';
+
 export const SessionRowVariantContext = React.createContext<SessionRowVariant>('default');
