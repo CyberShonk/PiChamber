@@ -57,7 +57,7 @@ export const ProjectHeaderIdentity: React.FC<ProjectHeaderIdentityProps> = ({
         ) : null}
         <Icon name="folder" className={cn(iconClassName, 'text-muted-foreground/80', iconVisibilityClassName)} />
       </span>
-      <span className={cn(labelClassName, 'font-medium text-foreground')}>{projectLabel}</span>
+      <span className={cn(labelClassName, 'text-foreground')}>{projectLabel}</span>
     </>
   );
 };

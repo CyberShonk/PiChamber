@@ -25,7 +25,7 @@ import { areSessionNodeItemPropsEqual } from './sessionNodeComparators';
 import { useSessionNodeItemMetadata } from './useSessionNodeItemMetadata';
 import { useGitHubSelectedRepo } from '@/stores/useGitHubScopeStore';
 import { openPullRequestInSurface } from '@/components/views/github/openPullRequestInSurface';
-import { SessionRowVariantContext, treeRowGapClassName } from './sessionRowVariant';
+import { SessionRowVariantContext, treeRowGapClassName, treeRowSpacingClassName } from './sessionRowVariant';
 
 /** Clickable PR badge: opens the PR in the Pull requests surface (§6.6). */
 const PrBadgeButton: React.FC<{
@@ -429,7 +429,8 @@ function SessionNodeItemComponent(props: SessionNodeItemProps): React.ReactNode 
                   ...(rowBackground ? { backgroundColor: rowBackground } : undefined),
                 }}
                 className={cn(
-                  'group relative my-0.5 flex cursor-pointer items-start rounded-xl px-3 py-2 transition-colors',
+                  'group relative flex cursor-pointer items-start px-3 transition-colors',
+                  isTree ? treeRowSpacingClassName : 'my-0.5 rounded-xl py-2',
                   !rowBackground && depth > 0
                     ? 'bg-secondary/30 hover:bg-interactive-hover'
                     : !rowBackground
@@ -448,7 +449,7 @@ function SessionNodeItemComponent(props: SessionNodeItemProps): React.ReactNode 
             <div className={cn('flex min-w-0 flex-1 items-center', isTree ? treeRowGapClassName : 'gap-1.5')}>
               {isTree ? (
                 // Same width as the folder header icon, so the title starts under the folder label.
-                // The working indicator is centered in it, across both lines of the row.
+                // The working indicator is centered in it.
                 <span data-session-row-gutter className="inline-flex size-4 shrink-0 items-center justify-center">
                   {isStreaming ? (
                     <AgentThinkingLoader
@@ -467,7 +468,7 @@ function SessionNodeItemComponent(props: SessionNodeItemProps): React.ReactNode 
                 <form
                   ref={formRef}
                   data-session-rename-form={session.id}
-                  className="flex min-h-8 min-w-0 flex-1 items-center gap-2"
+                  className={cn('flex min-w-0 flex-1 items-center gap-2', isTree ? 'min-h-5' : 'min-h-8')}
                   onPointerDown={(event) => event.stopPropagation()}
                   onMouseDown={(event) => event.stopPropagation()}
                   onSubmit={(event) => {
@@ -521,7 +522,11 @@ function SessionNodeItemComponent(props: SessionNodeItemProps): React.ReactNode 
                     <div
                       className={cn(
                         'block min-w-0 flex-1 truncate font-normal typography-ui-label',
-                        needsAttention ? 'text-foreground' : 'text-foreground/90',
+                        needsAttention
+                          ? 'text-foreground'
+                          : isTree && !isActive
+                            ? 'text-muted-foreground transition-colors group-hover:text-foreground'
+                            : 'text-foreground/90',
                       )}
                     >
                       {renderHighlightedText(sessionTitle, normalizedSessionSearchQuery)}
@@ -534,7 +539,8 @@ function SessionNodeItemComponent(props: SessionNodeItemProps): React.ReactNode 
                     </span>
                   </div>
 
-                  {showFolderLabel || hasBranchMeta || hasTrailingMeta ? (
+                  {/* By-folder rows are a single line: title and time only. */}
+                  {!isTree && (showFolderLabel || hasBranchMeta || hasTrailingMeta) ? (
                     <div className="flex w-full min-w-0 items-center justify-between gap-2 overflow-hidden text-xs leading-4 font-normal text-muted-foreground/80">
                       {showFolderLabel ? (
                         <span className={cn('inline-flex min-w-0 items-center gap-1', hasTrailingMeta ? 'max-w-[60%] shrink-0' : 'flex-1')}>
@@ -591,7 +597,8 @@ function SessionNodeItemComponent(props: SessionNodeItemProps): React.ReactNode 
 
             <div
               className={cn(
-                'absolute right-3 top-2 flex h-5 min-w-6 items-center justify-end',
+                'absolute right-3 flex h-5 min-w-6 items-center justify-end',
+                isTree ? 'top-1.5' : 'top-2',
                 editingId === session.id && 'hidden',
               )}
             >

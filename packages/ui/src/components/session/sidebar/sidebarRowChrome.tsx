@@ -9,7 +9,7 @@ import {
   sidebarRowIconClass,
   sidebarRowLabelClass,
 } from './utils';
-import { SessionRowVariantContext, treeRowGapClassName } from './sessionRowVariant';
+import { SessionRowVariantContext, treeRowGapClassName, treeRowSpacingClassName } from './sessionRowVariant';
 
 export const SidebarSessionLikeButton = ({
   icon,
@@ -32,6 +32,7 @@ export const SidebarSessionLikeButton = ({
       className={cn(
         mobileVariant ? sidebarSessionRowClassNameMobile : sidebarSessionRowClassName,
         isTree && treeRowGapClassName,
+        isTree && treeRowSpacingClassName,
         className,
       )}
     >
