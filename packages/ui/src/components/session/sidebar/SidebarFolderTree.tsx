@@ -20,6 +20,10 @@ import { ProjectHeaderIdentity, SortableProjectItem, type SortableDragHandleProp
 import { SidebarSessionLikeButton } from './sidebarRowChrome';
 import { getProjectLabel } from './utils';
 
+// Folder header icon (size-4) plus its gap-1.5: nested rows start under the
+// folder label so a folder reads apart from its sessions.
+const folderBodyClassName = 'pb-1 pl-[22px]';
+
 interface SidebarFolderTreeProps {
   sections: ProjectSection[];
   homeSection?: ProjectSection | null;
@@ -202,7 +206,7 @@ const SidebarFolderTreeComponent: React.FC<SidebarFolderTreeProps> = ({
                 setOpenSidebarMenuKey={setOpenSidebarMenuKey}
               >
                 {!isCollapsed ? (
-                  <div className="pb-1">
+                  <div className={folderBodyClassName}>
                     {rootGroup
                       ? renderGroupSessions(
                           rootGroup,
@@ -260,7 +264,7 @@ const SidebarFolderTreeComponent: React.FC<SidebarFolderTreeProps> = ({
           </div>
 
           {!isHomeCollapsed ? (
-            <div className="pb-1">
+            <div className={folderBodyClassName}>
               {visibleHomeSessions.map((node) => (
                 <React.Fragment key={node.session.id}>
                   {renderSessionNode?.(
