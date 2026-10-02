@@ -6,50 +6,52 @@ import {
   getNextLocalMidnight,
 } from '../timelineBuckets';
 
+/**
+ * Local-calendar boundaries for the timeline sidebar view, or `null` while the
+ * view is not shown (no timer or listener is installed then).
+ *
+ * Boundaries are read from the clock whenever the view is (re)enabled, and
+ * again when the local day changes: one timer armed for the next local
+ * midnight, plus a visibility check for timers that were throttled or slept
+ * through while the page was hidden.
+ */
 export const useTimelineBoundaries = (
   enabled: boolean,
   weekStart: TimelineWeekStart,
 ): TimelineBoundaries | null => {
-  const [dayAnchor, setDayAnchor] = React.useState<number>(() => Date.now());
+  const [dayTick, setDayTick] = React.useState(0);
 
   const boundaries = React.useMemo(() => {
     if (!enabled) return null;
-    return getTimelineBoundaries(dayAnchor, weekStart);
-  }, [enabled, dayAnchor, weekStart]);
+    return getTimelineBoundaries(Date.now(), weekStart);
+    // `dayTick` re-reads the clock after a day change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enabled, weekStart, dayTick]);
+
+  const startOfToday = boundaries?.startOfToday ?? null;
 
   React.useEffect(() => {
-    if (!enabled) return;
-    if (typeof window === 'undefined') return;
+    if (startOfToday === null) return;
+    if (typeof window === 'undefined' || typeof document === 'undefined') return;
 
     const now = Date.now();
-    const nextMidnight = getNextLocalMidnight(now);
-    const delay = Math.max(50, nextMidnight - now + 50);
-
     const timer = window.setTimeout(() => {
-      setDayAnchor(Date.now());
-    }, delay);
+      setDayTick((tick) => tick + 1);
+    }, Math.max(50, getNextLocalMidnight(now) - now + 50));
 
     const handleVisibilityChange = () => {
-      if (typeof document === 'undefined') return;
-      if (document.visibilityState === 'visible') {
-        const currentToday = getTimelineBoundaries(Date.now(), weekStart).startOfToday;
-        if (boundaries && currentToday !== boundaries.startOfToday) {
-          setDayAnchor(Date.now());
-        }
+      if (document.visibilityState !== 'visible') return;
+      if (getTimelineBoundaries(Date.now(), weekStart).startOfToday !== startOfToday) {
+        setDayTick((tick) => tick + 1);
       }
     };
-
-    if (typeof document !== 'undefined') {
-      document.addEventListener('visibilitychange', handleVisibilityChange);
-    }
+    document.addEventListener('visibilitychange', handleVisibilityChange);
 
     return () => {
       window.clearTimeout(timer);
-      if (typeof document !== 'undefined') {
-        document.removeEventListener('visibilitychange', handleVisibilityChange);
-      }
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, [enabled, dayAnchor, weekStart, boundaries]);
+  }, [startOfToday, weekStart, dayTick]);
 
   return boundaries;
 };
