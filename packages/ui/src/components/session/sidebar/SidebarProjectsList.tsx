@@ -15,6 +15,7 @@ import {
   groupTimelineItems,
 } from './timelineBuckets';
 import { SidebarFolderTree } from './SidebarFolderTree';
+import { SessionRowVariantContext } from './sessionRowVariant';
 
 export type { ProjectSection };
 
@@ -294,6 +295,7 @@ function SidebarProjectsListComponent(props: Props): React.ReactNode {
           })()}
         </div>
       ) : viewMode === 'folder' ? (
+        <SessionRowVariantContext.Provider value="card">
         <SidebarFolderTree
           sections={props.sectionsForRender}
           homeSection={props.allFoldersOnlySection}
@@ -325,7 +327,9 @@ function SidebarProjectsListComponent(props: Props): React.ReactNode {
           emptyState={props.emptyState}
           searchEmptyState={props.searchEmptyState}
         />
+        </SessionRowVariantContext.Provider>
       ) : viewMode === 'timeline' && props.renderSessionNode ? (
+        <SessionRowVariantContext.Provider value="card">
         <div>
           {allFolderSessions.length === 0 ? (
             props.hasSessionSearchQuery ? props.searchEmptyState : props.emptyState
@@ -343,7 +347,7 @@ function SidebarProjectsListComponent(props: Props): React.ReactNode {
                       role="heading"
                       aria-level={3}
                       className={cn(
-                        'select-none px-3 pb-1 typography-micro font-medium text-muted-foreground',
+                        'select-none px-3 pb-1 text-xs leading-4 font-medium text-muted-foreground',
                         index === 0 ? 'pt-1' : 'pt-3',
                       )}
                     >
@@ -372,6 +376,7 @@ function SidebarProjectsListComponent(props: Props): React.ReactNode {
             </>
           )}
         </div>
+        </SessionRowVariantContext.Provider>
       ) : props.isAllFoldersView && props.renderSessionNode ? (
         <div>
           {allFolderSessions.length === 0 ? (

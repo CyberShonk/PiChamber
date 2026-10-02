@@ -21,6 +21,8 @@ The sidebar organization mode comes from `useUIStore.sidebarViewMode` (server-pe
 
 All modes read the same catalog-derived sections without extra network fetching.
 
+Folder and timeline modes render session rows in the `card` variant (`sessionRowVariant.ts`, provided by `SidebarProjectsList` through context): the timestamp sits on the title line and folder/branch/PR details form a smaller, quieter second line with icons. Workspace mode keeps the `default` row. In folder mode, rows are indented under the folder label and folder names use a medium weight so a folder reads apart from its sessions.
+
 ## File summaries
 
 ### Components

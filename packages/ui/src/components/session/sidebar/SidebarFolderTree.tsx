@@ -148,7 +148,7 @@ const SidebarFolderTreeComponent: React.FC<SidebarFolderTreeProps> = ({
   }
 
   return (
-    <div className="space-y-1">
+    <div className="space-y-2">
       <DndContext
         sensors={sensors}
         collisionDetection={closestCenter}

@@ -25,6 +25,7 @@ import { areSessionNodeItemPropsEqual } from './sessionNodeComparators';
 import { useSessionNodeItemMetadata } from './useSessionNodeItemMetadata';
 import { useGitHubSelectedRepo } from '@/stores/useGitHubScopeStore';
 import { openPullRequestInSurface } from '@/components/views/github/openPullRequestInSurface';
+import { SessionRowVariantContext } from './sessionRowVariant';
 
 /** Clickable PR badge: opens the PR in the Pull requests surface (§6.6). */
 const PrBadgeButton: React.FC<{
@@ -133,6 +134,8 @@ function SessionNodeItemComponent(props: SessionNodeItemProps): React.ReactNode 
     childRenderExtrasFor,
   } = props;
 
+  const isCard = React.useContext(SessionRowVariantContext) === 'card';
+  const metaIconClassName = isCard ? 'size-3 shrink-0' : 'size-3.5 shrink-0';
   const isElectron = React.useMemo(() => canUseElectronDesktopIPC(), []);
   const showQuickArchiveAction = !archivedBucket && allowQuickArchiveAction;
   const suppressNextSelectRef = React.useRef(false);
@@ -398,7 +401,8 @@ function SessionNodeItemComponent(props: SessionNodeItemProps): React.ReactNode 
                   ...(rowBackground ? { backgroundColor: rowBackground } : undefined),
                 }}
                 className={cn(
-                  'group relative my-0.5 flex cursor-pointer items-center rounded-xl px-3 py-2 transition-colors',
+                  'group relative my-0.5 flex cursor-pointer rounded-xl px-3 transition-colors',
+                  isCard ? 'items-start py-1.5' : 'items-center py-2',
                   !rowBackground && depth > 0
                     ? 'bg-secondary/30 hover:bg-interactive-hover'
                     : !rowBackground
@@ -485,23 +489,37 @@ function SessionNodeItemComponent(props: SessionNodeItemProps): React.ReactNode 
                   subtaskCount > 0 ||
                   (agentName && agentName !== 'default') ||
                   showActivityDuration ? (
-                    <div className="flex w-full min-w-0 items-center gap-2 overflow-hidden pt-0.5 typography-ui-label font-normal text-muted-foreground">
+                    <div
+                      className={cn(
+                        'flex w-full min-w-0 items-center gap-2 overflow-hidden font-normal',
+                        isCard
+                          ? 'text-xs leading-4 text-muted-foreground/80'
+                          : 'pt-0.5 typography-ui-label text-muted-foreground',
+                      )}
+                    >
                       {secondaryMeta?.showFolderLabel && tooltipProjectLabel ? (
-                        <span className="min-w-0 max-w-[110px] shrink-0 truncate">{tooltipProjectLabel}</span>
+                        isCard ? (
+                          <span className="inline-flex min-w-0 max-w-[120px] shrink-0 items-center gap-1">
+                            <Icon name="folder" className={metaIconClassName} />
+                            <span className="truncate">{tooltipProjectLabel}</span>
+                          </span>
+                        ) : (
+                          <span className="min-w-0 max-w-[110px] shrink-0 truncate">{tooltipProjectLabel}</span>
+                        )
                       ) : null}
 
                       {tooltipBranchLabel ? (
-                        <span className="inline-flex min-w-0 max-w-[160px] shrink-0 items-center gap-1">
+                        <span className={cn('inline-flex min-w-0 items-center gap-1', isCard ? 'shrink' : 'max-w-[160px] shrink-0')}>
                           <Icon
                             name="git-branch"
-                            className={cn('size-3.5 shrink-0', !prIconColor && 'text-muted-foreground')}
+                            className={cn(metaIconClassName, !prIconColor && !isCard && 'text-muted-foreground')}
                             style={prIconColor ? { color: prIconColor } : undefined}
                           />
                           <span className="truncate">{tooltipBranchLabel}</span>
                         </span>
                       ) : isGitRepo ? (
                         <span className="inline-flex shrink-0 items-center gap-1">
-                          <Icon name="git-repository" className="size-3.5 shrink-0 text-muted-foreground" />
+                          <Icon name="git-repository" className={cn(metaIconClassName, !isCard && 'text-muted-foreground')} />
                           <span>git</span>
                         </span>
                       ) : null}
@@ -541,7 +559,7 @@ function SessionNodeItemComponent(props: SessionNodeItemProps): React.ReactNode 
 
             {isPinnedSession ? <Icon name="star-fill" className="h-3 w-3 text-primary shrink-0" /> : null}
 
-            <div className="relative ml-1 flex h-6 min-w-6 shrink-0 items-center justify-end">
+            <div className={cn('relative ml-1 flex min-w-6 shrink-0 items-center justify-end', isCard ? 'h-5' : 'h-6')}>
               <div
                 className={cn(
                   'flex items-center justify-end',
