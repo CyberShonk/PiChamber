@@ -490,6 +490,80 @@ export const SettingsRadioOption: React.FC<SettingsRadioOptionProps> = ({
   );
 };
 
+interface SettingsPreviewOptionProps {
+  selected: boolean;
+  onSelect: () => void;
+  label: React.ReactNode;
+  /** Illustration of the option, drawn inside the tile. Decorative: the label names the option. */
+  preview: React.ReactNode;
+  ariaLabel?: string;
+  disabled?: boolean;
+  className?: string;
+}
+
+/** Radio option shown as an illustrated tile with its radio and label beneath; used inside SettingsRadioGroup. */
+export const SettingsPreviewOption: React.FC<SettingsPreviewOptionProps> = ({
+  selected,
+  onSelect,
+  label,
+  preview,
+  ariaLabel,
+  disabled = false,
+  className,
+}) => {
+  return (
+    <div
+      className={cn(
+        'group/preview flex min-w-0 cursor-pointer flex-col gap-2',
+        disabled && 'cursor-not-allowed opacity-60',
+        className,
+      )}
+      role="button"
+      tabIndex={disabled ? -1 : 0}
+      aria-pressed={selected}
+      aria-disabled={disabled || undefined}
+      onClick={() => {
+        if (!disabled) onSelect();
+      }}
+      onKeyDown={(event) => {
+        if (event.key === ' ' || event.key === 'Enter') {
+          event.preventDefault();
+          if (!disabled) onSelect();
+        }
+      }}
+    >
+      <div
+        aria-hidden
+        className={cn(
+          'aspect-[4/3] overflow-hidden rounded-lg border transition-colors',
+          // Border and ring share one colour and neither changes the box, so selecting never shifts the tile.
+          selected
+            ? 'border-[var(--primary-base)] ring-1 ring-[var(--primary-base)]'
+            : 'border-border group-hover/preview:border-foreground/30',
+        )}
+      >
+        {preview}
+      </div>
+      <div className="flex min-w-0 items-center gap-1.5">
+        <Radio
+          checked={selected}
+          onChange={onSelect}
+          disabled={disabled}
+          ariaLabel={ariaLabel}
+        />
+        <span
+          className={cn(
+            'min-w-0 truncate typography-settings-field-label font-normal',
+            selected ? 'text-foreground' : 'text-foreground/50',
+          )}
+        >
+          {label}
+        </span>
+      </div>
+    </div>
+  );
+};
+
 interface SettingsRadioGroupProps {
   'aria-label': string;
   children: React.ReactNode;

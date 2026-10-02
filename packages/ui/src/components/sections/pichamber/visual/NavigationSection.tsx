@@ -6,6 +6,7 @@ import {
   SETTINGS_SELECT_TRIGGER_CLASS,
   SettingsCheckboxRow,
   SettingsControlGroup,
+  SettingsPreviewOption,
   SettingsRadioGroup,
   SettingsRadioOption,
   SettingsSection,
@@ -21,6 +22,7 @@ import {
 import type { TerminalShell, TerminalShellOption } from '@/lib/api/types';
 import { isTerminalShell } from '@/lib/terminalShell';
 import type { SidebarViewMode } from '@/lib/sidebarViewMode';
+import { SidebarViewPreview } from './SidebarViewPreview';
 import {
   SIDEBAR_VIEW_MODE_OPTIONS,
   type VisibleSetting,
@@ -75,14 +77,15 @@ export const NavigationSection: React.FC<NavigationSectionProps> = ({
           info={'Workspace opens one folder at a time. By folder lists every folder with its sessions underneath. Timeline groups sessions from every folder by when they were last active. Applies to every device connected to this server.'}
           settingsItem="appearance.sidebar-view"
         >
-          <SettingsRadioGroup aria-label={'Sidebar view'}>
+          <SettingsRadioGroup aria-label={'Sidebar view'} className="grid max-w-[30rem] grid-cols-3 gap-2 space-y-0 @xl:gap-3">
             {SIDEBAR_VIEW_MODE_OPTIONS.map((option) => (
-              <SettingsRadioOption
+              <SettingsPreviewOption
                 key={option.id}
                 selected={sidebarViewMode === option.id}
                 onSelect={() => onSidebarViewModeChange(option.id)}
                 label={option.label}
                 ariaLabel={option.label}
+                preview={<SidebarViewPreview mode={option.id} />}
               />
             ))}
           </SettingsRadioGroup>
