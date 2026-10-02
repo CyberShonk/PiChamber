@@ -153,7 +153,13 @@ let _settingsResponseRevision = 0;
 // pending `null` against an absent key is therefore a real change and is
 // sent; a pending `undefined` against an absent key is already absent and is
 // a no-op.
+//
+// The image lags a PUT that has been sent but not settled, so a key carried
+// by an outstanding patch (`_settingsPatchesInFlight`) is never a no-op: a
+// write restoring the image value while that PUT is in flight is a real
+// rollback and must follow it to the server.
 let _lastSyncedSettings: DesktopSettings | null = null;
+let _settingsPatchesInFlight: Array<Partial<DesktopSettings>> = [];
 
 // True once a settings load has succeeded in the current runtime generation.
 // Separate from `_lastSyncedSettings` (which `invalidateSettingsCache()`
@@ -230,6 +236,9 @@ const isPendingSettingsNoop = (changes: Partial<DesktopSettings>): boolean => {
   if (!_lastSyncedSettings) return false;
   const baseline = _lastSyncedSettings as Record<string, unknown>;
   return Object.entries(changes).every(([key, value]) => {
+    if (_settingsPatchesInFlight.some((patch) => Object.prototype.hasOwnProperty.call(patch, key))) {
+      return false;
+    }
     if (!Object.prototype.hasOwnProperty.call(baseline, key)) {
       // Absent baseline key: only `undefined` (already absent after the
       // JSON-file merge) is a no-op. `null` persists as a value — send it.
@@ -666,6 +675,7 @@ async function _runSettingsFlush(
   _pendingSettingsContext = null;
   _settingsFlushTimer = null;
   _settingsFlushWaiters = [];
+  let sentPatch: Partial<DesktopSettings> | null = null;
   try {
     if (
       !snapshot ||
@@ -687,6 +697,9 @@ async function _runSettingsFlush(
       dispatchSettingsSaveState('saved');
       return;
     }
+
+    sentPatch = changes;
+    _settingsPatchesInFlight.push(changes);
 
     const runtimeSettings = getRuntimeSettingsAPI();
     if (runtimeSettings) {
@@ -762,6 +775,9 @@ async function _runSettingsFlush(
       }
     }
   } finally {
+    if (sentPatch) {
+      _settingsPatchesInFlight = _settingsPatchesInFlight.filter((patch) => patch !== sentPatch);
+    }
     waiters.forEach((resolve) => resolve());
   }
 }
