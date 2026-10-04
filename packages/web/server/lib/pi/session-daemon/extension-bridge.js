@@ -5,12 +5,17 @@ import {
   sanitizeExtensionFormFields,
   validateExtensionFormValues,
 } from '../extension-protocol.js';
+import { resolveExtensionName } from './extension-name.js';
+import { createExtensionTheme } from './extension-theme.js';
 
 const MAX_EXTENSION_PANELS_PER_SESSION = 24;
 const MAX_EXTENSION_APPS_PER_SESSION = 8;
 const MAX_EXTENSION_PANEL_ACTIONS = 8;
 const MAX_EXTENSION_EDITOR_TEXT_CHARS = 100_000;
 const MAX_EXTENSION_TITLE_CHARS = 256;
+const MAX_EXTENSION_WORKING_CHARS = 200;
+const DEFAULT_COMPONENT_WIDGET_WIDTH = 100;
+const COMPONENT_RENDER_THROTTLE_MS = 100;
 const PROVIDER_OBSERVER = Symbol('pichamber.extension-provider-observer');
 const LABEL_OBSERVER = Symbol('pichamber.extension-label-observer');
 
@@ -19,6 +24,32 @@ const textFromContent = (content) => (
     ? content.filter((part) => part?.type === 'text' && typeof part.text === 'string').map((part) => part.text).join('')
     : ''
 );
+
+// Pi keeps `appendEntry` custom entries out of the TUI transcript; they
+// persist extension state. Only PiChamber GUI entries are meant to render.
+export const isDisplayedExtensionEntryType = (customType) => (
+  typeof customType === 'string' && customType.startsWith('pichamber.')
+);
+
+export const extractExtensionDescriptor = (entry) => {
+  if (!entry || typeof entry !== 'object' || entry.type !== 'custom') return undefined;
+  if (!isDisplayedExtensionEntryType(entry.customType)) return undefined;
+  const data = entry.data;
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return undefined;
+  return data.ui && typeof data.ui === 'object' && !Array.isArray(data.ui) ? data.ui : data;
+};
+
+export const isIddExtensionEntry = (entry) => {
+  const descriptor = extractExtensionDescriptor(entry);
+  if (!descriptor) return false;
+  if (entry.customType === 'pichamber.app') {
+    const appId = typeof descriptor.appId === 'string' && descriptor.appId.length > 0
+      ? descriptor.appId
+      : (typeof descriptor.id === 'string' && descriptor.id.length > 0 ? descriptor.id : undefined);
+    return Boolean(appId);
+  }
+  return typeof descriptor.id === 'string' && descriptor.id.length > 0;
+};
 
 /** Owns extension UI bridge state and translation for one daemon instance. */
 export const createExtensionBridge = ({
@@ -34,9 +65,14 @@ export const createExtensionBridge = ({
 }) => {
   const extensionStatusesBySession = new Map();
   const extensionWidgetsBySession = new Map();
+  const extensionComponentWidgetsBySession = new Map();
+  const extensionWidgetRenderTimersBySession = new Map();
   const extensionPanelsBySession = new Map();
   const extensionAppsBySession = new Map();
   const extensionTitlesBySession = new Map();
+  const extensionWorkingBySession = new Map();
+  const extensionDraftBySession = new Map();
+  const extensionDraftTrackedSessions = new Set();
   // --- Extension bridging -------------------------------------------------
   // Pi extensions run inside each session runtime. Their user-interaction
   // surface (dialogs, notifications, statuses, widgets) is translated here
@@ -54,7 +90,154 @@ export const createExtensionBridge = ({
   const directoryForSession = (sessionId) => findRuntimeBySessionId(sessionId)?.cwd || getDefaultDirectory();
   const publishForSession = (event, payload, sessionId) => publish(event, payload, sessionId, directoryForSession(sessionId));
 
+  const disposeComponentWidget = (sessionId, key) => {
+    const sessionComponents = extensionComponentWidgetsBySession.get(sessionId);
+    if (!sessionComponents) return;
+    const entry = sessionComponents.get(key);
+    if (!entry) return;
+    sessionComponents.delete(key);
+    if (sessionComponents.size === 0) {
+      extensionComponentWidgetsBySession.delete(sessionId);
+      const timer = extensionWidgetRenderTimersBySession.get(sessionId);
+      if (timer) {
+        clearTimeout(timer);
+        extensionWidgetRenderTimersBySession.delete(sessionId);
+      }
+    }
+    try {
+      entry.component?.dispose?.();
+    } catch {
+      // Harmless component disposal error
+    }
+  };
+
+  const renderAndPublishComponentWidget = (sessionId, key) => {
+    const sessionComponents = extensionComponentWidgetsBySession.get(sessionId);
+    const entry = sessionComponents?.get(key);
+    if (!entry) return;
+
+    try {
+      const rawLines = entry.component.render(DEFAULT_COMPONENT_WIDGET_WIDTH);
+      const lines = Array.isArray(rawLines)
+        ? rawLines.map((line) => String(line).slice(0, 2000)).slice(0, 100)
+        : [];
+
+      const prevLines = entry.lastRenderedLines;
+      const unchanged = prevLines && prevLines.length === lines.length && prevLines.every((l, i) => l === lines[i]);
+      if (unchanged) return;
+
+      entry.lastRenderedLines = lines;
+
+      const widgets = extensionWidgetsBySession.get(sessionId) ?? new Map();
+      if (lines.length > 0) {
+        widgets.set(key, { lines, placement: entry.placement });
+      } else {
+        widgets.delete(key);
+      }
+      if (widgets.size === 0) extensionWidgetsBySession.delete(sessionId);
+      else extensionWidgetsBySession.set(sessionId, widgets);
+
+      publishForSession('extension.widget', {
+        key,
+        ...(lines.length > 0 ? { lines, placement: entry.placement } : {}),
+      }, sessionId);
+    } catch (error) {
+      publishForSession('extension.error', {
+        source: 'extension.widget',
+        event: 'render',
+        message: String(error?.message ?? error ?? 'Extension widget render error.'),
+      }, sessionId);
+      disposeComponentWidget(sessionId, key);
+      const widgets = extensionWidgetsBySession.get(sessionId);
+      if (widgets) {
+        widgets.delete(key);
+        if (widgets.size === 0) extensionWidgetsBySession.delete(sessionId);
+      }
+      publishForSession('extension.widget', { key }, sessionId);
+    }
+  };
+
+  const scheduleComponentWidgetsRender = (sessionId) => {
+    if (!extensionComponentWidgetsBySession.has(sessionId)) return;
+    if (extensionWidgetRenderTimersBySession.has(sessionId)) return;
+    const timer = setTimeout(() => {
+      extensionWidgetRenderTimersBySession.delete(sessionId);
+      const sessionComponents = extensionComponentWidgetsBySession.get(sessionId);
+      if (!sessionComponents) return;
+      for (const key of sessionComponents.keys()) {
+        renderAndPublishComponentWidget(sessionId, key);
+      }
+    }, COMPONENT_RENDER_THROTTLE_MS);
+    extensionWidgetRenderTimersBySession.set(sessionId, timer);
+  };
+
+  const createTuiStub = (sessionId) => ({
+    terminal: {
+      columns: DEFAULT_COMPONENT_WIDGET_WIDTH,
+      rows: 30,
+    },
+    requestRender: () => {
+      scheduleComponentWidgetsRender(sessionId);
+    },
+    renderNow: () => {
+      const sessionComponents = extensionComponentWidgetsBySession.get(sessionId);
+      if (!sessionComponents) return;
+      for (const key of sessionComponents.keys()) {
+        renderAndPublishComponentWidget(sessionId, key);
+      }
+    },
+    // Harmless minimal TUI no-ops that component implementations may query or call
+    mode: 'regular',
+    fullRedraws: 0,
+    addChild: () => {},
+    removeChild: () => {},
+    clear: () => {},
+    invalidate: () => {},
+    getShowHardwareCursor: () => false,
+    setShowHardwareCursor: () => {},
+    getClearOnShrink: () => false,
+    setClearOnShrink: () => {},
+    setFocus: () => {},
+    getFocusedComponent: () => null,
+    showOverlay: () => ({
+      hide: () => {},
+      setHidden: () => {},
+      isHidden: () => false,
+      focus: () => {},
+      unfocus: () => {},
+      isFocused: () => false,
+      getBounds: () => undefined,
+    }),
+    hideOverlay: () => {},
+    hasOverlay: () => false,
+    start: () => {},
+    stop: () => {},
+    addInputListener: () => () => {},
+    removeInputListener: () => {},
+    onTerminalColorSchemeChange: () => () => {},
+    setTerminalColorSchemeNotifications: () => {},
+    queryTerminalBackgroundColor: async () => undefined,
+    queryTerminalColorScheme: async () => undefined,
+  });
+
   const clearOneExtensionState = (sessionId) => {
+    const timer = extensionWidgetRenderTimersBySession.get(sessionId);
+    if (timer) {
+      clearTimeout(timer);
+      extensionWidgetRenderTimersBySession.delete(sessionId);
+    }
+    const sessionComponents = extensionComponentWidgetsBySession.get(sessionId);
+    if (sessionComponents) {
+      for (const entry of sessionComponents.values()) {
+        try {
+          entry.component?.dispose?.();
+        } catch {
+          // ignore
+        }
+      }
+      extensionComponentWidgetsBySession.delete(sessionId);
+    }
+
     const statuses = extensionStatusesBySession.get(sessionId);
     const widgets = extensionWidgetsBySession.get(sessionId);
     const panels = extensionPanelsBySession.get(sessionId);
@@ -64,11 +247,17 @@ export const createExtensionBridge = ({
     if (panels) for (const id of panels.keys()) publishForSession('extension.ui', { id, removed: true }, sessionId);
     if (apps) for (const appId of apps.keys()) publishForSession('extension.app', { appId, removed: true }, sessionId);
     if (extensionTitlesBySession.has(sessionId)) publishForSession('extension.title', {}, sessionId);
+    if (extensionWorkingBySession.has(sessionId)) publishForSession('extension.working', {}, sessionId);
+    // Stop browser draft sync; a later getEditorText() call re-enables it.
+    if (extensionDraftTrackedSessions.has(sessionId)) publishForSession('extension.editor.track', { enabled: false }, sessionId);
     extensionStatusesBySession.delete(sessionId);
     extensionWidgetsBySession.delete(sessionId);
     extensionPanelsBySession.delete(sessionId);
     extensionAppsBySession.delete(sessionId);
     extensionTitlesBySession.delete(sessionId);
+    extensionWorkingBySession.delete(sessionId);
+    extensionDraftBySession.delete(sessionId);
+    extensionDraftTrackedSessions.delete(sessionId);
     cancelPendingExtensionDialogs(sessionId, 'session-closed');
   };
 
@@ -80,9 +269,13 @@ export const createExtensionBridge = ({
     const sessionIds = new Set([
       ...extensionStatusesBySession.keys(),
       ...extensionWidgetsBySession.keys(),
+      ...extensionComponentWidgetsBySession.keys(),
       ...extensionPanelsBySession.keys(),
       ...extensionAppsBySession.keys(),
       ...extensionTitlesBySession.keys(),
+      ...extensionWorkingBySession.keys(),
+      ...extensionDraftBySession.keys(),
+      ...extensionDraftTrackedSessions.keys(),
     ]);
     for (const id of sessionIds) clearOneExtensionState(id);
     cancelPendingExtensionDialogs(undefined, 'daemon-stopped');
@@ -126,6 +319,9 @@ export const createExtensionBridge = ({
   };
 
   const createExtensionUIContext = (sessionId) => {
+    const extensionTheme = createExtensionTheme();
+    const tuiStub = createTuiStub(sessionId);
+
     const dialog = (method, fields, opts, parseResponse) => {
       const requestId = randomUUID();
       return new Promise((resolve) => {
@@ -134,7 +330,7 @@ export const createExtensionBridge = ({
           clearTimeout(timer);
           signal?.removeEventListener('abort', onAbort);
           pendingExtensionDialogs.delete(requestId);
-          publish('extension.dialog.dismiss', { requestId, reason }, sessionId);
+          publishForSession('extension.dialog.dismiss', { requestId, reason }, sessionId);
           resolve(parseResponse(response));
         };
         const onAbort = () => settle({}, 'aborted');
@@ -150,7 +346,7 @@ export const createExtensionBridge = ({
           ...(Number.isFinite(opts?.timeout) ? { timeoutMs: opts.timeout } : {}),
         };
         pendingExtensionDialogs.set(requestId, { sessionId, settle, timer, payload });
-        publish('extension.dialog', payload, sessionId);
+        publishForSession('extension.dialog', payload, sessionId);
       });
     };
 
@@ -194,7 +390,7 @@ export const createExtensionBridge = ({
         (response) => (typeof response?.value === 'string' ? response.value : undefined),
       ),
       notify: (message, level) => {
-        publish('extension.notify', {
+        publishForSession('extension.notify', {
           message: String(message ?? ''),
           ...(level === 'warning' || level === 'error' ? { level } : { level: 'info' }),
         }, sessionId);
@@ -207,35 +403,111 @@ export const createExtensionBridge = ({
         else statuses.delete(key);
         if (statuses.size === 0) extensionStatusesBySession.delete(sessionId);
         else extensionStatusesBySession.set(sessionId, statuses);
-        publish('extension.status', {
+        publishForSession('extension.status', {
           key,
           ...(typeof text === 'string' && text.length > 0 ? { text: String(text).slice(0, 1000) } : {}),
         }, sessionId);
       },
       setWidget: (key, content, options) => {
         if (typeof key !== 'string' || key.length === 0) return;
-        // Only string-array widgets are representable over the wire.
-        if (content !== undefined && !Array.isArray(content)) return;
+        const placement = options?.placement === 'belowEditor' ? 'belowEditor' : 'aboveEditor';
+
+        // Dispose previous component if any
+        disposeComponentWidget(sessionId, key);
+
+        if (typeof content === 'function') {
+          try {
+            const component = content(tuiStub, extensionTheme);
+            if (component && typeof component.render === 'function') {
+              const sessionComponents = extensionComponentWidgetsBySession.get(sessionId) ?? new Map();
+              sessionComponents.set(key, { component, placement, lastRenderedLines: undefined });
+              extensionComponentWidgetsBySession.set(sessionId, sessionComponents);
+              renderAndPublishComponentWidget(sessionId, key);
+            } else {
+              const widgets = extensionWidgetsBySession.get(sessionId);
+              if (widgets) {
+                widgets.delete(key);
+                if (widgets.size === 0) extensionWidgetsBySession.delete(sessionId);
+              }
+              publishForSession('extension.widget', { key }, sessionId);
+            }
+          } catch (error) {
+            publishForSession('extension.error', {
+              source: 'extension.widget',
+              event: 'factory',
+              message: String(error?.message ?? error ?? 'Extension widget factory error.'),
+            }, sessionId);
+            const widgets = extensionWidgetsBySession.get(sessionId);
+            if (widgets) {
+              widgets.delete(key);
+              if (widgets.size === 0) extensionWidgetsBySession.delete(sessionId);
+            }
+            publishForSession('extension.widget', { key }, sessionId);
+          }
+          return;
+        }
+
+        if (content !== undefined && content !== null && !Array.isArray(content)) return;
+
         const widgets = extensionWidgetsBySession.get(sessionId) ?? new Map();
-        if (Array.isArray(content) && content.length > 0) {
+        const hasLines = Array.isArray(content) && content.length > 0;
+        if (hasLines) {
           const lines = content.map((line) => String(line).slice(0, 2000)).slice(0, 100);
-          const placement = options?.placement === 'belowEditor' ? 'belowEditor' : 'aboveEditor';
           widgets.set(key, { lines, placement });
         } else {
           widgets.delete(key);
         }
         if (widgets.size === 0) extensionWidgetsBySession.delete(sessionId);
         else extensionWidgetsBySession.set(sessionId, widgets);
-        publish('extension.widget', {
+        publishForSession('extension.widget', {
           key,
-          ...(Array.isArray(content) && content.length > 0 ? { lines: content.map((line) => String(line).slice(0, 2000)).slice(0, 100) } : {}),
-          ...(options?.placement === 'belowEditor' ? { placement: 'belowEditor' } : Array.isArray(content) && content.length > 0 ? { placement: 'aboveEditor' } : {}),
+          ...(hasLines ? {
+            lines: content.map((line) => String(line).slice(0, 2000)).slice(0, 100),
+            placement,
+          } : {}),
         }, sessionId);
       },
       // Terminal-only surfaces have no PiChamber equivalent yet.
       onTerminalInput: () => () => {},
-      setWorkingMessage: () => {},
-      setWorkingVisible: () => {},
+      setWorkingMessage: (message) => {
+        const existing = extensionWorkingBySession.get(sessionId) ?? {};
+        const sanitized = typeof message === 'string'
+          ? message.replace(/[\u0000-\u0008\u000b-\u001a\u001c-\u001f\u007f]/g, '').slice(0, MAX_EXTENSION_WORKING_CHARS)
+          : undefined;
+        const next = { ...existing };
+        if (sanitized !== undefined && sanitized.length > 0) {
+          next.message = sanitized;
+        } else {
+          delete next.message;
+        }
+        if (next.message === undefined && next.visible === undefined) {
+          extensionWorkingBySession.delete(sessionId);
+        } else {
+          extensionWorkingBySession.set(sessionId, next);
+        }
+        publishForSession('extension.working', {
+          ...(next.message !== undefined ? { message: next.message } : {}),
+          ...(next.visible !== undefined ? { visible: next.visible } : {}),
+        }, sessionId);
+      },
+      setWorkingVisible: (visible) => {
+        const existing = extensionWorkingBySession.get(sessionId) ?? {};
+        const next = { ...existing };
+        if (typeof visible === 'boolean') {
+          next.visible = visible;
+        } else {
+          delete next.visible;
+        }
+        if (next.message === undefined && next.visible === undefined) {
+          extensionWorkingBySession.delete(sessionId);
+        } else {
+          extensionWorkingBySession.set(sessionId, next);
+        }
+        publishForSession('extension.working', {
+          ...(next.message !== undefined ? { message: next.message } : {}),
+          ...(next.visible !== undefined ? { visible: next.visible } : {}),
+        }, sessionId);
+      },
       setWorkingIndicator: () => {},
       setHiddenThinkingLabel: () => {},
       setFooter: () => {},
@@ -247,13 +519,44 @@ export const createExtensionBridge = ({
         publishForSession('extension.title', title ? { title } : {}, sessionId);
       },
       custom: async () => undefined,
+      // The browser inserts pasted text at its selection; the mirror appends.
+      // The revision is intentionally left unchanged (browser revisions are
+      // client-clock based, so a daemon bump could reject a skewed client): any
+      // divergence or older in-flight update is corrected by the browser's next
+      // draft sync, which follows the paste/set it applies.
       pasteToEditor: (value) => {
-        publishForSession('extension.editor', { text: String(value ?? '').slice(0, MAX_EXTENSION_EDITOR_TEXT_CHARS) }, sessionId);
+        const text = String(value ?? '').slice(0, MAX_EXTENSION_EDITOR_TEXT_CHARS);
+        const current = extensionDraftBySession.get(sessionId);
+        const currentText = current?.text ?? '';
+        const nextText = (currentText + text).slice(0, MAX_EXTENSION_EDITOR_TEXT_CHARS);
+        extensionDraftBySession.set(sessionId, {
+          text: nextText,
+          revision: current?.revision ?? 0,
+        });
+        publishForSession('extension.editor', {
+          text,
+          mode: 'paste',
+        }, sessionId);
       },
       setEditorText: (value) => {
-        publishForSession('extension.editor', { text: String(value ?? '').slice(0, MAX_EXTENSION_EDITOR_TEXT_CHARS) }, sessionId);
+        const text = String(value ?? '').slice(0, MAX_EXTENSION_EDITOR_TEXT_CHARS);
+        const current = extensionDraftBySession.get(sessionId);
+        extensionDraftBySession.set(sessionId, {
+          text,
+          revision: current?.revision ?? 0,
+        });
+        publishForSession('extension.editor', {
+          text,
+          mode: 'set',
+        }, sessionId);
       },
-      getEditorText: () => '',
+      getEditorText: () => {
+        if (!extensionDraftTrackedSessions.has(sessionId)) {
+          extensionDraftTrackedSessions.add(sessionId);
+          publishForSession('extension.editor.track', { enabled: true }, sessionId);
+        }
+        return extensionDraftBySession.get(sessionId)?.text ?? '';
+      },
       addAutocompleteProvider: () => {},
       setEditorComponent: () => {},
       getEditorComponent: () => undefined,
@@ -262,20 +565,12 @@ export const createExtensionBridge = ({
       setTheme: () => ({ success: false, error: 'Theme switching is not supported in PiChamber sessions.' }),
       getToolsExpanded: () => false,
       setToolsExpanded: () => {},
-      // Extensions may style status/widget strings with theme helpers; those
-      // strings are rendered as plain text in PiChamber, so pass them through.
+      // Extensions style status/widget strings with Theme helpers. Semantic
+      // colors are encoded as truecolor escape markers decoded by PiChamber UI.
       get theme() {
-        return identityTheme;
+        return extensionTheme;
       },
     };
-  };
-
-  const identityTheme = {
-    fg: (_color, text) => text,
-    bg: (_color, text) => text,
-    bold: (text) => text,
-    italic: (text) => text,
-    strikethrough: (text) => text,
   };
 
   const reloadSession = async (session) => {
@@ -287,6 +582,8 @@ export const createExtensionBridge = ({
     } finally {
       if (providerObserver) providerObserver.suppress = false;
     }
+    const entries = session.sessionManager?.getBranch?.() ?? session.sessionManager?.getEntries?.();
+    rebuildSessionPanelsAndApps(session.sessionId, Array.isArray(entries) ? entries : []);
     publishCatalogChange(session.sessionId, { providers: true, resources: true, commands: true });
   };
 
@@ -315,6 +612,10 @@ export const createExtensionBridge = ({
             replaceInstructions: navigateOptions?.replaceInstructions,
             label: navigateOptions?.label,
           });
+          if (result?.cancelled !== true) {
+            const entries = session.sessionManager?.getBranch?.() ?? session.sessionManager?.getEntries?.();
+            rebuildSessionPanelsAndApps(session.sessionId, Array.isArray(entries) ? entries : []);
+          }
           return { cancelled: result.cancelled };
         },
         switchSession: async (sessionPath, switchOptions) => {
@@ -326,8 +627,11 @@ export const createExtensionBridge = ({
       },
       shutdownHandler: () => requestSessionShutdown?.(session.sessionId),
       onError: (error) => {
-        publish('extension.error', {
-          source: typeof error?.extensionPath === 'string' ? error.extensionPath : 'unknown',
+        publishForSession('extension.error', {
+          // Publish the extension display name instead of the server path.
+          source: typeof error?.extensionPath === 'string' && error.extensionPath.length > 0
+            ? resolveExtensionName(session, error.extensionPath)
+            : 'unknown',
           ...(typeof error?.event === 'string' ? { event: error.event } : {}),
           message: String(error?.error ?? 'Unknown extension error.'),
         }, session.sessionId);
@@ -392,12 +696,9 @@ export const createExtensionBridge = ({
     }, sessionId, directory);
   };
 
-  // Mirrors a declarative `pichamber.ui` descriptor into normalized panel
-  // state and publishes an `extension.ui` event. Latest wins per stable id;
-  // `removed: true` (or a payload without component/title) unregisters.
-  const mirrorExtensionPanel = (sessionId, descriptor, directory) => {
+  const setNormalizedPanel = (sessionId, descriptor) => {
     const id = typeof descriptor.id === 'string' && descriptor.id.length > 0 ? descriptor.id.slice(0, 128) : '';
-    if (!id) return;
+    if (!id) return undefined;
     const hasBody = typeof descriptor.component === 'string'
       || typeof descriptor.title === 'string'
       || Array.isArray(descriptor.actions);
@@ -421,14 +722,23 @@ export const createExtensionBridge = ({
     }
     if (panels.size === 0) extensionPanelsBySession.delete(sessionId);
     else extensionPanelsBySession.set(sessionId, panels);
-    publish('extension.ui', removed ? { id, removed: true } : normalized, sessionId, directory);
+    return { id, removed, normalized };
   };
 
-  // Mirrors a `pichamber.app` descriptor into normalized app state and
-  // publishes an `extension.app` event. HTML is capped; removal unregisters.
-  const mirrorExtensionApp = (sessionId, descriptor, directory) => {
-    const appId = typeof descriptor.appId === 'string' && descriptor.appId.length > 0 ? descriptor.appId.slice(0, 128) : '';
-    if (!appId) return;
+  // Mirrors a declarative `pichamber.ui` descriptor into normalized panel
+  // state and publishes an `extension.ui` event. Latest wins per stable id;
+  // `removed: true` (or a payload without component/title) unregisters.
+  const mirrorExtensionPanel = (sessionId, descriptor, directory) => {
+    const result = setNormalizedPanel(sessionId, descriptor);
+    if (!result) return;
+    publish('extension.ui', result.removed ? { id: result.id, removed: true } : result.normalized, sessionId, directory);
+  };
+
+  const setNormalizedApp = (sessionId, descriptor) => {
+    const appId = typeof descriptor.appId === 'string' && descriptor.appId.length > 0
+      ? descriptor.appId.slice(0, 128)
+      : (typeof descriptor.id === 'string' && descriptor.id.length > 0 ? descriptor.id.slice(0, 128) : '');
+    if (!appId) return undefined;
     const html = typeof descriptor.html === 'string'
       ? (descriptor.html.length > MAX_EXTENSION_APP_HTML_CHARS ? descriptor.html.slice(0, MAX_EXTENSION_APP_HTML_CHARS) : descriptor.html)
       : undefined;
@@ -449,13 +759,69 @@ export const createExtensionBridge = ({
     }
     if (apps.size === 0) extensionAppsBySession.delete(sessionId);
     else extensionAppsBySession.set(sessionId, apps);
-    publish('extension.app', {
+    return {
       appId,
-      ...(removed ? { removed: true } : {
+      removed,
+      app: removed ? undefined : {
+        appId,
         ...(typeof descriptor.title === 'string' ? { title: descriptor.title.slice(0, 256) } : {}),
         html,
+      },
+    };
+  };
+
+  // Mirrors a `pichamber.app` descriptor into normalized app state and
+  // publishes an `extension.app` event. HTML is capped; removal unregisters.
+  const mirrorExtensionApp = (sessionId, descriptor, directory) => {
+    const result = setNormalizedApp(sessionId, descriptor);
+    if (!result) return;
+    publish('extension.app', {
+      appId: result.appId,
+      ...(result.removed ? { removed: true } : {
+        ...(typeof descriptor.title === 'string' ? { title: descriptor.title.slice(0, 256) } : {}),
+        html: descriptor.html && typeof descriptor.html === 'string' && descriptor.html.length > MAX_EXTENSION_APP_HTML_CHARS ? descriptor.html.slice(0, MAX_EXTENSION_APP_HTML_CHARS) : descriptor.html,
       }),
     }, sessionId, directory);
+  };
+
+  // Replays persisted custom entries on the active branch without publishing
+  // events to restore live panel and app state across restarts and branch switches.
+  const rebuildSessionPanelsAndApps = (sessionId, entries) => {
+    if (!sessionId) return;
+    extensionPanelsBySession.delete(sessionId);
+    extensionAppsBySession.delete(sessionId);
+    if (!Array.isArray(entries)) return;
+    for (const entry of entries) {
+      if (entry?.type !== 'custom' || !isDisplayedExtensionEntryType(entry.customType)) continue;
+      const descriptor = extractExtensionDescriptor(entry);
+      if (!descriptor) continue;
+      if (entry.customType === 'pichamber.app') {
+        setNormalizedApp(sessionId, descriptor);
+      } else {
+        setNormalizedPanel(sessionId, descriptor);
+      }
+    }
+  };
+
+  const updateExtensionDraft = (sessionId, text, revision) => {
+    if (typeof sessionId !== 'string' || !sessionId) return { accepted: false };
+    if (!extensionDraftTrackedSessions.has(sessionId)) return { accepted: false };
+    if (typeof text !== 'string' || text.length > MAX_EXTENSION_EDITOR_TEXT_CHARS) return { accepted: false };
+    if (!Number.isSafeInteger(revision) || revision < 0) return { accepted: false };
+    const current = extensionDraftBySession.get(sessionId);
+    if (current && Number.isSafeInteger(current.revision) && revision <= current.revision) {
+      return { accepted: false };
+    }
+    extensionDraftBySession.set(sessionId, { text, revision });
+    return { accepted: true };
+  };
+
+  const resetExtensionDraft = (sessionId) => {
+    if (!sessionId) return;
+    // Untracked sessions without a mirror stay untouched, so ordinary prompts
+    // never allocate draft state.
+    const current = extensionDraftBySession.get(sessionId);
+    if (current) extensionDraftBySession.set(sessionId, { text: '', revision: current.revision });
   };
 
   const getSnapshotState = (sessionId) => {
@@ -468,6 +834,8 @@ export const createExtensionBridge = ({
     const dialogs = [...pendingExtensionDialogs.values()]
       .filter((pending) => pending.sessionId === sessionId)
       .map((pending) => pending.payload);
+    const working = extensionWorkingBySession.get(sessionId);
+    const draftTracked = extensionDraftTrackedSessions.has(sessionId);
     return {
       ...(statuses?.size ? { statuses: [...statuses.entries()].map(([key, text]) => ({ key, text })) } : {}),
       ...(widgets?.size ? { widgets: [...widgets.entries()].map(([key, widget]) => ({ key, ...widget })) } : {}),
@@ -475,6 +843,8 @@ export const createExtensionBridge = ({
       ...(panels?.size ? { panels: [...panels.values()] } : {}),
       ...(apps?.size ? { apps: [...apps.values()] } : {}),
       ...(title ? { title } : {}),
+      ...(working ? { working: { ...working } } : {}),
+      ...(draftTracked ? { draftTracked: true } : {}),
     };
   };
 
@@ -484,8 +854,11 @@ export const createExtensionBridge = ({
     getSnapshotState,
     mirrorExtensionApp,
     mirrorExtensionPanel,
+    rebuildSessionPanelsAndApps,
     publishExtensionCustomMessage,
     reloadSession,
+    resetExtensionDraft,
     resolveExtensionDialog,
+    updateExtensionDraft,
   };
 };

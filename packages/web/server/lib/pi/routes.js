@@ -36,6 +36,7 @@ const UNAVAILABLE_CODES = new Set([
   'DAEMON_REQUEST_FAILED',
   'DAEMON_TIMEOUT',
   'DAEMON_START_TIMEOUT',
+  'DAEMON_SPAWN_FAILED',
   'DAEMON_IDENTITY_MISMATCH',
   'DAEMON_STOP_FAILED',
   'DAEMON_PROTOCOL_MISMATCH',
@@ -238,6 +239,27 @@ const sanitizeNavigation = (value) => {
   };
 };
 
+export const projectToolRender = (render) => {
+  if (!render || typeof render !== 'object' || Array.isArray(render)) return undefined;
+  const projected = {};
+  for (const key of ['call', 'result', 'resultExpanded']) {
+    const lines = render[key];
+    if (Array.isArray(lines)) {
+      const sanitized = [];
+      for (const line of lines) {
+        if (typeof line === 'string') {
+          sanitized.push(line.slice(0, 2000));
+          if (sanitized.length >= 200) break;
+        }
+      }
+      if (sanitized.length > 0) {
+        projected[key] = sanitized;
+      }
+    }
+  }
+  return Object.keys(projected).length > 0 ? projected : undefined;
+};
+
 const projectFilePart = (part) => {
   // Optional fields degrade instead of failing the whole message. The daemon
   // only emits inline data URLs; never pass a filesystem or remote URL on.
@@ -282,12 +304,14 @@ const projectSessionDetail = (value) => {
         return { type: part.type, id: part.id, index: part.index, text: part.text };
       }
       if (part.type === 'tool' && typeof part.toolCallId === 'string' && typeof part.name === 'string') {
+        const render = projectToolRender(part.render);
         return {
           type: 'tool', id: part.id, index: part.index, toolCallId: part.toolCallId, name: part.name,
           ...(part.input !== undefined ? { input: part.input } : {}),
           ...(part.output !== undefined ? { output: part.output } : {}),
           ...(typeof part.error === 'string' ? { error: part.error } : {}),
           ...(part.metadata !== undefined ? { metadata: part.metadata } : {}),
+          ...(render ? { render } : {}),
           ...(part.isError === true ? { isError: true } : {}),
           ...(Number.isFinite(part.startedAt) ? { startedAt: part.startedAt } : {}),
           ...(Number.isFinite(part.endedAt) ? { endedAt: part.endedAt } : {}),
@@ -559,6 +583,14 @@ function projectExtensionSnapshotState(snapshot) {
   const extensionApps = Array.isArray(snapshot.extensionApps)
     ? snapshot.extensionApps.filter((entry) => entry && typeof entry.appId === 'string' && entry.appId.length > 0 && typeof entry.html === 'string' && entry.html.length > 0).slice(0, 8).map(projectExtensionAppPayload)
     : undefined;
+  const extensionWorking = snapshot.extensionWorking && typeof snapshot.extensionWorking === 'object'
+    ? {
+        ...(typeof snapshot.extensionWorking.message === 'string'
+          ? { message: snapshot.extensionWorking.message.replace(/[\u0000-\u001a\u001c-\u001f\u007f-\u009f]/g, ' ').trim().slice(0, 200) }
+          : {}),
+        ...(typeof snapshot.extensionWorking.visible === 'boolean' ? { visible: snapshot.extensionWorking.visible } : {}),
+      }
+    : undefined;
   return {
     ...(extensionStatuses ? { extensionStatuses } : {}),
     ...(extensionWidgets ? { extensionWidgets } : {}),
@@ -568,6 +600,8 @@ function projectExtensionSnapshotState(snapshot) {
     ...(typeof snapshot.extensionTitle === 'string' && snapshot.extensionTitle.length > 0
       ? { extensionTitle: snapshot.extensionTitle.replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, 256) }
       : {}),
+    ...(extensionWorking && (extensionWorking.message !== undefined || extensionWorking.visible !== undefined) ? { extensionWorking } : {}),
+    ...(snapshot.extensionDraftTracked === true ? { extensionDraftTracked: true } : {}),
   };
 }
 
@@ -671,20 +705,24 @@ export const projectEventFrame = (frame) => {
     case 'session.interrupted': return { ...common, payload: { reason: frame.payload.reason, streaming: frame.payload.streaming === true } };
     case 'session.tool.start':
     case 'session.tool.update':
-    case 'session.tool.end': return {
-      ...common,
-      payload: {
-        toolCallId: frame.payload.toolCallId, partId: frame.payload.partId, messageId: frame.payload.messageId, name: frame.payload.name, state: frame.payload.state,
-        ...(frame.payload.input !== undefined ? { input: frame.payload.input } : {}),
-        ...(frame.payload.output !== undefined ? { output: frame.payload.output } : {}),
-        ...(typeof frame.payload.error === 'string' ? { error: frame.payload.error } : {}),
-        ...(frame.payload.metadata !== undefined ? { metadata: frame.payload.metadata } : {}),
-        ...(frame.payload.isError === true ? { isError: true } : {}),
-        ...(Number.isFinite(frame.payload.startedAt) ? { startedAt: frame.payload.startedAt } : {}),
-        ...(Number.isFinite(frame.payload.endedAt) ? { endedAt: frame.payload.endedAt } : {}),
-        ...(Number.isFinite(frame.payload.serverNow) ? { serverNow: frame.payload.serverNow } : {}),
-      },
-    };
+    case 'session.tool.end': {
+      const render = projectToolRender(frame.payload.render);
+      return {
+        ...common,
+        payload: {
+          toolCallId: frame.payload.toolCallId, partId: frame.payload.partId, messageId: frame.payload.messageId, name: frame.payload.name, state: frame.payload.state,
+          ...(frame.payload.input !== undefined ? { input: frame.payload.input } : {}),
+          ...(frame.payload.output !== undefined ? { output: frame.payload.output } : {}),
+          ...(typeof frame.payload.error === 'string' ? { error: frame.payload.error } : {}),
+          ...(frame.payload.metadata !== undefined ? { metadata: frame.payload.metadata } : {}),
+          ...(render ? { render } : {}),
+          ...(frame.payload.isError === true ? { isError: true } : {}),
+          ...(Number.isFinite(frame.payload.startedAt) ? { startedAt: frame.payload.startedAt } : {}),
+          ...(Number.isFinite(frame.payload.endedAt) ? { endedAt: frame.payload.endedAt } : {}),
+          ...(Number.isFinite(frame.payload.serverNow) ? { serverNow: frame.payload.serverNow } : {}),
+        },
+      };
+    }
     case 'extension.entry': {
       if (typeof frame.payload.id !== 'string' || frame.payload.id.length === 0 || frame.payload.id.length > 512) return null;
       if (typeof frame.payload.customType !== 'string' || frame.payload.customType.length === 0 || frame.payload.customType.length > 256) return null;
@@ -712,7 +750,12 @@ export const projectEventFrame = (frame) => {
     }
     case 'extension.editor': {
       if (typeof frame.payload.text !== 'string' || frame.payload.text.length > 100_000) return null;
-      return { ...common, payload: { text: frame.payload.text } };
+      const mode = frame.payload.mode === 'paste' ? 'paste' : 'set';
+      return { ...common, payload: { text: frame.payload.text, mode } };
+    }
+    case 'extension.editor.track': {
+      if (typeof frame.payload.enabled !== 'boolean') return null;
+      return { ...common, payload: { enabled: frame.payload.enabled } };
     }
     case 'extension.title': {
       if (frame.payload.title !== undefined && typeof frame.payload.title !== 'string') return null;
@@ -792,6 +835,20 @@ export const projectEventFrame = (frame) => {
       if (html.length === 0) return { ...common, payload: { appId: frame.payload.appId.slice(0, 128), removed: true } };
       if (html.length > MAX_EXTENSION_APP_HTML_CHARS) return null;
       return { ...common, payload: projectExtensionAppPayload({ ...frame.payload, html }) };
+    }
+    case 'extension.working': {
+      if (frame.payload.message !== undefined && typeof frame.payload.message !== 'string') return null;
+      if (frame.payload.visible !== undefined && typeof frame.payload.visible !== 'boolean') return null;
+      const message = typeof frame.payload.message === 'string'
+        ? frame.payload.message.replace(/[\u0000-\u001a\u001c-\u001f\u007f-\u009f]/g, ' ').trim().slice(0, 200)
+        : undefined;
+      return {
+        ...common,
+        payload: {
+          ...(message !== undefined ? { message } : {}),
+          ...(typeof frame.payload.visible === 'boolean' ? { visible: frame.payload.visible } : {}),
+        },
+      };
     }
     case 'extension.error': {
       if (typeof frame.payload.source !== 'string' || frame.payload.source.length === 0 || frame.payload.source.length > 512) return null;
@@ -1734,6 +1791,20 @@ export const registerPiRuntimeRoutes = (app, {
       res.status(204).end();
     } catch (error) {
       writeDaemonError(res, error);
+    }
+  });
+
+  app.post('/api/pi/sessions/:sessionId/editor-draft', async (req, res) => {
+    const text = req.body?.text;
+    const revision = req.body?.revision;
+    const directory = req.body?.directory;
+    if (typeof text !== 'string' || text.length > 100_000 || !Number.isSafeInteger(revision) || revision < 0 || (directory !== undefined && typeof directory !== 'string')) {
+      res.status(400).json({ error: { code: 'INVALID_ARGUMENT' } });
+      return;
+    }
+    const result = await requestSessionOperation(req, res, getPiSessionDaemonRuntime, 'extensions.draft', { text, revision });
+    if (result !== undefined) {
+      res.status(204).end();
     }
   });
 

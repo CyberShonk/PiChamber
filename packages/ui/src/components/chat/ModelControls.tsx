@@ -161,6 +161,8 @@ export const ModelControls: React.FC<ModelControlsProps> = ({
 
     React.useEffect(() => {
         if (activeMobilePanel === 'model') {
+            // Same on-demand trigger as the desktop picker (see below).
+            useConfigStore.getState().ensureModelMetadata();
             setExpandedMobileProviders(() => {
                 const initial = new Set<string>();
                 if (currentProviderId) {
@@ -194,6 +196,13 @@ export const ModelControls: React.FC<ModelControlsProps> = ({
     React.useEffect(() => {
         const wasOpen = prevModelSelectorOpenRef.current;
         prevModelSelectorOpenRef.current = isModelSelectorOpen;
+
+        if (isModelSelectorOpen) {
+            // On-demand metadata: opening the picker starts the models.dev
+            // load immediately when idle has not fired yet (deduped), so
+            // capability/cost badges fill in without waiting for idle.
+            useConfigStore.getState().ensureModelMetadata();
+        }
 
         if (!isModelSelectorOpen) {
             setDesktopModelQuery('');

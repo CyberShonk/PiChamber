@@ -2,6 +2,8 @@ import React from 'react';
 
 import { FileTypeIcon } from '@/components/icons/FileTypeIcon';
 import { Icon } from '@/components/icon/Icon';
+import { Button } from '@/components/ui/button';
+import { MobileSurfaceHeader } from '@/apps/MobileSurfaceHeader';
 import {
   sidebarRowIconClass,
   sidebarRowLabelClass,
@@ -89,21 +91,23 @@ export const MobileFilesChrome: React.FC<MobileFilesChromeProps> = ({
 
   if (editorPath) {
     return (
-      <div className="flex h-full flex-col overflow-hidden bg-transparent text-foreground">
-        <header className="flex h-[var(--oc-header-height,56px)] shrink-0 items-center gap-1 px-2 text-foreground">
-          <button
-            type="button"
-            className="flex size-10 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:bg-interactive-hover hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-            aria-label="Back"
-            onClick={onBackFromEditor}
-            style={{ touchAction: 'manipulation' }}
-          >
-            <Icon name="arrow-left" className="size-5" />
-          </button>
-          <div className="min-w-0 flex-1">
-            <h2 className="truncate typography-ui-label text-foreground">{getNameFromPath(editorPath)}</h2>
-          </div>
-        </header>
+      <div className="flex h-full flex-col overflow-hidden bg-background text-foreground">
+        <MobileSurfaceHeader
+          leading={
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              aria-label="Back"
+              onClick={onBackFromEditor}
+              style={{ touchAction: 'manipulation' }}
+            >
+              <Icon name="arrow-left" className="size-4" />
+            </Button>
+          }
+          icon={<FileTypeIcon filePath={editorPath} className="size-4 shrink-0" />}
+          title={getNameFromPath(editorPath)}
+        />
         <div className="min-h-0 flex-1 overflow-hidden">{editor}</div>
       </div>
     );
@@ -114,53 +118,63 @@ export const MobileFilesChrome: React.FC<MobileFilesChromeProps> = ({
   const canGoBack = Boolean(parentDirectory) && !query.trim();
   const parentLabel = parentDirectory === root ? 'Project files' : getNameFromPath(parentDirectory ?? '');
 
-  return (
-    <div className="flex h-full flex-col overflow-hidden bg-transparent text-foreground">
-      <header className="flex h-[var(--oc-header-height,56px)] shrink-0 items-center gap-1 px-2 text-foreground">
-        {onClose ? (
-          <button
-            type="button"
-            className="flex size-10 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-            aria-label="Close"
-            onClick={onClose}
-            style={{ touchAction: 'manipulation' }}
-          >
-            <Icon name="close" className="size-5" />
-          </button>
-        ) : null}
-        {canGoBack && parentDirectory ? (
-          <button
-            type="button"
-            className="flex size-10 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-            aria-label={`Back to ${getNameFromPath(parentDirectory)}`}
-            onClick={() => onOpenDirectory(parentDirectory)}
-            style={{ touchAction: 'manipulation' }}
-          >
-            <Icon name="arrow-left" className="size-5" />
-          </button>
-        ) : null}
-        <div className="min-w-0 flex-1 px-1">
-          <h2 className="truncate typography-ui-label text-foreground">{directoryLabel}</h2>
-        </div>
-        <button
+  const filesLeading = onClose || (canGoBack && parentDirectory) ? (
+    <>
+      {onClose ? (
+        <Button
           type="button"
-          className="flex size-10 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-          aria-label="Refresh files"
-          onClick={onRefresh}
+          variant="ghost"
+          size="icon"
+          aria-label="Close"
+          onClick={onClose}
           style={{ touchAction: 'manipulation' }}
         >
-          <Icon name="refresh" className={cn('size-5', refreshing && 'animate-spin')} />
-        </button>
-      </header>
+          <Icon name="close" className="size-4" />
+        </Button>
+      ) : null}
+      {canGoBack && parentDirectory ? (
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          aria-label={`Back to ${getNameFromPath(parentDirectory)}`}
+          onClick={() => onOpenDirectory(parentDirectory)}
+          style={{ touchAction: 'manipulation' }}
+        >
+          <Icon name="arrow-left" className="size-4" />
+        </Button>
+      ) : null}
+    </>
+  ) : undefined;
 
-      <div className="shrink-0 px-3 pb-2 pt-1">
+  return (
+    <div className="flex h-full flex-col overflow-hidden bg-background text-foreground">
+      <MobileSurfaceHeader
+        leading={filesLeading}
+        icon={directory === root ? 'file-text' : 'folder'}
+        title={directoryLabel}
+        actions={
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            aria-label="Refresh files"
+            onClick={onRefresh}
+            style={{ touchAction: 'manipulation' }}
+          >
+            <Icon name="refresh" className={cn('size-4', refreshing && 'animate-spin')} />
+          </Button>
+        }
+      />
+
+      <div className="shrink-0 px-3 py-2">
         <div className="relative">
-          <Icon name="search" className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+          <Icon name="search" className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input
             value={query}
             onChange={(event) => onQueryChange(event.target.value)}
             placeholder="Search files"
-            className="h-11 pl-9"
+            className="h-8 pl-7"
           />
         </div>
       </div>
@@ -178,11 +192,11 @@ export const MobileFilesChrome: React.FC<MobileFilesChromeProps> = ({
         ) : entries === undefined ? (
           <MobileFilesState loading message="Loading..." />
         ) : (
-          <div className="flex w-full min-w-0 flex-col">
+          <div className="flex w-full min-w-0 flex-col px-1">
             {canGoBack && parentDirectory ? (
               <button
                 type="button"
-                className={sidebarSessionRowClassNameMobile}
+                className={cn(sidebarSessionRowClassNameMobile, 'px-2')}
                 aria-label={`Up one level to ${parentLabel}`}
                 onClick={() => onOpenDirectory(parentDirectory)}
                 style={{ touchAction: 'manipulation' }}
@@ -224,7 +238,7 @@ const MobileFileRow: React.FC<{
 }> = ({ name, path, directory, meta, onClick }) => (
   <button
     type="button"
-    className={sidebarSessionRowClassNameMobile}
+    className={cn(sidebarSessionRowClassNameMobile, 'px-2')}
     onClick={onClick}
     style={{ touchAction: 'manipulation' }}
   >
@@ -249,7 +263,7 @@ const MobileSearchResults: React.FC<{
   if (results.length === 0) return <MobileFilesState message="No files found." />;
 
   return (
-    <div className="flex w-full min-w-0 flex-col">
+    <div className="flex w-full min-w-0 flex-col px-1">
       {results.map((result) => (
         <MobileFileRow
           key={result.path}

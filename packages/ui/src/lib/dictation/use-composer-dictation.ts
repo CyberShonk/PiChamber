@@ -1,7 +1,7 @@
 import React from 'react';
 
-import { runtimeFetch } from '@/lib/runtime-fetch';
 import { subscribeRuntimeEndpointChanged } from '@/lib/runtime-switch';
+import { fetchSttStatus } from './stt-status';
 import { DictationAudioCapture, isDictationCaptureSupported } from './audio-capture';
 import { DictationClient } from './dictation-client';
 import type { DictationController, DictationState } from './dictation-state';
@@ -22,11 +22,11 @@ export function useComposerDictation(): ComposerDictationController {
   const generationRef = React.useRef(0);
 
   const refreshAvailability = React.useCallback(async () => {
-    const response = await runtimeFetch('/api/stt/status');
-    if (!response.ok) throw new Error('Could not read dictation settings');
-    const payload = await response.json() as { config?: { enabled?: boolean; providerConfigId?: string } };
-    providerConfigIdRef.current = payload.config?.providerConfigId || 'local';
-    setAvailable(payload.config?.enabled === true && isDictationCaptureSupported());
+    // Shared runtime-scoped memo: every ChatInput mount reuses one status
+    // read instead of issuing its own `GET /api/stt/status`.
+    const status = await fetchSttStatus();
+    providerConfigIdRef.current = status.config?.providerConfigId || 'local';
+    setAvailable(status.config?.enabled === true && isDictationCaptureSupported());
   }, []);
 
   React.useEffect(() => {

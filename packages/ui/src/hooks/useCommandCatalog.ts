@@ -2,10 +2,13 @@ import React from "react";
 
 import { piClient } from "@/lib/pi/client";
 import {
+  adoptCommandCatalogSignatures,
   buildSystemCatalogCommands,
   clearCommandCatalogForRuntimeSwitch,
   getCommandCatalogInvalidationRevision,
+  isCommandCatalogEntryFresh,
   readCommandCatalogCache,
+  readCommandCatalogEntry,
   subscribeCommandCatalogInvalidation,
   toCatalogCommands,
   writeCommandCatalogCache,
@@ -15,7 +18,14 @@ import { getRuntimeKey, subscribeRuntimeEndpointChanged } from "@/lib/runtime-sw
 import { usePromptTemplatesStore } from "@/stores/usePromptTemplatesStore";
 import { useSkillsStore } from "@/stores/useSkillsStore";
 
-const inFlightByScope = new Map<string, Promise<CatalogCommand[] | null>>();
+interface InFlightCatalogRequest {
+  promise: Promise<CatalogCommand[] | null>;
+  /** Store signatures observed when the request started. */
+  promptSignature: string;
+  skillSignature: string;
+}
+
+const inFlightByScope = new Map<string, InFlightCatalogRequest>();
 
 const scopeKey = (runtimeKey: string, directory?: string): string =>
   `${runtimeKey}\n${directory?.trim() ?? ""}`;
@@ -60,6 +70,14 @@ export function useCommandCatalog(directory?: string): {
   const [isLoading, setIsLoading] = React.useState(false);
   const [runtimeEpoch, setRuntimeEpoch] = React.useState(0);
   const lastScopeRef = React.useRef<string | undefined>(undefined);
+  // Latest store signatures for completion-time bookkeeping. Updated in a
+  // dedicated effect that runs before the fetch effect, so a request always
+  // starts under current signatures and completions can compare against the
+  // latest ones.
+  const latestSignaturesRef = React.useRef({ promptSignature: '', skillSignature: '' });
+  React.useEffect(() => {
+    latestSignaturesRef.current = { promptSignature, skillSignature };
+  }, [promptSignature, skillSignature]);
 
   // Runtime switches must never reuse the previous server's commands.
   React.useEffect(() => {
@@ -88,42 +106,92 @@ export function useCommandCatalog(directory?: string): {
       const cached = readCommandCatalogCache(runtimeKey, normalizedDirectory);
       setCommands(cached ? [...buildSystemCatalogCommands(), ...cached] : buildSystemCatalogCommands());
     }
+    // A fresh entry validated against the same store signatures needs no
+    // fetch: this keeps the two mounts on one shared request and makes a
+    // remount within the freshness window cost zero requests. An entry
+    // recorded before the prompt/skill stores finished their first load
+    // (empty recorded signatures) is adopted on empty → loaded without
+    // refetching — the commands response already reflects those resources
+    // server-side, so the boot transition is not a real change. A real
+    // change (loaded → different) still refetches below.
+    const entry = readCommandCatalogEntry(runtimeKey, normalizedDirectory);
+    if (entry && isCommandCatalogEntryFresh(entry)) {
+      const promptChanged = entry.promptSignature !== '' && entry.promptSignature !== promptSignature;
+      const skillChanged = entry.skillSignature !== '' && entry.skillSignature !== skillSignature;
+      if (!promptChanged && !skillChanged) {
+        if (entry.promptSignature !== promptSignature || entry.skillSignature !== skillSignature) {
+          adoptCommandCatalogSignatures(runtimeKey, normalizedDirectory, promptSignature, skillSignature);
+        }
+        setIsLoading(false);
+        return;
+      }
+    }
     let cancelled = false;
     setIsLoading(true);
-    const existing = inFlightByScope.get(requestKey);
-    let request: Promise<CatalogCommand[] | null>;
-    if (existing) {
-      request = existing;
-    } else {
-      const requestRevision = invalidationRevision;
-      request = (async () => {
-        try {
-          const result = await piClient.listCommands(normalizedDirectory, { runtimeKey });
-          if (getRuntimeKey() !== runtimeKey) return null;
-          if (getCommandCatalogInvalidationRevision() !== requestRevision) return null;
-          const catalog = toCatalogCommands(result.commands);
-          writeCommandCatalogCache(runtimeKey, normalizedDirectory, catalog);
-          return catalog;
-        } catch {
-          return null;
-        } finally {
-          inFlightByScope.delete(requestKey);
-        }
-      })();
-      inFlightByScope.set(requestKey, request);
-    }
-    void request.then((catalog) => {
-      if (cancelled) return;
-      if (getRuntimeKey() !== runtimeKey) return;
-      // Failure preserves the last known catalog for the same scope;
-      // only a successful authoritative fetch replaces it.
-      if (catalog) {
-        setCommands([...buildSystemCatalogCommands(), ...catalog]);
+    const startRequest = (): void => {
+      const existing = inFlightByScope.get(requestKey);
+      let inflight: InFlightCatalogRequest;
+      if (existing) {
+        inflight = existing;
+      } else {
+        const requestRevision = invalidationRevision;
+        const requestPromptSignature = latestSignaturesRef.current.promptSignature;
+        const requestSkillSignature = latestSignaturesRef.current.skillSignature;
+        const inFlightHolder: { promise?: Promise<CatalogCommand[] | null> } = {};
+        const promise = (async () => {
+          try {
+            const result = await piClient.listCommands(normalizedDirectory, { runtimeKey });
+            if (getRuntimeKey() !== runtimeKey) return null;
+            if (getCommandCatalogInvalidationRevision() !== requestRevision) return null;
+            const catalog = toCatalogCommands(result.commands);
+            // Record the signatures the request started under. A real store
+            // change that lands mid-flight is handled by the follow-up
+            // below, never by stamping possibly-stale data as validated.
+            writeCommandCatalogCache(runtimeKey, normalizedDirectory, catalog, {
+              promptSignature: requestPromptSignature,
+              skillSignature: requestSkillSignature,
+            });
+            return catalog;
+          } catch {
+            return null;
+          } finally {
+            if (inFlightByScope.get(requestKey)?.promise === inFlightHolder.promise) {
+              inFlightByScope.delete(requestKey);
+            }
+          }
+        })();
+        inFlightHolder.promise = promise;
+        inflight = { promise, promptSignature: requestPromptSignature, skillSignature: requestSkillSignature };
+        inFlightByScope.set(requestKey, inflight);
       }
-      setIsLoading(false);
-    }).catch(() => {
-      if (!cancelled) setIsLoading(false);
-    });
+      void inflight.promise.then((catalog) => {
+        if (cancelled) return;
+        if (getRuntimeKey() !== runtimeKey) return;
+        // Failure preserves the last known catalog for the same scope;
+        // only a successful authoritative fetch replaces it, and only a
+        // success marks the entry fresh (the write above).
+        if (catalog) {
+          setCommands([...buildSystemCatalogCommands(), ...catalog]);
+          // A real store change that landed while the request was in flight
+          // may postdate the response: follow up once so the edit is not
+          // stuck behind the shared in-flight result. Empty → loaded is not
+          // a real change, so boot-time store loads never chain here.
+          const latest = latestSignaturesRef.current;
+          const promptChangedMidFlight =
+            inflight.promptSignature !== '' && inflight.promptSignature !== latest.promptSignature;
+          const skillChangedMidFlight =
+            inflight.skillSignature !== '' && inflight.skillSignature !== latest.skillSignature;
+          if (promptChangedMidFlight || skillChangedMidFlight) {
+            startRequest();
+            return;
+          }
+        }
+        setIsLoading(false);
+      }).catch(() => {
+        if (!cancelled) setIsLoading(false);
+      });
+    };
+    startRequest();
     return () => {
       cancelled = true;
     };

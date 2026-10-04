@@ -1,6 +1,6 @@
 {
   "name": "@pichamber/electron",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "private": true,
   "description": "PiChamber desktop application for Pi Coding Agent",
   "author": {
@@ -80,6 +80,9 @@
       }
     ],
     "afterPack": "scripts/after-pack.cjs",
+    "toolsets": {
+      "appimage": "1.0.2"
+    },
     "directories": {
       "buildResources": "resources/icons",
       "output": "dist"
@@ -134,6 +137,9 @@
           "StartupWMClass": "pichamber"
         }
       }
+    },
+    "appImage": {
+      "artifactName": "${productName}-${version}-${arch}.${ext}"
     },
     "nsis": {
       "oneClick": true,

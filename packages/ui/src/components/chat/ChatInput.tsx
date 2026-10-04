@@ -17,6 +17,7 @@ import { getPiSessionStore } from "@/apps/pi-session-store";
 import { useSelectionStore } from "@/sync/selection-store";
 import {
   serializeAttachmentsForQueue,
+  shouldApplySentDraftClear,
   useInputStore,
 } from "@/sync/input-store";
 import { getWorktreeCreationKey, useWorktreeCreationStore } from "@/stores/useWorktreeCreationStore";
@@ -56,6 +57,7 @@ import { AttachedFilesList } from "./FileAttachment";
 import { lazyWithChunkRecovery } from "@/lib/chunkLoadRecovery";
 import type { ToolPopupContent } from "./message/types";
 import { QueuedMessageChips } from "./QueuedMessageChips";
+import { useExtensionDraftSync } from "./hooks/useExtensionDraftSync";
 import type { FileMentionHandle } from "./FileMentionAutocomplete";
 import type {
   CommandAutocompleteHandle,
@@ -158,7 +160,6 @@ import {
 import { DraftBranchCheckoutDialog } from "./composer/ui/DraftBranchCheckoutDialog";
 import { ComposerAutocompletePopups } from "./composer/ui/ComposerAutocompletePopups";
 import { ComposerFooter } from "./composer/ui/ComposerFooter";
-import { GitHubLinkPicker } from "../views/github/agent/GitHubLinkPicker";
 import { RevertedMessageDock } from "./composer/ui/RevertedMessageDock";
 import { ComposerDragOverlay } from "./composer/ui/ComposerDragOverlay";
 import { ComposerAttachmentPickerInput } from "./composer/ui/ComposerAttachmentPickerInput";
@@ -171,6 +172,11 @@ import { useComposerDictation } from "@/lib/dictation/use-composer-dictation";
 
 // Lazy like in ChatMessage: a static import would pull the @pierre/diffs and
 // Shiki stacks into the eager startup graph for a dialog opened on demand.
+// Opened on demand; its detail scaffold pulls the GitHub rich-body renderer
+// (dompurify) that the composer must not load at startup.
+const GitHubLinkPicker = lazyWithChunkRecovery(
+  () => import("../views/github/agent/GitHubLinkPicker").then((module) => ({ default: module.GitHubLinkPicker })),
+);
 const ToolOutputDialog = lazyWithChunkRecovery(
   () => import("./message/ToolOutputDialog"),
 );
@@ -332,34 +338,97 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     currentSessionId ? `session:${currentSessionId}` : "chrome",
   );
   const isSessionInUse = sessionLoadErrorCode === "SESSION_IN_USE";
-  const extensionEditor = usePiSessionSnapshot(
-    (state) =>
-      currentSessionId
-        ? state.reducer.bySession.get(currentSessionId)?.extensionEditor
-        : undefined,
-    (previous, next) => previous?.sequence === next?.sequence,
+  const extensionEditorSelection = usePiSessionSnapshot(
+    (state) => {
+      if (!currentSessionId) return undefined;
+      const session = state.reducer.bySession.get(currentSessionId);
+      if (!session) return undefined;
+      const ops =
+        session.extensionEditorOps ??
+        (session.extensionEditor ? [session.extensionEditor] : undefined);
+      if (!ops || ops.length === 0) return undefined;
+      return { sessionId: currentSessionId, ops };
+    },
+    (previous, next) => {
+      if (previous === next) return true;
+      if (!previous || !next) return false;
+      if (previous.sessionId !== next.sessionId) return false;
+      if (previous.ops.length !== next.ops.length) return false;
+      return previous.ops.every(
+        (op, idx) =>
+          op.sequence === next.ops[idx]?.sequence &&
+          op.text === next.ops[idx]?.text &&
+          op.mode === next.ops[idx]?.mode,
+      );
+    },
     currentSessionId ? `session:${currentSessionId}` : "chrome",
   );
   const appliedExtensionEditorBySessionRef = React.useRef(
     new Map<string, number>(),
   );
   React.useEffect(() => {
-    if (!currentSessionId || !extensionEditor) return;
+    if (
+      !currentSessionId ||
+      !extensionEditorSelection ||
+      extensionEditorSelection.sessionId !== currentSessionId
+    ) {
+      return;
+    }
+    const { ops } = extensionEditorSelection;
+    if (!ops || ops.length === 0) return;
     const previousSequence =
       appliedExtensionEditorBySessionRef.current.get(currentSessionId) ?? -1;
-    if (extensionEditor.sequence <= previousSequence) return;
+    const pendingOps = ops.filter(
+      (op) => op.sequence > previousSequence,
+    );
+    if (pendingOps.length === 0) return;
+
+    let maxSequence = previousSequence;
+    for (const op of pendingOps) {
+      if (op.sequence > maxSequence) {
+        maxSequence = op.sequence;
+      }
+    }
+
+    let lastSetIndex = -1;
+    for (let i = pendingOps.length - 1; i >= 0; i--) {
+      if (pendingOps[i]?.mode !== 'paste') {
+        lastSetIndex = i;
+        break;
+      }
+    }
+
+    if (lastSetIndex !== -1) {
+      const lastSet = pendingOps[lastSetIndex]!;
+      const pasteSuffix = pendingOps
+        .slice(lastSetIndex + 1)
+        .map((op) => op.text)
+        .join('');
+      const finalText = lastSet.text + pasteSuffix;
+      confirmedMentionsRef.current.clear();
+      setMessage(finalText);
+      closeAutocomplete();
+    } else {
+      for (const op of pendingOps) {
+        const editor = composerRef.current;
+        if (editor) {
+          editor.insertText(op.text);
+          editor.focus({ preventScroll: true });
+        } else {
+          setMessage((prev) => prev + op.text);
+        }
+      }
+    }
+
     appliedExtensionEditorBySessionRef.current.set(
       currentSessionId,
-      extensionEditor.sequence,
+      maxSequence,
     );
-    confirmedMentionsRef.current.clear();
-    setMessage(extensionEditor.text);
-    closeAutocomplete();
     getPiSessionStore().consumeExtensionEditor(
       currentSessionId,
-      extensionEditor.sequence,
+      maxSequence,
     );
-  }, [closeAutocomplete, currentSessionId, extensionEditor]);
+  }, [closeAutocomplete, currentSessionId, extensionEditorSelection]);
   const fallbackDirectory = useDirectoryStore((s) => s.currentDirectory);
   const currentDirectory = useEffectiveDirectory() ?? fallbackDirectory;
   const currentSessionDirectoryForSync = useSessionUIStore(
@@ -370,6 +439,12 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     ),
   );
   const activeRuntimeKey = getRuntimeKey();
+
+  useExtensionDraftSync({
+    sessionId: currentSessionId,
+    directory: currentSessionDirectoryForSync ?? currentDirectory,
+    text: message,
+  });
 
   // Keep the skill catalog warm for the active runtime/directory. The store
   // is not persisted and previously only filled on demand (autocomplete open
@@ -786,6 +861,36 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       : "";
     useInputStore.getState().activateAttachmentsDraft(nextKey);
   }, [chatDraftIdentity]);
+
+  // Remount-safe successful-send clear. The sending instance can unmount
+  // mid-send (prompt() flips the session busy synchronously, so the
+  // transcript branch swaps to a fresh ChatInput whose unmount flush
+  // persisted the still-unsent text and which initialised from that draft).
+  // The sender publishes a one-shot signal after persisting the cleared
+  // draft; whichever instance currently owns the same draft key finishes
+  // the clear. Runs on mount too, so a remount that initialised from the
+  // stale draft still clears. Clearing via setMessage reuses the existing
+  // path: the debounced draft writer cancels its pending write for the
+  // sent text and persists the cleared draft instead.
+  const sentDraftClear = useInputStore((s) => s.sentDraftClear);
+  React.useEffect(() => {
+    if (!sentDraftClear) return;
+    const myKey = chatDraftIdentity
+      ? getChatDraftIdentityKey(chatDraftIdentity)
+      : "";
+    // A signal for a different draft must neither clear nor be consumed:
+    // it belongs to that draft's owner.
+    if (!myKey || sentDraftClear.draftKey !== myKey) return;
+    // One-shot: drop the signal so a later mount cannot fire it again.
+    // Guarded to the exact nonce so a newer send's signal is never dropped.
+    useInputStore.getState().consumeSentDraftClear(sentDraftClear.nonce);
+    const current = composerRef.current?.getValue() ?? messageRef.current;
+    // Exact-match contract: never wipe text the user edited or typed after.
+    if (!shouldApplySentDraftClear(sentDraftClear, myKey, current)) return;
+    confirmedMentionsRef.current.clear();
+    messageHistory.reset();
+    setMessage("");
+  }, [sentDraftClear, chatDraftIdentity, messageHistory]);
 
   // Focus textarea when new session draft is opened
   const prevNewSessionDraftOpenRef = React.useRef(newSessionDraftOpen);
@@ -1621,6 +1726,15 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                 confirmedMentionsRef.current.clear();
                 messageHistory.reset();
               }
+              // Remount-safe clear: the sending instance may already have
+              // unmounted mid-send (busy flip swapped the transcript
+              // branch), making its setMessage above a no-op on a dead
+              // instance. Publish after persisting the cleared draft so the
+              // instance currently owning this draft key finishes the clear.
+              // Success only — the failure path publishes nothing and keeps
+              // the text (and attachments) for retry. Consumers clear only
+              // on exact text match, so type-ahead is never wiped.
+              useInputStore.getState().publishSentDraftClear(sentDraftKey, inputSnapshot.message);
             } else {
               persistDraftImmediately(chatDraftIdentity, "");
             }
@@ -2782,11 +2896,13 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       />
 
       {githubLinkOpen && (currentSessionDirectoryForSync ?? currentDirectory) ? (
-        <GitHubLinkPicker
-          directory={(currentSessionDirectoryForSync ?? currentDirectory) as string}
-          open={githubLinkOpen}
-          onClose={() => setGithubLinkOpen(false)}
-        />
+        <React.Suspense fallback={null}>
+          <GitHubLinkPicker
+            directory={(currentSessionDirectoryForSync ?? currentDirectory) as string}
+            open={githubLinkOpen}
+            onClose={() => setGithubLinkOpen(false)}
+          />
+        </React.Suspense>
       ) : null}
 
       {/* Mobile draft target pickers: bottom sheets replacing the inline

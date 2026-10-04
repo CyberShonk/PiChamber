@@ -144,6 +144,23 @@ describe('useUIStore openContextDiff', () => {
   });
 });
 
+describe('useUIStore openContextSurface extensions', () => {
+  const directory = '/repo-extensions';
+
+  test('toggles the extensions tab open and closed', () => {
+    useUIStore.getState().openContextSurface(directory, 'extensions');
+
+    let state = useUIStore.getState().contextPanelByDirectory[directory];
+    expect(state?.isOpen).toBe(true);
+    expect(state?.tabs.map((tab) => tab.mode)).toEqual(['extensions']);
+    expect(state?.activeTabId).toBe('extensions');
+
+    useUIStore.getState().openContextSurface(directory, 'extensions');
+    state = useUIStore.getState().contextPanelByDirectory[directory];
+    expect(state?.isOpen).toBe(false);
+  });
+});
+
 describe('useUIStore contextRailOrder', () => {
   test('setContextRailOrder drops empty and duplicate ids', () => {
     useUIStore.getState().setContextRailOrder(['git', 'git', '', 'editor']);

@@ -9,7 +9,8 @@ export type ContextSurfaceId =
   | 'browser'
   | 'preview'
   | 'pull-requests'
-  | 'issues';
+  | 'issues'
+  | 'extensions';
 
 export type ContextSurfaceDescriptor = {
   id: ContextSurfaceId;
@@ -25,8 +26,10 @@ export type ContextSurfaceDescriptor = {
    * 'github-repo' surfaces need a GitHub repository in scope for the current
    * directory: visible when scope has >=1 GitHub repo, hidden while scope is
    * loading, visible when scope resolution FAILED so the failure renders.
+   * 'extensions' surfaces are visible when the selected session has
+   * `ctx.ui.setWidget` content or an extensions tab is already open.
    */
-  availability: 'always' | 'has-content' | 'github-repo';
+  availability: 'always' | 'has-content' | 'github-repo' | 'extensions';
   /** Short tooltip explanation shown on the rail. */
   description: string;
 };
@@ -99,6 +102,14 @@ export const CONTEXT_SURFACES: readonly ContextSurfaceDescriptor[] = [
     icon: 'task',
     label: "Issues",
     availability: 'github-repo',
+  },
+  {
+    id: 'extensions',
+    description: "Extension widgets for this session",
+    mode: 'extensions',
+    icon: 'plug-2',
+    label: "Extensions",
+    availability: 'extensions',
   },
 ];
 
@@ -207,6 +218,8 @@ type VisibleRailSurfacesOptions = {
    * previous behavior for non-github surfaces; github-repo surfaces hide
    * until scope state is supplied (loading). */
   githubScope?: GitHubRailScopeState;
+  /** Whether the selected session has `ctx.ui.setWidget` content. */
+  hasExtensionContent?: boolean;
 };
 
 /**
@@ -226,6 +239,10 @@ export const getVisibleContextRailSurfaces = (options: VisibleRailSurfacesOption
       // An open tab keeps the surface visible even if scope went away.
       if (options.tabs.some((tab) => tab.mode === surface.mode)) return true;
       return isGitHubRepoAvailable(options.githubScope);
+    }
+    if (surface.availability === 'extensions') {
+      if (options.tabs.some((tab) => tab.mode === surface.mode)) return true;
+      return Boolean(options.hasExtensionContent);
     }
     return true;
   });

@@ -40,8 +40,10 @@ describe("extension event protocol", () => {
       baseEvent("extension.dialog.dismiss", 10, { requestId: "r1", reason: "answered" }),
       baseEvent("extension.ui", 11, { id: "panel-1", title: "Panel", component: "progress", props: { value: 10 } }),
       baseEvent("extension.app", 12, { appId: "app-1", title: "App", html: "<p>hi</p>" }),
-      baseEvent("extension.error", 13, { source: "/ext.ts", message: "boom" }),
-      baseEvent("session.tree.updated", 14, {}),
+      baseEvent("extension.working", 13, { message: "thinking", visible: true }),
+      baseEvent("extension.editor.track", 14, { enabled: true }),
+      baseEvent("extension.error", 15, { source: "/ext.ts", message: "boom" }),
+      baseEvent("session.tree.updated", 16, {}),
     ]
     for (const event of events) expect(isPiEvent(event)).toBe(true)
   })
@@ -97,12 +99,38 @@ describe("extension event reduction", () => {
     let session = state.bySession.get("sess-1")!
     expect(session.extensionCatalogRevision).toBe(1)
     expect(session.sessionTreeRevision).toBe(1)
-    expect(session.extensionEditor).toEqual({ text: "replacement", sequence: 3 })
+    expect(session.extensionEditor).toEqual({ text: "replacement", mode: "set", sequence: 3 })
     expect(session.extensionTitle).toBe("Plan mode")
 
     state = applyPiEvent(state, baseEvent("extension.title", 5, {})).state
     session = state.bySession.get("sess-1")!
     expect(session.extensionTitle).toBe(undefined)
+  })
+
+  test("tracks extension editor set and paste ordering with missing mode defaulting to set", () => {
+    let state = applyPiEvent(createReducerState(), baseEvent("extension.editor", 1, { text: "first text" })).state
+    let session = state.bySession.get("sess-1")!
+    expect(session.extensionEditor).toEqual({ text: "first text", mode: "set", sequence: 1 })
+    expect(session.extensionEditorOps).toEqual([{ text: "first text", mode: "set", sequence: 1 }])
+
+    // Consecutive pastes accumulate in the pending ops queue
+    state = applyPiEvent(state, baseEvent("extension.editor", 2, { text: " pasted 1", mode: "paste" })).state
+    state = applyPiEvent(state, baseEvent("extension.editor", 3, { text: " pasted 2", mode: "paste" })).state
+    session = state.bySession.get("sess-1")!
+    expect(session.extensionEditor).toEqual({ text: " pasted 2", mode: "paste", sequence: 3 })
+    expect(session.extensionEditorOps).toEqual([
+      { text: "first text", mode: "set", sequence: 1 },
+      { text: " pasted 1", mode: "paste", sequence: 2 },
+      { text: " pasted 2", mode: "paste", sequence: 3 },
+    ])
+
+    // A subsequent 'set' operation replaces prior pending ops
+    state = applyPiEvent(state, baseEvent("extension.editor", 4, { text: "brand new set", mode: "set" })).state
+    session = state.bySession.get("sess-1")!
+    expect(session.extensionEditor).toEqual({ text: "brand new set", mode: "set", sequence: 4 })
+    expect(session.extensionEditorOps).toEqual([
+      { text: "brand new set", mode: "set", sequence: 4 },
+    ])
   })
 
   test("queues dialogs by requestId without stacking replays", () => {
@@ -326,4 +354,109 @@ describe("hydrateSessionFromDetail with extension content", () => {
     expect(message?.text).toBe("inline note")
     expect(message?.details).toEqual({ ok: true })
   })
+
+  test("tracks extension.working message and visibility state with full replacement semantics", () => {
+    let state = applyPiEvent(createReducerState(), baseEvent("extension.working", 1, {
+      message: "Analyzing code...",
+      visible: true,
+    })).state
+    let session = state.bySession.get("sess-1")!
+    expect(session.extensionWorking).toEqual({ message: "Analyzing code...", visible: true })
+
+    // Daemon publishes full working state; sending { visible: true } replaces and clears previous message
+    state = applyPiEvent(state, baseEvent("extension.working", 2, { visible: true })).state
+    session = state.bySession.get("sess-1")!
+    expect(session.extensionWorking).toEqual({ visible: true })
+
+    // Setting new message without visible clears visible
+    state = applyPiEvent(state, baseEvent("extension.working", 3, { message: "Running tests..." })).state
+    session = state.bySession.get("sess-1")!
+    expect(session.extensionWorking).toEqual({ message: "Running tests..." })
+
+    // Setting empty message clears message, omitting visible clears visible -> delete extensionWorking
+    state = applyPiEvent(state, baseEvent("extension.working", 4, { message: "" })).state
+    session = state.bySession.get("sess-1")!
+    expect(session.extensionWorking).toBeUndefined()
+
+    // Explicit empty object clears extensionWorking
+    state = applyPiEvent(state, baseEvent("extension.working", 5, { message: "Busy", visible: true })).state
+    expect(state.bySession.get("sess-1")!.extensionWorking).toEqual({ message: "Busy", visible: true })
+    state = applyPiEvent(state, baseEvent("extension.working", 6, {})).state
+    expect(state.bySession.get("sess-1")!.extensionWorking).toBeUndefined()
+  })
+
+  test("restores extensionWorking from snapshot and detail hydration", () => {
+    let state = createReducerState()
+    state = applyPiEvent(state, baseEvent("session.snapshot", 1, {
+      snapshot: {
+        sessionId: "sess-1",
+        directory: "/work",
+        isStreaming: false,
+        lifecycle: "idle",
+        queue: { steering: 0, followUp: 0 },
+        lastSequence: 1,
+        extensionWorking: { message: "Indexing...", visible: true },
+      },
+    } as never)).state
+    expect(state.bySession.get("sess-1")!.extensionWorking).toEqual({ message: "Indexing...", visible: true })
+
+    const { session } = hydrateSessionFromDetail({
+      session: { id: "sess-2", directory: "/work" },
+      lastSequence: 5,
+      messages: [],
+      extensionWorking: { message: "Executing command...", visible: false },
+    })
+    expect(session.extensionWorking).toEqual({ message: "Executing command...", visible: false })
+  })
+
+  test("tracks extensionDraftTracked via extension.editor.track event, snapshot, and detail hydration", () => {
+    let state = applyPiEvent(createReducerState(), baseEvent("extension.editor.track", 1, {
+      enabled: true,
+    })).state
+    const session = state.bySession.get("sess-1")!
+    expect(session.extensionDraftTracked).toBe(true)
+
+    // enabled: false (daemon cleared the session's extension state) stops sync
+    const disabled = applyPiEvent(state, baseEvent("extension.editor.track", 2, {
+      enabled: false,
+    })).state
+    expect(disabled.bySession.get("sess-1")!.extensionDraftTracked).toBeUndefined()
+
+    // Snapshot with extensionDraftTracked = true
+    state = applyPiEvent(state, baseEvent("session.snapshot", 2, {
+      snapshot: {
+        sessionId: "sess-1",
+        directory: "/work",
+        isStreaming: false,
+        lifecycle: "idle",
+        queue: { steering: 0, followUp: 0 },
+        lastSequence: 2,
+        extensionDraftTracked: true,
+      },
+    } as never)).state
+    expect(state.bySession.get("sess-1")!.extensionDraftTracked).toBe(true)
+
+    // Snapshot without extensionDraftTracked clears it
+    state = applyPiEvent(state, baseEvent("session.snapshot", 3, {
+      snapshot: {
+        sessionId: "sess-1",
+        directory: "/work",
+        isStreaming: false,
+        lifecycle: "idle",
+        queue: { steering: 0, followUp: 0 },
+        lastSequence: 3,
+      },
+    } as never)).state
+    expect(state.bySession.get("sess-1")!.extensionDraftTracked).toBeUndefined()
+
+    // Hydration from detail
+    const { session: hydratedSession } = hydrateSessionFromDetail({
+      session: { id: "sess-3", directory: "/work" },
+      lastSequence: 1,
+      messages: [],
+      extensionDraftTracked: true,
+    })
+    expect(hydratedSession.extensionDraftTracked).toBe(true)
+  })
 })
+

@@ -173,6 +173,43 @@ const ExtensionProgress: React.FC<{ label?: string; value: number; max: number }
     );
 };
 
+const FallbackBody: React.FC<{ body: string; messageId: string; text?: string }> = ({ body, messageId, text }) => {
+    const [isOpen, setIsOpen] = React.useState(false);
+    const hasText = typeof text === 'string' && text.trim().length > 0;
+
+    return (
+        <div className="flex flex-col gap-1.5">
+            {hasText && (
+                <MarkdownRenderer
+                    messageId={messageId}
+                    content={text}
+                    className="text-sm text-foreground"
+                />
+            )}
+            {body && body !== text && (
+                <div>
+                    <Button
+                        type="button"
+                        variant="ghost"
+                        size="xs"
+                        onClick={() => setIsOpen((prev) => !prev)}
+                        aria-expanded={isOpen}
+                        className="h-5 gap-1 px-1.5 typography-micro font-medium text-muted-foreground hover:bg-interactive-hover hover:text-foreground"
+                    >
+                        <Icon name={isOpen ? 'arrow-down-s' : 'arrow-right-s'} className="size-3" />
+                        <span>Details</span>
+                    </Button>
+                    {isOpen && (
+                        <pre className="mt-1.5 max-h-64 overflow-auto rounded-md border border-border/40 bg-muted/40 p-2 font-mono text-xs leading-relaxed whitespace-pre-wrap text-muted-foreground">
+                            <code>{body}</code>
+                        </pre>
+                    )}
+                </div>
+            )}
+        </div>
+    );
+};
+
 export const ExtensionMessageCard: React.FC<ExtensionMessageCardProps> = ({
     sessionId,
     messageId,
@@ -193,12 +230,12 @@ export const ExtensionMessageCard: React.FC<ExtensionMessageCardProps> = ({
 
     const body = () => {
         if (!component) {
-            // Generic fallback: extension-authored content without a PiChamber
-            // GUI descriptor renders as preformatted text so nothing is lost.
             return (
-                <pre className="max-h-64 overflow-auto rounded-md border border-border/40 bg-muted/40 p-2 font-mono text-xs leading-relaxed whitespace-pre-wrap text-muted-foreground">
-                    {parsed.kind === 'fallback' ? parsed.body : ''}
-                </pre>
+                <FallbackBody
+                    body={parsed.kind === 'fallback' ? parsed.body : ''}
+                    messageId={messageId}
+                    text={text}
+                />
             );
         }
         switch (component.component) {

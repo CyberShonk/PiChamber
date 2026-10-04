@@ -25,7 +25,19 @@ import {
 } from '../extension-protocol.js';
 import { createPiModelConfigStore } from '../model-config-store.js';
 import { clampThinkingLevel, getSupportedThinkingLevels, isPiThinkingLevel } from '../thinking-levels.js';
-import { createExtensionBridge } from './extension-bridge.js';
+import {
+  createExtensionBridge,
+  extractExtensionDescriptor,
+  isDisplayedExtensionEntryType,
+  isIddExtensionEntry,
+} from './extension-bridge.js';
+import { resolveExtensionName } from './extension-name.js';
+import { createExtensionTheme } from './extension-theme.js';
+import {
+  createExtensionToolRenderer,
+  installExtensionGlobalTheme,
+} from './extension-tool-render.js';
+import { getBuiltinExtensionFactories } from './builtin-extensions.js';
 import {
   SESSION_DAEMON_DEFAULT_MESSAGE_PAGE_LIMIT,
   SESSION_DAEMON_MAX_FRAME_BYTES as MAX_FRAME_BYTES,
@@ -124,7 +136,9 @@ export async function createPiSessionRuntime({ cwd, agentDir = getAgentDir(), se
     const services = await createAgentSessionServices({
       cwd: runtimeCwd,
       agentDir: runtimeAgentDir,
-      resourceLoaderOptions: {},
+      resourceLoaderOptions: {
+        extensionFactories: getBuiltinExtensionFactories(),
+      },
     });
 
     const result = {
@@ -195,6 +209,7 @@ export function createSessionDaemon({
       return error?.code === 'EPERM';
     }
   },
+  extensionToolRenderer: injectExtensionToolRenderer,
 } = {}) {
   if (!isLocalSessionDaemonEndpoint(endpoint, platform)) {
     throw new SessionDaemonProtocolError('INVALID_ENDPOINT', 'The session daemon endpoint must be local.');
@@ -214,6 +229,9 @@ export function createSessionDaemon({
 
   let server;
   let runtime;
+  const extensionTheme = createExtensionTheme();
+  installExtensionGlobalTheme(extensionTheme);
+  const extensionToolRenderer = injectExtensionToolRenderer ?? createExtensionToolRenderer({ theme: extensionTheme });
   let ownerServerInstanceId = typeof serverInstanceId === 'string' && serverInstanceId.length > 0 ? serverInstanceId : null;
   let ownerServerPid = Number.isInteger(serverPid) && serverPid > 0 ? serverPid : null;
   const leaseOwner = () => {
@@ -528,7 +546,9 @@ export function createSessionDaemon({
   const createFreshPromptServices = async (targetCwd = activeDirectory || cwd) => injectCreateServices({
     cwd: targetCwd,
     agentDir,
-    resourceLoaderOptions: {},
+    resourceLoaderOptions: {
+      extensionFactories: getBuiltinExtensionFactories(),
+    },
   });
 
   const publish = (event, payload, sessionId = runtime?.session?.sessionId, directory) => {
@@ -570,10 +590,20 @@ export function createSessionDaemon({
     clearExtensionState,
     mirrorExtensionApp,
     mirrorExtensionPanel,
+    rebuildSessionPanelsAndApps,
     publishExtensionCustomMessage,
     reloadSession,
     resolveExtensionDialog,
+    updateExtensionDraft,
+    resetExtensionDraft,
   } = extensionBridge;
+
+  const rebuildSessionExtensionState = (activeRuntime) => {
+    const session = activeRuntime?.session;
+    if (!session?.sessionId) return;
+    const entries = session.sessionManager?.getBranch?.() ?? session.sessionManager?.getEntries?.();
+    rebuildSessionPanelsAndApps(session.sessionId, Array.isArray(entries) ? entries : []);
+  };
 
   // Thread extension hooks through our own default factory. Injected test or
   // host factories keep their single-argument contract and ignore the hooks.
@@ -635,8 +665,8 @@ export function createSessionDaemon({
     const model = activeSession?.model;
     const snapshotSequence = ++sequence;
     // Snapshot must carry enough extension live state for a reconnect that
-    // missed the gap: statuses, widgets, and pending blocking dialogs per
-    // session. Without it, a phone that reconnects after the 1k replay
+    // missed the gap: statuses, widgets, panels, apps, and pending blocking dialogs
+    // per session. Without it, a phone that reconnects after the 1k replay
     // window would lose its sub-agent panel or approval prompt.
     const extensionSnapshot = extensionBridge.getSnapshotState(session.sessionId);
     writeFrame(socket, {
@@ -673,6 +703,8 @@ export function createSessionDaemon({
         ...(extensionSnapshot.panels ? { extensionPanels: extensionSnapshot.panels } : {}),
         ...(extensionSnapshot.apps ? { extensionApps: extensionSnapshot.apps } : {}),
         ...(extensionSnapshot.title ? { extensionTitle: extensionSnapshot.title } : {}),
+        ...(extensionSnapshot.working ? { extensionWorking: extensionSnapshot.working } : {}),
+        ...(extensionSnapshot.draftTracked ? { extensionDraftTracked: true } : {}),
       },
     });
   };
@@ -726,6 +758,7 @@ export function createSessionDaemon({
 
   const disposeRuntime = async () => {
     clearAllIdleDisposals();
+    extensionToolRenderer.dispose();
     activeSessionInputs.clear();
     pendingResourceReloads.clear();
     await resourceReloadQueue.catch(() => {});
@@ -786,6 +819,7 @@ export function createSessionDaemon({
     runtimeRegistry.register(newRuntime, { cwd: canonicalRuntimeCwd });
     runtime = newRuntime;
     activeDirectory = canonicalRuntimeCwd;
+    rebuildSessionExtensionState(newRuntime);
     rememberRuntimeSession();
     return newRuntime;
   };
@@ -966,12 +1000,12 @@ export function createSessionDaemon({
     resourceReloadsByRuntime.delete(targetRuntime);
     const tracked = (async () => {
       // Capture the assigned JSONL path before disposal. Pi's
-      // SessionManager defers JSONL creation until the first assistant
-      // message, so `sessions.create` alone (or a session whose first
-      // prompt was rejected before anything persisted) stays ephemeral:
-      // the runtime stays resident and retryable until this normal idle
-      // disposal, which then reports the session as deleted when its
-      // assigned JSONL is positively absent.
+      // SessionManager creates the session JSONL file when the first user
+      // or assistant message is appended, so `sessions.create` alone (or a
+      // session whose first prompt was rejected before the user message was
+      // appended) stays ephemeral: the runtime stays resident and retryable
+      // until this normal idle disposal, which then reports the session as
+      // deleted when its assigned JSONL is positively absent.
       let assignedSessionFile;
       try {
         assignedSessionFile = targetRuntime.session?.sessionManager?.getSessionFile?.();
@@ -985,6 +1019,7 @@ export function createSessionDaemon({
         // dismiss event so no extension thread blocks forever on a
         // disposed runtime.
         clearExtensionState(sessionId);
+        extensionToolRenderer.clearSession(sessionId);
         await runtimeRegistry.dispose(targetRuntime);
         // Positively determine ephemerality while the resident lease is
         // still held, before any release. A stat success means persisted;
@@ -1103,6 +1138,7 @@ export function createSessionDaemon({
 
   const sessionIdForIdleGuard = (message) => {
     switch (message?.command) {
+      case 'extensions.draft':
       case 'sessions.open':
       case 'sessions.messages':
       case 'sessions.tree':
@@ -1417,6 +1453,7 @@ export function createSessionDaemon({
     }
     runtime = newRuntime;
     activeDirectory = directory;
+    rebuildSessionExtensionState(newRuntime);
     rememberRuntimeSession();
     return newRuntime;
   };
@@ -1506,15 +1543,20 @@ export function createSessionDaemon({
         ...projectToolResult(entry.message, entry.message.isError === true),
         isError: entry.message.isError === true,
         endedAt: Date.parse(entry.timestamp),
+        message: entry.message,
       });
     }
     let latestUserMessageId;
     return entries.flatMap((entry) => {
-      // Extension-authored content: custom entries (`appendEntry`) and custom
-      // messages (`sendMessage`) both surface as extension-role items so the
-      // UI can render them through its extension renderer registry.
+      // Extension-authored content: displayed custom messages (`sendMessage`)
+      // and PiChamber GUI entries (`appendEntry('pichamber.*')`) without a stable
+      // id surface as one-off extension-role transcript items. Other custom entries
+      // are private extension state that Pi never displays, and entries with a
+      // stable id are mirrored into live panels/apps instead, so they stay out of the
+      // transcript.
       if (entry?.type === 'custom') {
-        if (typeof entry.customType !== 'string' || entry.customType.length === 0 || typeof entry.id !== 'string') return [];
+        if (!isDisplayedExtensionEntryType(entry.customType) || typeof entry.id !== 'string') return [];
+        if (isIddExtensionEntry(entry)) return [];
         const timestamp = Date.parse(entry.timestamp);
         return [{
           message: {
@@ -1597,6 +1639,7 @@ export function createSessionDaemon({
       const text = redactAttachmentPaths(textFromContent(entry.message.content));
       const thinking = redactAttachmentPaths(entry.message.content.filter((part) => part?.type === 'thinking').map((part) => part.thinking).join(''));
       const usage = projectUsage(entry.message.usage);
+      const pendingRenders = [];
       const parts = entry.message.content.flatMap((part, index) => {
         if (part?.type === 'text') return [{ type: 'text', id: `${entry.id}:text:${index}`, index, text: redactAttachmentPaths(part.text) }];
         if (part?.type === 'thinking') return [{ type: 'thinking', id: `${entry.id}:thinking:${index}`, index, text: redactAttachmentPaths(part.thinking) }];
@@ -1609,7 +1652,24 @@ export function createSessionDaemon({
           const running = streaming && !result;
           const interrupted = !running && !result;
           const metadata = mergeToolPresentationMetadata(result?.metadata, activeRuntime, targetDir, part.name, part.arguments);
-          return [{
+          let resolveRender;
+          if (running) {
+            const liveRender = extensionToolRenderer.getLiveRender?.(session.sessionId, part.id);
+            if (liveRender) resolveRender = () => liveRender;
+          } else {
+            const definition = extensionToolRenderer.resolve(session, part.name);
+            if (definition && result?.message) {
+              const toolCwd = activeRuntime?.cwd || targetDir;
+              resolveRender = () => extensionToolRenderer.renderSettled(definition, {
+                toolCallId: part.id,
+                args: part.arguments,
+                cwd: toolCwd,
+                result: result.message,
+                isError: result.isError === true,
+              });
+            }
+          }
+          const toolPart = {
             type: 'tool',
             id: `${entry.id}:tool:${part.id}`,
             index,
@@ -1633,11 +1693,13 @@ export function createSessionDaemon({
                 : interrupted
                   ? { endedAt: createdAt }
                   : {}),
-          }];
+          };
+          if (resolveRender) pendingRenders.push({ part: toolPart, resolve: resolveRender });
+          return [toolPart];
         }
         return [];
       });
-      return [{
+      const projected = {
         message: {
           id: entry.id, sessionId: session.sessionId, directory: targetDir, role: 'assistant', text, thinking, createdAt,
           ...(latestUserMessageId ? { parentId: latestUserMessageId } : {}),
@@ -1647,8 +1709,24 @@ export function createSessionDaemon({
           ...(usage ? { usage } : {}),
         },
         parts,
-      }];
+      };
+      if (pendingRenders.length > 0) pendingToolRenders.set(projected, pendingRenders);
+      return [projected];
     });
+  };
+
+  // Settled extension tool renders run extension code, so they are resolved
+  // only for messages a page actually selects, not for the whole branch.
+  const pendingToolRenders = new WeakMap();
+  const materializeToolRenders = (projected) => {
+    const pending = projected && pendingToolRenders.get(projected);
+    if (!pending) return projected;
+    pendingToolRenders.delete(projected);
+    for (const { part, resolve } of pending) {
+      const render = resolve();
+      if (render) part.render = render;
+    }
+    return projected;
   };
 
   const projectMessagePage = (messages, options = {}) => {
@@ -1668,7 +1746,7 @@ export function createSessionDaemon({
     let start = end;
     let pageBytes = 2;
     while (start > 0 && end - start < requestedLimit) {
-      const candidate = messages[start - 1];
+      const candidate = materializeToolRenders(messages[start - 1]);
       const candidateBytes = Buffer.byteLength(JSON.stringify(candidate));
       if (start < end && pageBytes + candidateBytes + 1 > SESSION_DAEMON_MESSAGE_PAGE_TARGET_BYTES) break;
       start -= 1;
@@ -1679,7 +1757,7 @@ export function createSessionDaemon({
     const firstMessage = selected[0]?.message;
     if (firstMessage?.role === 'assistant' && typeof firstMessage.parentId === 'string') {
       anchorIndex = messages.findIndex((entry, index) => index < start && entry?.message?.id === firstMessage.parentId);
-      if (anchorIndex >= 0) selected.unshift(messages[anchorIndex]);
+      if (anchorIndex >= 0) selected.unshift(materializeToolRenders(messages[anchorIndex]));
     }
     const beginsAtAdjacentAnchor = anchorIndex === start - 1;
     const cursorIndex = beginsAtAdjacentAnchor ? anchorIndex : start;
@@ -1763,6 +1841,8 @@ export function createSessionDaemon({
       ...(extensionSnapshot.panels ? { extensionPanels: extensionSnapshot.panels } : {}),
       ...(extensionSnapshot.apps ? { extensionApps: extensionSnapshot.apps } : {}),
       ...(extensionSnapshot.title ? { extensionTitle: extensionSnapshot.title } : {}),
+      ...(extensionSnapshot.working ? { extensionWorking: extensionSnapshot.working } : {}),
+      ...(extensionSnapshot.draftTracked ? { extensionDraftTracked: true } : {}),
     };
   };
 
@@ -1874,6 +1954,7 @@ export function createSessionDaemon({
     runtimeRegistry.register(newRuntime, { cwd: targetCwd });
     runtime = newRuntime;
     activeDirectory = targetCwd;
+    rebuildSessionExtensionState(newRuntime);
     rememberRuntimeSession();
     const created = projectActiveSession(newRuntime, targetCwd);
     const createdTitle = created.session.title
@@ -2056,7 +2137,7 @@ export function createSessionDaemon({
     if (typeof modelRuntime.getError?.() === 'string') {
       throw new SessionDaemonProtocolError('PI_MODEL_CONFIG_INVALID', 'Pi models configuration is invalid.');
     }
-    // Pi 0.85.1 composeModelProvider layers models.json over native/base
+    // Pi 1.0.0 composeModelProvider layers models.json over native/base
     // providers, so manual additions remain effective there. Extension
     // registrations without an explicit `models` array do not hide the file
     // entry either. Reject only when an extension defines its own `models`
@@ -3064,19 +3145,20 @@ export function createSessionDaemon({
     }
   };
 
-  // Ephemeral sessions: Pi's SessionManager defers JSONL creation until the
-  // first assistant message, so `sessions.create` alone stays ephemeral
-  // (untouched sessions vanish on restart by design). A rejected first
-  // prompt likewise persists nothing: the runtime stays resident and
-  // retryable until normal idle disposal, which reports the session as
-  // deleted when its assigned JSONL is positively absent (see
-  // disposeIdleSessionRuntime).
+  // Ephemeral sessions: Pi's SessionManager creates the session JSONL file
+  // when the first user or assistant message is appended, so `sessions.create`
+  // alone stays ephemeral (untouched sessions vanish on restart by design). A
+  // rejected first prompt (before the user message is appended) likewise
+  // persists nothing: the runtime stays resident and retryable until normal
+  // idle disposal, which reports the session as deleted when its assigned JSONL
+  // is positively absent (see disposeIdleSessionRuntime).
 
   const runSessionInput = async (payload, delivery) => {
     if (!payload || typeof payload !== 'object' || typeof payload.sessionId !== 'string'
       || typeof payload.text !== 'string' || payload.text.length === 0 || Buffer.byteLength(payload.text) > 64 * 1024) {
       throw new SessionDaemonProtocolError('INVALID_PROMPT', 'The session prompt is invalid.');
     }
+    resetExtensionDraft(payload.sessionId);
     if (payload.thinking !== undefined) validateThinking(payload.thinking);
     // Idle protection is owned by the request-dispatch guard: it holds the
     // session refcount across activation/acceptance, agent_start clears once
@@ -3169,16 +3251,20 @@ export function createSessionDaemon({
       : null;
     let promptPromise;
     // True SDK acceptance: await the prompt preflight signal, not the full
-    // agent turn. preflightResult(true) means accepted, queued, or handled;
-    // preflightResult(false) is followed by a prompt rejection that must
-    // propagate to the caller so dedup does not cache it as accepted.
+    // agent turn. In SDK 1.0.0, preflightResult is called on acceptance with
+    // a PromptDisposition ("started" | "queued" | "handled"). Rejections
+    // reject the prompt promise without invoking the callback, so any
+    // callback is acceptance. Treating an unknown disposition as rejection
+    // would report failure for a turn that is already running.
     let preflightOutcome = null;
+    let preflightDisposition = null;
     let notifyPreflight;
     const preflightGate = new Promise((resolve) => { notifyPreflight = resolve; });
-    const onPreflightResult = (accepted) => {
+    const onPreflightResult = (disposition) => {
       if (preflightOutcome !== null) return;
-      preflightOutcome = accepted === true;
-      notifyPreflight(preflightOutcome);
+      preflightOutcome = true;
+      preflightDisposition = typeof disposition === 'string' ? disposition : 'started';
+      notifyPreflight(true);
     };
     try {
       promptPromise = isSlashPrompt
@@ -3201,11 +3287,22 @@ export function createSessionDaemon({
     }
     // A settlement without a preflight signal resolves the gate so a missing
     // callback cannot hang acceptance. Resolve implies acceptance; reject
-    // implies preflight failure whose real error is propagated below. The
-    // installed SDK always signals, so this only covers test doubles.
+    // implies preflight failure whose real error is propagated below.
     Promise.resolve(promptPromise).then(
-      () => { if (preflightOutcome === null) { preflightOutcome = true; notifyPreflight(true); } },
-      () => { if (preflightOutcome === null) { preflightOutcome = false; notifyPreflight(false); } },
+      () => {
+        if (preflightOutcome === null) {
+          preflightOutcome = true;
+          preflightDisposition = 'started';
+          notifyPreflight(true);
+        }
+      },
+      () => {
+        if (preflightOutcome === null) {
+          preflightOutcome = false;
+          preflightDisposition = null;
+          notifyPreflight(false);
+        }
+      },
     );
     const preflightAccepted = await preflightGate;
     if (!preflightAccepted) {
@@ -3223,22 +3320,12 @@ export function createSessionDaemon({
       // Queued sends resolve on queueing, before the queued user message
       // starts. Keep that file metadata until the per-delivery
       // `message_start` consumes it. Retention is decided at resolution
-      // time from authoritative runtime state, not from the early
-      // `requestedDelivery` flag alone: an idle followUp/steer that the SDK
-      // ignored (new turn, no queue) and any handled extension command
-      // (never emits a user start) must not retain forever. Only a still-
-      // streaming session or a non-empty SDK queue proves the send is
-      // queued; handled extension commands never retain even while
-      // streaming.
-      const stillStreaming = Boolean(activeRuntime.session?.isStreaming);
-      let hasQueuedMessages = false;
-      try {
-        hasQueuedMessages = (activeRuntime.session?.getSteeringMessages?.().length ?? 0) > 0
-          || (activeRuntime.session?.getFollowUpMessages?.().length ?? 0) > 0;
-      } catch {
-        hasQueuedMessages = false;
-      }
-      const shouldRetain = !isExtensionCommand && (stillStreaming || hasQueuedMessages);
+      // time from authoritative runtime state or preflight disposition:
+      // a queued disposition keeps metadata until its start; handled
+      // extension commands and settled started turns never retain.
+      const isQueued = preflightDisposition === 'queued';
+      const isHandled = preflightDisposition === 'handled' || isExtensionCommand;
+      const shouldRetain = isQueued || (!isHandled && Boolean(activeRuntime.session?.isStreaming));
       if (!shouldRetain) {
         removeUserStart(payload.sessionId, generation);
       }
@@ -3333,6 +3420,7 @@ export function createSessionDaemon({
       const activeSessionFile = active?.session?.sessionManager?.getSessionFile?.();
       if (active) {
         if (active.session?.isStreaming) await active.session.abort();
+        clearExtensionState(sessionId);
         await runtimeRegistry?.dispose(active);
         if (runtime === active) runtime = undefined;
       }
@@ -3364,6 +3452,7 @@ export function createSessionDaemon({
       latestAssistantMessageIds.delete(sessionId);
       toolInputBySession.delete(sessionId);
       clearToolTimingsForSession(sessionId);
+      extensionToolRenderer.clearSession(sessionId);
       // Explicit typed deletion: every connected and replaying client drops
       // catalog, transcript, activity, and caches. Archive and directory moves
       // keep the session id and never publish this event.
@@ -3477,37 +3566,51 @@ export function createSessionDaemon({
       }
       case 'entry_appended': {
         const entry = event.entry;
-        if (entry?.type !== 'custom' || typeof entry.customType !== 'string') break;
-        const timestamp = Date.parse(entry.timestamp);
-        publish('extension.entry', {
-          id: typeof entry.id === 'string' ? entry.id : `ext-${sessionId}-${sequence + 1}`,
-          customType: entry.customType,
-          ...(entry.data !== undefined ? { data: redactAttachmentValues(entry.data) } : {}),
-          createdAt: Number.isFinite(timestamp) ? timestamp : Date.now(),
-        }, sessionId, directory);
+        if (entry?.type !== 'custom' || !isDisplayedExtensionEntryType(entry.customType)) break;
+        const descriptor = extractExtensionDescriptor(entry);
+        const isIdd = isIddExtensionEntry(entry);
+        if (!isIdd) {
+          const timestamp = Date.parse(entry.timestamp);
+          publish('extension.entry', {
+            id: typeof entry.id === 'string' ? entry.id : `ext-${sessionId}-${sequence + 1}`,
+            customType: entry.customType,
+            ...(entry.data !== undefined ? { data: redactAttachmentValues(entry.data) } : {}),
+            createdAt: Number.isFinite(timestamp) ? timestamp : Date.now(),
+          }, sessionId, directory);
+        }
         // Declarative GUI payloads are additionally mirrored into normalized
         // live state so panels/apps update in place and survive reconnects.
-        if (entry.customType === 'pichamber.ui' || entry.customType.startsWith('pichamber.')) {
-          const descriptor = entry.data && typeof entry.data === 'object' && !Array.isArray(entry.data)
-            ? (entry.data.ui && typeof entry.data.ui === 'object' && !Array.isArray(entry.data.ui) ? entry.data.ui : entry.data)
-            : undefined;
-          if (descriptor) {
-            if (entry.customType === 'pichamber.app') {
-              mirrorExtensionApp(sessionId, descriptor, directory);
-            } else {
-              mirrorExtensionPanel(sessionId, descriptor, directory);
-            }
+        if (descriptor) {
+          if (entry.customType === 'pichamber.app') {
+            mirrorExtensionApp(sessionId, descriptor, directory);
+          } else {
+            mirrorExtensionPanel(sessionId, descriptor, directory);
           }
         }
         break;
       }
       case 'tool_execution_start': {
+        if (typeof event.parentToolCallId === 'string' && event.parentToolCallId.length > 0) {
+          break;
+        }
         const messageId = streamingMessageIds.get(sessionId) ?? latestAssistantMessageIds.get(sessionId) ?? `assistant-${sessionId}`;
         const startedAt = Date.now();
         const activeRuntime = runtimeRegistry?.get({ cwd: directory, sessionId }) || runtime;
         const metadata = mergeToolPresentationMetadata(undefined, activeRuntime, directory, event.toolName, event.args);
         toolStartedAt.set(toolTimingKey(sessionId, event.toolCallId), startedAt);
         rememberToolInput(sessionId, event.toolCallId, event.args);
+        const definition = extensionToolRenderer.resolve(activeRuntime?.session, event.toolName);
+        let render;
+        if (definition) {
+          const toolCwd = activeRuntime?.cwd || directory;
+          render = extensionToolRenderer.onStart({
+            sessionId,
+            toolCallId: event.toolCallId,
+            definition,
+            args: event.args,
+            cwd: toolCwd,
+          });
+        }
         publish('session.tool.start', {
           toolCallId: event.toolCallId,
           partId: `${messageId}:tool:${event.toolCallId}`,
@@ -3517,12 +3620,16 @@ export function createSessionDaemon({
           state: 'running',
           ...(event.args !== undefined ? { input: redactAttachmentValues(event.args) } : {}),
           ...(metadata ? { metadata } : {}),
+          ...(render ? { render } : {}),
           startedAt,
           serverNow: startedAt,
         }, sessionId, directory);
         break;
       }
       case 'tool_execution_update': {
+        if (typeof event.parentToolCallId === 'string' && event.parentToolCallId.length > 0) {
+          break;
+        }
         const messageId = streamingMessageIds.get(sessionId) ?? latestAssistantMessageIds.get(sessionId) ?? `assistant-${sessionId}`;
         const startedAt = toolStartedAt.get(toolTimingKey(sessionId, event.toolCallId));
         const serverNow = Date.now();
@@ -3530,6 +3637,33 @@ export function createSessionDaemon({
         const toolArgs = event.args ?? getToolInput(sessionId, event.toolCallId);
         const projected = projectToolResult(event.partialResult, false);
         const metadata = mergeToolPresentationMetadata(projected.metadata, activeRuntime, directory, event.toolName, toolArgs);
+        const definition = extensionToolRenderer.resolve(activeRuntime?.session, event.toolName);
+        let render;
+        if (definition) {
+          const toolCwd = activeRuntime?.cwd || directory;
+          const partId = `${messageId}:tool:${event.toolCallId}`;
+          render = extensionToolRenderer.onUpdate({
+            sessionId,
+            toolCallId: event.toolCallId,
+            definition,
+            args: toolArgs,
+            cwd: toolCwd,
+            partialResult: event.partialResult,
+            publish: (trailingRender) => {
+              publish('session.tool.update', {
+                toolCallId: event.toolCallId,
+                partId,
+                messageId,
+                name: event.toolName,
+                toolName: event.toolName,
+                state: 'running',
+                ...(Number.isFinite(startedAt) ? { startedAt } : {}),
+                serverNow: Date.now(),
+                ...(trailingRender ? { render: trailingRender } : {}),
+              }, sessionId, directory);
+            },
+          });
+        }
         publish('session.tool.update', {
           toolCallId: event.toolCallId,
           partId: `${messageId}:tool:${event.toolCallId}`,
@@ -3540,12 +3674,16 @@ export function createSessionDaemon({
           ...(event.args !== undefined ? { input: redactAttachmentValues(event.args) } : {}),
           ...projected,
           ...(metadata ? { metadata } : {}),
+          ...(render ? { render } : {}),
           ...(Number.isFinite(startedAt) ? { startedAt } : {}),
           serverNow,
         }, sessionId, directory);
         break;
       }
       case 'tool_execution_end': {
+        if (typeof event.parentToolCallId === 'string' && event.parentToolCallId.length > 0) {
+          break;
+        }
         const messageId = streamingMessageIds.get(sessionId) ?? latestAssistantMessageIds.get(sessionId) ?? `assistant-${sessionId}`;
         const timingKey = toolTimingKey(sessionId, event.toolCallId);
         const startedAt = toolStartedAt.get(timingKey);
@@ -3557,6 +3695,20 @@ export function createSessionDaemon({
         const activeRuntime = runtimeRegistry?.get({ cwd: directory, sessionId }) || runtime;
         const projected = projectToolResult(event.result, event.isError === true);
         const metadata = mergeToolPresentationMetadata(projected.metadata, activeRuntime, directory, event.toolName, toolArgs);
+        const definition = extensionToolRenderer.resolve(activeRuntime?.session, event.toolName);
+        let render;
+        if (definition) {
+          const toolCwd = activeRuntime?.cwd || directory;
+          render = extensionToolRenderer.onEnd({
+            sessionId,
+            toolCallId: event.toolCallId,
+            definition,
+            args: toolArgs,
+            cwd: toolCwd,
+            result: event.result,
+            isError: event.isError === true,
+          });
+        }
         publish('session.tool.end', {
           toolCallId: event.toolCallId,
           partId: `${messageId}:tool:${event.toolCallId}`,
@@ -3567,6 +3719,7 @@ export function createSessionDaemon({
           isError: event.isError === true,
           ...projected,
           ...(metadata ? { metadata } : {}),
+          ...(render ? { render } : {}),
           ...(Number.isFinite(startedAt) ? { startedAt } : {}),
           endedAt,
           serverNow: endedAt,
@@ -3628,6 +3781,7 @@ export function createSessionDaemon({
         latestAssistantMessageIds.delete(sessionId);
         toolInputBySession.delete(sessionId);
         clearToolTimingsForSession(sessionId, { keepCompleted: true });
+        extensionToolRenderer.clearSession(sessionId);
         publish('session.lifecycle', { state: 'idle', serverNow: Date.now() }, sessionId, directory);
         if (!completeRequestedShutdown(sessionId)) {
           void flushPendingResourceReload(owningRuntime).then(() => {
@@ -3748,7 +3902,7 @@ export function createSessionDaemon({
               'sessions.setThinking', 'sessions.compact', 'providers.list', 'providers.refresh', 'providers.config.get', 'providers.models.set', 'providers.models.add', 'providers.status', 'providers.login',
               'providers.login.respond', 'providers.login.status', 'providers.logout', 'settings.get', 'settings.set',
               'resources.list', 'resources.update', 'resources.prompts.create', 'resources.prompts.update', 'resources.prompts.delete',
-              'extensions.list', 'extensions.respond',
+              'extensions.list', 'extensions.respond', 'extensions.draft',
             ],
             ...(Number.isInteger(healthMetadata.daemonPid) ? { daemonPid: healthMetadata.daemonPid } : {}),
             ...(typeof profileKey === 'string' && profileKey.length > 0 ? { profileKey } : {}),
@@ -3924,6 +4078,17 @@ export function createSessionDaemon({
         writeFrame(socket, { protocolVersion: PROTOCOL_VERSION, kind: 'response', requestId: message.requestId, result: resolution });
         return;
       }
+      case 'extensions.draft': {
+        const sessionId = message.payload?.sessionId;
+        const text = message.payload?.text;
+        const revision = message.payload?.revision;
+        if (typeof sessionId !== 'string' || sessionId.length === 0 || typeof text !== 'string' || !Number.isSafeInteger(revision) || revision < 0) {
+          throw new SessionDaemonProtocolError('INVALID_ARGUMENT', 'The draft payload is invalid.');
+        }
+        const result = updateExtensionDraft(sessionId, text, revision);
+        writeFrame(socket, { protocolVersion: PROTOCOL_VERSION, kind: 'response', requestId: message.requestId, result });
+        return;
+      }
       case 'extensions.list': {
         const requestedExtensionsDir = message.payload?.directory || message.payload?.cwd;
         const activeRuntime = await ensureRuntime(requestedExtensionsDir ? await resolveDirectory(requestedExtensionsDir) : undefined);
@@ -3946,7 +4111,7 @@ export function createSessionDaemon({
               // browser (see DOCUMENTATION.md route invariants).
               .map((extensionPath) => ({
                 id: createHash('sha256').update(extensionPath).digest('hex').slice(0, 16),
-                name: basename(extensionPath).replace(/\.(ts|js)$/, ''),
+                name: resolveExtensionName(extensionSession, extensionPath),
               })),
             commands: (Array.isArray(registeredCommands) ? registeredCommands : [])
               .filter((command) => command && typeof command.invocationName === 'string')
@@ -3974,6 +4139,7 @@ export function createSessionDaemon({
       }
       case 'sessions.open': {
         const activeRuntime = await activateSession(message.payload?.sessionId, message.payload?.directory || message.payload?.cwd);
+        rebuildSessionExtensionState(activeRuntime);
         const detail = projectActiveSession(activeRuntime, activeRuntime.cwd, { limit: message.payload?.limit });
         writeDetailResponse(socket, message.requestId, detail);
         return;
@@ -4018,6 +4184,7 @@ export function createSessionDaemon({
         const previousLeafId = activeRuntime.session.sessionManager?.getLeafId?.() ?? null;
         const result = await activeRuntime.session.navigateTree(messageId);
         if (result?.cancelled) throw new SessionDaemonProtocolError('SESSION_TREE_NOT_FOUND', 'Pi cancelled tree navigation.');
+        rebuildSessionExtensionState(activeRuntime);
         const newLeafId = activeRuntime.session.sessionManager?.getLeafId?.() ?? null;
         const navigation = {
           targetEntryId: messageId,
@@ -4048,6 +4215,7 @@ export function createSessionDaemon({
           await acquireResidentLease({ cwd: activeRuntime.cwd, sessionId: activeRuntime.session.sessionId });
         }
         rememberRuntimeSession();
+        rebuildSessionExtensionState(activeRuntime);
         const forkedDetail = projectActiveSession(activeRuntime, activeRuntime.cwd);
         // The guard re-arms the source session on release; arm the forked
         // identity explicitly since it was created inside this dispatch.

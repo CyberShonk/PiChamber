@@ -138,12 +138,25 @@ export const createRecordFromPiSession = (
 
 export const mergeHydratedSession = (
   fetched: PiReducerSessionState,
-  existing: PiReducerSessionState | undefined
+  existing: PiReducerSessionState | undefined,
+  options: { localSendPending?: boolean } = {}
 ): PiReducerSessionState => {
   if (!existing) return fetched;
   if (existing.sessionId !== fetched.sessionId) return fetched;
+  // A live local turn is overlaid onto a detail that still reports the turn
+  // running. A detail at or past the local cursor that reports the turn
+  // settled is authoritative instead: it settles a turn whose lifecycle
+  // events this client missed. A send the daemon has not yet taken keeps the
+  // local turn, since the detail may predate it.
+  const fetchedSettled =
+    fetched.lifecycle !== 'busy'
+    && fetched.lifecycle !== 'retry'
+    && fetched.streamingMessages.size === 0
+    && fetched.lastSequence >= existing.lastSequence
+    && options.localSendPending !== true;
   const liveTurn =
-    existing.lifecycle === 'busy' || existing.lifecycle === 'retry';
+    (existing.lifecycle === 'busy' || existing.lifecycle === 'retry')
+    && !fetchedSettled;
   const preserveExisting =
     liveTurn || existing.lastSequence > fetched.lastSequence;
   // A fetch can finish behind an already accepted live extension event. The
@@ -188,6 +201,8 @@ export const mergeHydratedSession = (
           extensionPanels: existing.extensionPanels,
           extensionApps: existing.extensionApps,
           extensionTitle: existing.extensionTitle,
+          ...(existing.extensionWorking ? { extensionWorking: existing.extensionWorking } : {}),
+          ...(existing.extensionDraftTracked ? { extensionDraftTracked: true } : {}),
         }
       : {}),
     // These fields are local live state rather than part of the session detail
@@ -197,6 +212,14 @@ export const mergeHydratedSession = (
     extensionCatalogRevision: existing.extensionCatalogRevision,
     sessionTreeRevision: existing.sessionTreeRevision,
     extensionEditor: existing.extensionEditor,
+    extensionEditorOps: existing.extensionEditorOps,
+    // The pre-echo marker is likewise local send state. The detail response
+    // never carries it; keep it so a hydrate racing the user echo does not
+    // reopen the window. The selector still self-resolves once the fetched
+    // transcript contains the echoed user message.
+    ...(existing.awaitingPromptEcho !== undefined
+      ? { awaitingPromptEcho: existing.awaitingPromptEcho }
+      : {}),
   };
   if (preserveExisting || preservePagedHistory) {
     for (const [id, message] of existing.messages) {

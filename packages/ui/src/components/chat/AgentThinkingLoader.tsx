@@ -1,5 +1,6 @@
 import React from 'react';
 import { cn } from '@/lib/utils';
+import { ShimmerGlint } from './ShimmerGlint';
 
 /* ─────────────────────────────────────────────────────────
  * Pixel-grid loader for long-running work (Dots variant).
@@ -15,11 +16,10 @@ import { cn } from '@/lib/utils';
  * no timer or re-renders. Reduced motion freezes the grid and label to
  * their static dim state; the timer still ticks.
  *
- * NOTE: the label shimmer animates background-position, which
- * is non-composited (see theme-system animation contract).
- * It is intentionally kept per request and is bounded to the
- * single main-chat status line; sidebar indicators render
- * grid-only with no shimmer.
+ * The label shimmer is `ShimmerGlint` (transform-only, see
+ * theme-system animation contract), bounded to the single
+ * main-chat status line; sidebar indicators render grid-only
+ * with no shimmer.
  * ───────────────────────────────────────────────────────── */
 
 const CHEVRON_DELAYS_MS: ReadonlyArray<number> = Array.from({ length: 9 }, (_, i) => {
@@ -121,17 +121,12 @@ export const AgentThinkingLoader: React.FC<AgentThinkingLoaderProps> = ({
     <span
       key={animateText ? text : undefined}
       className={cn(
-        'pixel-loader-label min-w-0 truncate whitespace-nowrap bg-clip-text typography-markdown font-medium text-transparent',
+        'pixel-loader-label min-w-0 truncate whitespace-nowrap typography-markdown font-medium',
         animateText && 'agent-thinking-label-enter',
       )}
-      style={{
-        backgroundImage:
-          'linear-gradient(90deg, var(--muted-foreground) 35%, var(--foreground) 50%, var(--muted-foreground) 65%)',
-        backgroundSize: '200% 100%',
-        animation: animateText ? undefined : 'shimmer-text 1.4s linear infinite',
-      }}
     >
       {text}
+      <ShimmerGlint text={text} />
     </span>
   ) : null;
   const elapsedEl =

@@ -102,6 +102,7 @@ const {
   parseLegacyContextStorePayload,
   SELECTION_STORE_KEY,
   SELECTION_STORE_VERSION,
+  SELECTION_STORE_SESSION_CAP,
   LEGACY_CONTEXT_STORE_KEY,
   CONTEXT_STORE_MIGRATION_VERSION,
   __clearSelectionDirtyForTests,
@@ -125,6 +126,7 @@ const resetStore = () => {
     hasHydrated: false,
     contextStoreMigrationVersion: undefined,
     clearedVariantKeys: [],
+    sessionRecency: [],
   });
 };
 
@@ -608,5 +610,192 @@ describe('queued send-config resolution against the canonical store', () => {
       agent: undefined,
       variant: undefined,
     });
+  });
+});
+
+describe('selection-store retention', () => {
+  beforeEach(() => {
+    disk.clear();
+    configState = {};
+    asyncCanonicalReads = false;
+    canonicalReadResolvers = [];
+    canonicalReadRejects = false;
+    legacyReadThrows = false;
+    resetStore();
+    // Reset writes an empty snapshot; drop it so each test seeds explicitly.
+    disk.clear();
+  });
+
+  test('writes beyond the cap evict the least-recently-touched session across all maps', () => {
+    const store = useSelectionStore.getState();
+    store.saveSessionModelSelection('s-old', 'p', 'm-old');
+    store.saveSessionAgentSelection('s-old', 'agent-old');
+    store.saveAgentModelForSession('s-old', 'agent-old', 'p', 'm-old');
+    store.saveAgentModelVariantForSession('s-old', 'agent-old', 'p', 'm-old', 'low');
+    // Agent-only writes leave lastUsedProvider alone, isolating eviction effects.
+    useSelectionStore.setState({ lastUsedProvider: { providerID: 'p', modelID: 'm-old' } });
+
+    for (let i = 0; i < SELECTION_STORE_SESSION_CAP; i += 1) {
+      useSelectionStore.getState().saveSessionAgentSelection(`s-${i}`, 'agent');
+    }
+
+    const state = useSelectionStore.getState();
+    expect(state.sessionAgentSelections.size).toBe(SELECTION_STORE_SESSION_CAP);
+    expect(state.sessionModelSelections.has('s-old')).toBe(false);
+    expect(state.sessionAgentSelections.has('s-old')).toBe(false);
+    expect(state.sessionAgentModelSelections.has('s-old')).toBe(false);
+    expect(state.sessionAgentModelVariantSelections.has('s-old')).toBe(false);
+    expect(state.sessionRecency).toHaveLength(SELECTION_STORE_SESSION_CAP);
+    expect(state.sessionRecency).not.toContain('s-old');
+    expect(state.sessionAgentSelections.get(`s-${SELECTION_STORE_SESSION_CAP - 1}`)).toBe('agent');
+    // Global state survives eviction.
+    expect(state.lastUsedProvider).toEqual({ providerID: 'p', modelID: 'm-old' });
+  });
+
+  test('touching a session refreshes its recency', () => {
+    const store = useSelectionStore.getState();
+    store.saveSessionModelSelection('s-a', 'p', 'm-a');
+    store.saveSessionModelSelection('s-b', 'p', 'm-b');
+    // Re-touch A so B becomes the eviction candidate.
+    useSelectionStore.getState().saveSessionModelSelection('s-a', 'p', 'm-a2');
+    for (let i = 0; i < SELECTION_STORE_SESSION_CAP - 1; i += 1) {
+      useSelectionStore.getState().saveSessionModelSelection(`s-fill-${i}`, 'p', 'm');
+    }
+
+    const state = useSelectionStore.getState();
+    expect(state.sessionModelSelections.size).toBe(SELECTION_STORE_SESSION_CAP);
+    expect(state.sessionModelSelections.get('s-a')).toEqual({ providerId: 'p', modelId: 'm-a2' });
+    expect(state.sessionModelSelections.has('s-b')).toBe(false);
+    expect(state.sessionRecency).not.toContain('s-b');
+    expect(state.sessionRecency[state.sessionRecency.length - 1]).toBe(`s-fill-${SELECTION_STORE_SESSION_CAP - 2}`);
+  });
+
+  test('previous-version payload with more than cap sessions trims to the most recent', async () => {
+    const models: Array<[string, { providerId: string; modelId: string }]> = [];
+    for (let i = 0; i < SELECTION_STORE_SESSION_CAP + 3; i += 1) {
+      const id = `s-${String(i).padStart(4, '0')}`;
+      models.push([id, { providerId: 'p', modelId: `m-${id}` }]);
+    }
+    seedDisk({
+      [SELECTION_STORE_KEY]: { state: {
+        sessionModelSelections: models,
+        sessionAgentSelections: [],
+        sessionAgentModelSelections: [],
+        sessionAgentModelVariantSelections: [],
+        lastUsedProvider: null,
+      }, version: 2 },
+    });
+    await useSelectionStore.persist.rehydrate();
+
+    const state = useSelectionStore.getState();
+    expect(state.sessionModelSelections.size).toBe(SELECTION_STORE_SESSION_CAP);
+    expect(state.sessionModelSelections.has('s-0000')).toBe(false);
+    expect(state.sessionModelSelections.has('s-0002')).toBe(false);
+    expect(state.sessionModelSelections.has('s-0003')).toBe(true);
+    expect(state.sessionRecency).toHaveLength(SELECTION_STORE_SESSION_CAP);
+    expect(state.sessionRecency[0]).toBe('s-0003');
+    expect(state.sessionRecency[state.sessionRecency.length - 1])
+      .toBe(`s-${String(SELECTION_STORE_SESSION_CAP + 2).padStart(4, '0')}`);
+  });
+
+  test('unversioned payload without recency seeds order by insertion and trims to cap', async () => {
+    const models: Array<[string, { providerId: string; modelId: string }]> = [];
+    for (let i = 0; i < SELECTION_STORE_SESSION_CAP + 1; i += 1) {
+      const id = `s-${String(i).padStart(4, '0')}`;
+      models.push([id, { providerId: 'p', modelId: `m-${id}` }]);
+    }
+    // No version field: zustand skips `migrate`, so `merge` seeds + trims.
+    seedDisk({
+      [SELECTION_STORE_KEY]: { state: {
+        sessionModelSelections: models,
+        sessionAgentSelections: [],
+        sessionAgentModelSelections: [],
+        sessionAgentModelVariantSelections: [],
+        lastUsedProvider: null,
+      } },
+    });
+    await useSelectionStore.persist.rehydrate();
+
+    const state = useSelectionStore.getState();
+    expect(state.sessionModelSelections.size).toBe(SELECTION_STORE_SESSION_CAP);
+    expect(state.sessionModelSelections.has('s-0000')).toBe(false);
+    expect(state.sessionRecency).toHaveLength(SELECTION_STORE_SESSION_CAP);
+    expect(state.sessionRecency[0]).toBe('s-0001');
+  });
+
+  test('migration preserves malformed entries so hydration still reports failure', async () => {
+    seedDisk({
+      [SELECTION_STORE_KEY]: { state: {
+        sessionModelSelections: 'oops-not-an-array',
+        sessionAgentSelections: [],
+        sessionAgentModelSelections: [],
+        sessionAgentModelVariantSelections: [],
+        lastUsedProvider: null,
+      }, version: 2 },
+    });
+    await useSelectionStore.persist.rehydrate();
+
+    const state = useSelectionStore.getState();
+    expect(state.hasHydrated).toBe(true);
+    expect(state.sessionModelSelections.size).toBe(0);
+    expect(state.contextStoreMigrationVersion).toBe(undefined);
+  });
+
+  test('forgetSession removes every entry for the session and keeps the rest', () => {
+    const tombstoneS1 = JSON.stringify(['s1', 'agent', 'p/m']);
+    const tombstoneS2 = JSON.stringify(['s2', 'agent', 'p/m']);
+    useSelectionStore.setState({
+      sessionModelSelections: new Map([
+        ['s1', { providerId: 'p', modelId: 'm1' }],
+        ['s2', { providerId: 'p', modelId: 'm2' }],
+      ]),
+      sessionAgentSelections: new Map([['s1', 'agent']]),
+      sessionAgentModelSelections: new Map([['s1', new Map([['agent', { providerId: 'p', modelId: 'm1' }]])]]),
+      sessionAgentModelVariantSelections: new Map([['s1', new Map([['agent', new Map([['p/m1', 'high']])]])]]),
+      lastUsedProvider: { providerID: 'p', modelID: 'm1' },
+      clearedVariantKeys: [tombstoneS1, tombstoneS2],
+      sessionRecency: ['s1', 's2'],
+    });
+
+    useSelectionStore.getState().forgetSession('s1');
+
+    const state = useSelectionStore.getState();
+    expect(state.sessionModelSelections.has('s1')).toBe(false);
+    expect(state.sessionAgentSelections.has('s1')).toBe(false);
+    expect(state.sessionAgentModelSelections.has('s1')).toBe(false);
+    expect(state.sessionAgentModelVariantSelections.has('s1')).toBe(false);
+    expect(state.clearedVariantKeys).toEqual([tombstoneS2]);
+    expect(state.sessionRecency).toEqual(['s2']);
+    // Unrelated sessions and global state are untouched.
+    expect(state.sessionModelSelections.get('s2')).toEqual({ providerId: 'p', modelId: 'm2' });
+    expect(state.lastUsedProvider).toEqual({ providerID: 'p', modelID: 'm1' });
+  });
+
+  test('forgetSession for an unknown session is a no-op without notification', () => {
+    useSelectionStore.getState().saveSessionModelSelection('s1', 'p', 'm1');
+    const before = useSelectionStore.getState();
+    let notifications = 0;
+    const unsubscribe = useSelectionStore.subscribe(() => { notifications += 1; });
+    try {
+      useSelectionStore.getState().forgetSession('missing');
+    } finally {
+      unsubscribe();
+    }
+    expect(useSelectionStore.getState()).toBe(before);
+    expect(notifications).toBe(0);
+  });
+
+  test('under-cap writes preserve references of untouched maps', () => {
+    useSelectionStore.setState({
+      sessionAgentSelections: new Map([['s1', 'agent']]),
+      sessionRecency: ['s1'],
+    });
+    const before = useSelectionStore.getState();
+    useSelectionStore.getState().saveSessionModelSelection('s2', 'p', 'm2');
+    const after = useSelectionStore.getState();
+    expect(after.sessionAgentSelections).toBe(before.sessionAgentSelections);
+    expect(after.sessionAgentModelSelections).toBe(before.sessionAgentModelSelections);
+    expect(after.sessionAgentModelVariantSelections).toBe(before.sessionAgentModelVariantSelections);
+    expect(after.sessionRecency).toEqual(['s1', 's2']);
   });
 });

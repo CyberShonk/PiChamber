@@ -188,6 +188,8 @@ export interface PiSessionDetailResponse extends Pick<
   | 'extensionPanels'
   | 'extensionApps'
   | 'extensionTitle'
+  | 'extensionWorking'
+  | 'extensionDraftTracked'
 > {
   session: PiSession;
   messages: PiMessageView[];
@@ -265,6 +267,7 @@ export type PiSessionMessagePart =
       name: string;
       input?: unknown;
       output?: unknown;
+      render?: PiToolRender;
       isError?: boolean;
       state: 'pending' | 'running' | 'completed' | 'error' | 'cancelled';
       startedAt?: number;
@@ -689,6 +692,8 @@ export type PiEventName =
   | 'extension.dialog.dismiss'
   | 'extension.ui'
   | 'extension.app'
+  | 'extension.working'
+  | 'extension.editor.track'
   | 'extension.error';
 
 /** Common envelope for every public event. */
@@ -809,6 +814,12 @@ export type PiAssistantThinkingDeltaEvent = PiEventEnvelope<
   PiAssistantThinkingDeltaPayload
 >;
 
+export interface PiToolRender {
+  call?: string[];
+  result?: string[];
+  resultExpanded?: string[];
+}
+
 export interface PiToolUpdatePayload {
   toolCallId: string;
   partId: string;
@@ -817,6 +828,8 @@ export interface PiToolUpdatePayload {
   state: 'pending' | 'running' | 'completed' | 'error' | 'cancelled';
   input?: unknown;
   output?: unknown;
+  /** Custom ANSI line rendering for extension tools. */
+  render?: PiToolRender;
   /** Tool error message when the execution ended in an error state. */
   error?: string;
   /** Renderer metadata (edit diffs, truncation notes) without temp paths. */
@@ -934,8 +947,8 @@ export type PiExtensionCatalogEvent = PiEventEnvelope<
   { providers?: true; resources?: true; commands?: true }
 >;
 
-/** Standard Pi RPC editor replacement for the owning session composer. */
-export type PiExtensionEditorEvent = PiEventEnvelope<'extension.editor', { text: string }>;
+/** Standard Pi RPC editor replacement or insertion for the owning session composer. */
+export type PiExtensionEditorEvent = PiEventEnvelope<'extension.editor', { text: string; mode?: 'set' | 'paste' }>;
 
 /** Standard Pi RPC window/tab title; no title clears the session override. */
 export type PiExtensionTitleEvent = PiEventEnvelope<'extension.title', { title?: string }>;
@@ -1038,6 +1051,23 @@ export interface PiExtensionAppPayload {
 
 export type PiExtensionAppEvent = PiEventEnvelope<'extension.app', PiExtensionAppPayload>;
 
+/** Session-scoped working indicator message or visibility set via `ctx.ui.setWorkingMessage` / `setWorkingVisible`. */
+export type PiExtensionWorkingEvent = PiEventEnvelope<
+  'extension.working',
+  {
+    message?: string;
+    visible?: boolean;
+  }
+>;
+
+/** Session-scoped notification that an extension is reading editor text and requires draft tracking. */
+export type PiExtensionEditorTrackEvent = PiEventEnvelope<
+  'extension.editor.track',
+  {
+    enabled: boolean;
+  }
+>;
+
 /** Extensions loaded for a directory plus the slash commands they register. */
 export interface PiExtensionListResponse {
   directory?: string;
@@ -1053,7 +1083,7 @@ export interface PiExtensionListResponse {
 export type PiExtensionErrorEvent = PiEventEnvelope<
   'extension.error',
   {
-    /** Extension path or `<runtime>` source label reported by pi. */
+    /** Path-free extension display name or `<runtime>` source label; server paths are never sent. */
     source: string;
     event?: string;
     message: string;
@@ -1092,6 +1122,8 @@ export type PiSessionEvent =
   | PiExtensionDialogDismissEvent
   | PiExtensionUiEvent
   | PiExtensionAppEvent
+  | PiExtensionWorkingEvent
+  | PiExtensionEditorTrackEvent
   | PiExtensionErrorEvent;
 
 // ---------------------------------------------------------------------------
@@ -1130,6 +1162,8 @@ export const PI_EVENT_KINDS = [
   'extension.dialog.dismiss',
   'extension.ui',
   'extension.app',
+  'extension.working',
+  'extension.editor.track',
   'extension.error',
 ] as const satisfies readonly PiEventName[];
 

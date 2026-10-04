@@ -27,7 +27,7 @@ import { useGitHubPrStatusStore } from '@/stores/useGitHubPrStatusStore';
 import { useGitHubSelectedRepo } from '@/stores/useGitHubScopeStore';
 import { validateCreatePullRequest } from '../github/pulls/pullLogic';
 import { GitHubMarkdownBody } from '../github/GitHubDetailScaffold';
-import { openPullRequestInSurface } from '../github/PullRequestsSurface';
+import { openPullRequestInSurface } from '../github/openPullRequestInSurface';
 import {
   CREATE_PR_MODES,
   clearCreatePrDraft,
@@ -212,7 +212,7 @@ export const CreatePullRequestForm: React.FC<{
         {baseOptions.length > 0 ? (
           <DropdownMenu open={baseMenuOpen} onOpenChange={(open) => { setBaseMenuOpen(open); if (!open) setBaseSearch(''); }} modal={false}>
             <DropdownMenuTrigger asChild>
-              <button type="button" aria-label="Base branch" className={cn(dropdownTriggerVariants({ size: 'sm' }), 'min-w-28 max-w-56')}>
+              <button type="button" aria-label="Base branch" className={cn(dropdownTriggerVariants({ size: 'default' }), 'min-w-28 max-w-56')}>
                 <span className="min-w-0 truncate font-mono">{base || 'Select base'}</span>
                 <Icon name="arrow-down-s" className="size-3.5 shrink-0 opacity-60" />
               </button>
@@ -249,7 +249,7 @@ export const CreatePullRequestForm: React.FC<{
               setBase(event.target.value);
             }}
             aria-label="Base branch"
-            className="h-6 w-40"
+            className="h-8 w-40"
           />
         )}
         <span className="shrink-0" aria-label="receives changes from" title="receives changes from">

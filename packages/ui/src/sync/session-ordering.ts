@@ -139,14 +139,13 @@ export const getSessionLifecycleOrderValue = (
   pinned = false,
 ): number => rankById.get(session.id) ?? baselineRank(session, pinned);
 
-export const compareSessionsByLifecycleOrder = (
+const compareWithPinned = (
   left: Session,
   right: Session,
-  pinnedSessionIds: Set<string>,
+  leftPinned: boolean,
+  rightPinned: boolean,
   rankById: ReadonlyMap<string, number>,
 ): number => {
-  const leftPinned = isSessionPinned(pinnedSessionIds, sessionDirectory(left), left.id);
-  const rightPinned = isSessionPinned(pinnedSessionIds, sessionDirectory(right), right.id);
   if (leftPinned !== rightPinned) return leftPinned ? -1 : 1;
 
   const leftFallback = baselineRank(left, leftPinned);
@@ -162,6 +161,46 @@ export const compareSessionsByLifecycleOrder = (
   const createdDelta = baselineRank(right, true) - baselineRank(left, true);
   if (createdDelta !== 0) return createdDelta;
   return left.id.localeCompare(right.id);
+};
+
+export const compareSessionsByLifecycleOrder = (
+  left: Session,
+  right: Session,
+  pinnedSessionIds: Set<string>,
+  rankById: ReadonlyMap<string, number>,
+): number => compareWithPinned(
+  left,
+  right,
+  isSessionPinned(pinnedSessionIds, sessionDirectory(left), left.id),
+  isSessionPinned(pinnedSessionIds, sessionDirectory(right), right.id),
+  rankById,
+);
+
+/**
+ * Comparator for one sort pass. Same order as `compareSessionsByLifecycleOrder`,
+ * but each session's pinned state (path normalization + pinned-key lookup) is
+ * resolved once per pass instead of on every comparison. Do not reuse the
+ * returned comparator across pin or runtime changes.
+ */
+export const createSessionLifecycleComparator = <T = Session>(
+  pinnedSessionIds: Set<string>,
+  rankById: ReadonlyMap<string, number>,
+  getSession: (item: T) => Session = (item) => item as unknown as Session,
+): ((left: T, right: T) => number) => {
+  const pinnedBySession = new Map<Session, boolean>();
+  const pinnedOf = (session: Session): boolean => {
+    let pinned = pinnedBySession.get(session);
+    if (pinned === undefined) {
+      pinned = isSessionPinned(pinnedSessionIds, sessionDirectory(session), session.id);
+      pinnedBySession.set(session, pinned);
+    }
+    return pinned;
+  };
+  return (leftItem, rightItem) => {
+    const left = getSession(leftItem);
+    const right = getSession(rightItem);
+    return compareWithPinned(left, right, pinnedOf(left), pinnedOf(right), rankById);
+  };
 };
 
 export const orderSessionsByLifecycleScopes = (
@@ -188,9 +227,7 @@ export const orderSessionsByLifecycleScopes = (
     }
   }
 
-  const compare = (left: Session, right: Session) => (
-    compareSessionsByLifecycleOrder(left, right, pinnedSessionIds, rankById)
-  );
+  const compare = createSessionLifecycleComparator(pinnedSessionIds, rankById);
   roots.sort(compare);
   for (const siblings of childrenByParent.values()) {
     siblings.sort(compare);

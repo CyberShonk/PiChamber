@@ -19,6 +19,56 @@ const reactCompilerToggle = (process.env.VITE_REACT_COMPILER ?? '').toLowerCase(
 const enableReactCompiler = reactCompilerToggle === '1' || reactCompilerToggle === 'true' || reactCompilerToggle === 'on' || reactCompilerToggle === 'yes';
 const themeDirectory = path.resolve(__dirname, '../ui/src/lib/theme/themes');
 
+// Rollup's manualChunks module-graph accessors (the subset used here).
+type ChunkGraph = {
+  getModuleIds: () => IterableIterator<string>;
+  getModuleInfo: (id: string) => { importedIds: readonly string[] } | null;
+};
+
+const normalizeModuleId = (id: string): string => id.replace(/\\/g, '/');
+const WORKSPACE_UI_ENTRY = '/packages/ui/src/main.tsx';
+const HTML_ENTRY_SHELLS = ['index.html', 'mobile.html', 'mini-chat.html'].map((name) => normalizeModuleId(path.resolve(__dirname, name)));
+
+// Packages the workspace UI imports statically at boot (reachable from
+// `ui/src/main.tsx` without crossing a dynamic import). Built once per build;
+// reset by `bootVendorGraphPlugin`. Modules the HTML entry shells reach are
+// excluded so the small entry scripts (web, hosted mobile, mini chat) keep
+// their own chunks instead of statically depending on the whole boot chunk.
+let uiBootModules: Set<string> | null = null;
+
+const collectStaticGraph = (graph: ChunkGraph, roots: string[]): Set<string> => {
+  const seen = new Set(roots);
+  const queue = [...roots];
+  while (queue.length > 0) {
+    const current = queue.pop()!;
+    for (const imported of graph.getModuleInfo(current)?.importedIds ?? []) {
+      if (seen.has(imported)) continue;
+      seen.add(imported);
+      queue.push(imported);
+    }
+  }
+  return seen;
+};
+
+const isUiBootModule = (id: string, graph: ChunkGraph): boolean => {
+  if (!uiBootModules) {
+    const ids = [...graph.getModuleIds()];
+    const uiEntry = ids.filter((moduleId) => normalizeModuleId(moduleId).endsWith(WORKSPACE_UI_ENTRY));
+    const shells = ids.filter((moduleId) => HTML_ENTRY_SHELLS.includes(normalizeModuleId(moduleId)));
+    const boot = collectStaticGraph(graph, uiEntry);
+    for (const shellModule of collectStaticGraph(graph, shells)) boot.delete(shellModule);
+    uiBootModules = boot;
+  }
+  return uiBootModules.has(id);
+};
+
+const bootVendorGraphPlugin = () => ({
+  name: 'pichamber-boot-vendor-graph',
+  buildStart() {
+    uiBootModules = null;
+  },
+});
+
 const themeJsonHmrPlugin = () => ({
   name: 'pichamber-theme-json-hmr',
   handleHotUpdate({ file, server }: { file: string; server: { ws: { send: (payload: unknown) => void } } }) {
@@ -75,6 +125,7 @@ export default defineConfig({
     },
     themeStoragePlugin(),
     themeJsonHmrPlugin(),
+    bootVendorGraphPlugin(),
     VitePWA({
       strategies: 'injectManifest',
       srcDir: 'src',
@@ -97,6 +148,15 @@ export default defineConfig({
   ],
   resolve: {
     alias: [
+      // `@pierre/diffs` exposes its patch parser only through the package root,
+      // which also re-exports the Shiki-backed renderer. Tool rows in every
+      // transcript only parse patches, so they import the parser module
+      // directly (dependencies: constants and two string helpers) and Shiki
+      // stays out of the startup graph. Mirrored in the ui/web tsconfig paths.
+      {
+        find: /^@pichamber\/pierre-parse-patch$/,
+        replacement: path.resolve(__dirname, '../ui/node_modules/@pierre/diffs/dist/utils/parsePatchFiles.js'),
+      },
       { find: '@pichamber/ui', replacement: path.resolve(__dirname, '../ui/src') },
       { find: '@web', replacement: path.resolve(__dirname, './src') },
       { find: '@', replacement: path.resolve(__dirname, '../ui/src') },
@@ -112,6 +172,12 @@ export default defineConfig({
   },
   server: {
     port: 5173,
+    // Dev-only: pre-transform the app graph while the server idles. The shared
+    // UI entry is dynamically imported by main.tsx, so it must be listed
+    // explicitly or the first page load compiles ~900 modules on demand.
+    warmup: {
+      clientFiles: ['./src/main.tsx', '../ui/src/main.tsx'],
+    },
     proxy: {
       '/auth': {
         target: `http://127.0.0.1:${process.env.PICHAMBER_PORT || 3001}`,
@@ -144,7 +210,7 @@ export default defineConfig({
       },
       external: ['node:child_process', 'node:fs', 'node:path', 'node:url'],
       output: {
-        manualChunks(id) {
+        manualChunks(id, graph) {
           // Pin Vite's tiny runtime helpers to their own stable chunk. Otherwise
           // Rollup co-locates the `__vitePreload` helper into an arbitrary vendor
           // chunk (e.g. `shiki`), and since every dynamic import pulls the helper,
@@ -189,6 +255,13 @@ export default defineConfig({
             return undefined;
           }
 
+          // Every package the workspace UI needs at boot shares one chunk. Split
+          // per package, the boot graph was ~75 separate vendor requests, which
+          // the browser resolves over at most six HTTP/1.1 connections: ~0.6s
+          // of a cold start at 50ms RTT and ~150ms of a cached reload. Lazy-only
+          // packages keep their per-package chunks below.
+          if (!/\.css(?:$|\?)/.test(id) && isUiBootModule(id, graph)) return 'vendor-boot';
+
           if (packageName === 'react' || packageName === 'react-dom') return 'vendor-react';
           if (packageName === 'zustand' || packageName === 'zustand/middleware') return 'vendor-zustand';
 
@@ -196,6 +269,12 @@ export default defineConfig({
           if (packageName === '@base-ui/react' || packageName.startsWith('@base-ui')) return 'vendor-base-ui';
 
           const sanitized = packageName.replace(/^@/, '').replace(/\//g, '-');
+          // Give package stylesheets their own CSS-only chunk. Sharing the
+          // package's vendor chunk turns a static `import 'pkg/x.css'` into an
+          // import of that whole vendor JS chunk, so the terminal stylesheet
+          // dragged xterm.js into the startup graph even though the emulator
+          // itself is loaded on demand.
+          if (/\.css(?:$|\?)/.test(id)) return `vendor-${sanitized}-css`;
           return `vendor-${sanitized}`;
         },
       },

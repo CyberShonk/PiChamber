@@ -294,10 +294,39 @@ const resolveSshAuthSock = async () => {
   return null;
 };
 
+// Every git operation builds its env, and without SSH_AUTH_SOCK the lookup
+// spawns gpgconf up to three times. Spawning blocks the server event loop for
+// the fork, so memoize the result briefly (re-checking that a cached socket
+// still exists) and share one in-flight lookup across concurrent git calls.
+// A negative result expires too, so an agent started later is picked up.
+const SSH_AUTH_SOCK_CACHE_TTL_MS = 60_000;
+let sshAuthSockCache = null;
+let sshAuthSockInFlight = null;
+
+const resolveSshAuthSockCached = async () => {
+  if (sshAuthSockCache && sshAuthSockCache.expiresAt > Date.now()) {
+    const cached = sshAuthSockCache.value;
+    if (!cached || await isSocketPath(cached)) {
+      return cached;
+    }
+  }
+  if (!sshAuthSockInFlight) {
+    sshAuthSockInFlight = resolveSshAuthSock()
+      .then((value) => {
+        sshAuthSockCache = { value, expiresAt: Date.now() + SSH_AUTH_SOCK_CACHE_TTL_MS };
+        return value;
+      })
+      .finally(() => {
+        sshAuthSockInFlight = null;
+      });
+  }
+  return sshAuthSockInFlight;
+};
+
 const buildGitEnv = async () => {
   const env = { ...process.env };
   if (!env.SSH_AUTH_SOCK || !env.SSH_AUTH_SOCK.trim()) {
-    const resolved = await resolveSshAuthSock();
+    const resolved = await resolveSshAuthSockCached();
     if (resolved) {
       env.SSH_AUTH_SOCK = resolved;
     }

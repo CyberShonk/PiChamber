@@ -8,7 +8,7 @@ import {
 } from '@/lib/pi/event-reducer';
 import type { PiSessionEvent } from '@/lib/pi/protocol';
 
-import { selectStreamingAssistantMessageId, shouldReuseSuspendedRecords, shouldReuseUserHistory } from './suspend-live-tail-records';
+import { selectAwaitingPromptEcho, selectStreamingAssistantMessageId, shouldReuseSuspendedRecords, shouldReuseUserHistory } from './suspend-live-tail-records';
 
 const baseEvent = <T extends PiSessionEvent['name']>(
   name: T,
@@ -46,6 +46,49 @@ const seedBusyAssistant = () => {
   })).state;
   return state;
 };
+
+describe('selectAwaitingPromptEcho', () => {
+  test('true while the echoed user message has not arrived', () => {
+    const state = seedBusyAssistant();
+    const session = sessionOf(state);
+    expect(selectAwaitingPromptEcho({ ...session, awaitingPromptEcho: { baselineUserMessageId: 'u1' } })).toBe(true);
+  });
+
+  test('false once a newer user message is inserted', () => {
+    let state = seedBusyAssistant();
+    const marked: PiReducerSessionState = {
+      ...sessionOf(state),
+      awaitingPromptEcho: { baselineUserMessageId: 'u1' },
+    };
+    expect(selectAwaitingPromptEcho(marked)).toBe(true);
+    state = applyPiEvent(state, baseEvent('assistant.message.start', 3, {
+      messageId: 'u2',
+      role: 'user',
+      startedAt: 3,
+      text: 'next prompt',
+    })).state;
+    expect(selectAwaitingPromptEcho({ ...sessionOf(state), awaitingPromptEcho: marked.awaitingPromptEcho })).toBe(false);
+  });
+
+  test('false when the marker is absent', () => {
+    const state = seedBusyAssistant();
+    expect(selectAwaitingPromptEcho(sessionOf(state))).toBe(false);
+    expect(selectAwaitingPromptEcho(null)).toBe(false);
+    expect(selectAwaitingPromptEcho(undefined)).toBe(false);
+  });
+
+  test('null baseline resolves on the first user message', () => {
+    let state = createReducerState();
+    state = applyPiEvent(state, baseEvent('assistant.message.start', 1, {
+      messageId: 'u1',
+      role: 'user',
+      startedAt: 1,
+      text: 'first prompt',
+    })).state;
+    const before = sessionOf(state);
+    expect(selectAwaitingPromptEcho({ ...before, awaitingPromptEcho: { baselineUserMessageId: null } })).toBe(false);
+  });
+});
 
 describe('shouldReuseSuspendedRecords', () => {
   test('reuses across text and thinking deltas on the suspended message', () => {

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test"
 import { PiService, piClient, createScopedPiClient, PiRequestError, PiSendUnconfirmedError } from "@/lib/pi/client"
 import { getRuntimeKey } from "@/lib/runtime-switch"
-import { fetchPiRuntimeHealth, observePiStreamEpoch } from "./transport"
+import { fetchPiRuntimeHealth, observePiStreamEpoch, resetPiRuntimeHealthCache } from "./transport"
 
 // Mock runtime-fetch to a stub that captures calls. We still need to mock
 // the underlying globalThis.fetch so the client actually issues requests.
@@ -678,7 +678,8 @@ describe("send retry safety", () => {
 })
 
 describe("fetchPiRuntimeHealth", () => {
-  afterEach(() => { globalThis.fetch = originalFetch })
+  beforeEach(() => { resetPiRuntimeHealthCache() })
+  afterEach(() => { globalThis.fetch = originalFetch; resetPiRuntimeHealthCache() })
 
   test("returns ready when the daemon is up", async () => {
     installFetchMock(() => jsonResponse({ state: "ready", protocolVersion: 1, capabilities: [] }))

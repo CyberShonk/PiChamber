@@ -1,4 +1,3 @@
-/* eslint-disable react-refresh/only-export-components -- surface component colocated with its selection-handoff helper by design */
 import React from 'react';
 import type { GitHubPullRequestSummary } from '@/lib/api/types';
 import { GitHubSurfaceShell } from './GitHubSurfaceShell';
@@ -27,6 +26,7 @@ import { PullsList, usePullsRowChecks } from './pulls/PullsList';
 import { filterPullItems } from './githubListFiltering';
 import { useGitHubRemoteSearch } from './useGitHubRemoteSearch';
 import { normalizeDirectoryPathKey } from '@/lib/directoryPathKey';
+import type { GitHubHeaderActionsPresentation } from './GitHubFiltersMenu';
 /**
  * Pull requests rail surface (plan §6.3).
  * Singleton: remounts on switch and restores list filters, selection, and
@@ -38,9 +38,18 @@ export type PullRequestsSurfaceProps = {
    * Files and inline review stay desktop/web surfaces (plan §6.7).
    */
   hideFilesTab?: boolean;
+  /**
+   * Host header slot for the action controls (Refresh; PRs have no primary
+   * action). Only used while the list is shown; the detail route unmounts
+   * the list so the portal unmounts too. Hosts gate the slot by visibility
+   * (terminal `terminalHeaderSlot={isActive ? slot : null}` precedent).
+   */
+  headerActionsSlot?: HTMLElement | null;
+  /** Which header hosts the slot (`desktop` ContextPanel or `drawer` mobile/tablet). */
+  headerActionsPresentation?: GitHubHeaderActionsPresentation;
 };
 
-export const PullRequestsSurface: React.FC<PullRequestsSurfaceProps> = ({ hideFilesTab = false }) => {
+export const PullRequestsSurface: React.FC<PullRequestsSurfaceProps> = ({ hideFilesTab = false, headerActionsSlot = null, headerActionsPresentation = 'drawer' }) => {
   const directory = useEffectiveDirectory() ?? '';
   if (!directory) {
     return (
@@ -49,10 +58,10 @@ export const PullRequestsSurface: React.FC<PullRequestsSurfaceProps> = ({ hideFi
       </div>
     );
   }
-  return <PullRequestsSurfaceBody directory={directory} hideFilesTab={hideFilesTab} />;
+  return <PullRequestsSurfaceBody directory={directory} hideFilesTab={hideFilesTab} headerActionsSlot={headerActionsSlot} headerActionsPresentation={headerActionsPresentation} />;
 };
 
-const PullRequestsSurfaceBody: React.FC<{ directory: string; hideFilesTab: boolean }> = ({ directory, hideFilesTab }) => {
+const PullRequestsSurfaceBody: React.FC<{ directory: string; hideFilesTab: boolean; headerActionsSlot?: HTMLElement | null; headerActionsPresentation?: GitHubHeaderActionsPresentation }> = ({ directory, hideFilesTab, headerActionsSlot = null, headerActionsPresentation = 'drawer' }) => {
   const apis = useRuntimeAPIs();
   const github = apis.github ?? null;
   const [refreshing, setRefreshing] = React.useState(false);
@@ -82,6 +91,8 @@ const PullRequestsSurfaceBody: React.FC<{ directory: string; hideFilesTab: boole
           setLoadingMore={setLoadingMore}
           refreshRef={refreshRef}
           hideFilesTab={hideFilesTab}
+          headerActionsSlot={headerActionsSlot}
+          headerActionsPresentation={headerActionsPresentation}
         />
       )}
     </GitHubSurfaceShell>
@@ -98,7 +109,9 @@ const PullsContent: React.FC<{
   setLoadingMore: (value: boolean) => void;
   refreshRef: React.MutableRefObject<(() => void) | null>;
   hideFilesTab: boolean;
-}> = ({ directory, repo, github, refreshing, setRefreshing, loadingMore, setLoadingMore, refreshRef, hideFilesTab }) => {
+  headerActionsSlot?: HTMLElement | null;
+  headerActionsPresentation?: GitHubHeaderActionsPresentation;
+}> = ({ directory, repo, github, refreshing, setRefreshing, loadingMore, setLoadingMore, refreshRef, hideFilesTab, headerActionsSlot = null, headerActionsPresentation = 'drawer' }) => {
   const ensureCollectionsFresh = useGitHubPullRequestsStore((state) => state.ensureCollectionsFresh);
   const searchRemote = useGitHubPullRequestsStore((state) => state.searchRemote);
   const loadMoreRemote = useGitHubPullRequestsStore((state) => state.loadMoreRemote);
@@ -282,10 +295,15 @@ const PullsContent: React.FC<{
 
   // A failed read with data keeps the rows plus the stale banner, never an
   // empty list. Skeleton shows only on true first load (handled in the list
-  // from empty rows + loading, with the toolbar staying mounted).
+  // from empty rows + loading, with the toolbar staying mounted). This is
+  // the list branch: the detail branch above unmounts the list, so the
+  // header portal unmounts with it and the header never shows list filters
+  // for a detail view.
   return (
     <PullsList
       items={items}
+      headerActionsSlot={headerActionsSlot}
+      headerActionsPresentation={headerActionsPresentation}
       hasMore={relevantEntries.some((entry) => entry?.data?.nextCursor != null)}
       isLoadingMore={loadingMore}
       isLoading={relevantLoading}
@@ -414,18 +432,4 @@ const PullDetailLoader: React.FC<{
       onOpenFilesAtLine={openFilesAtLine}
     />
   );
-};
-
-export const openPullRequestInSurface = (directory: string, repo: string, number: number): void => {
-  // Selection handoff for the Git chip / sidebar badges: persist which PR the
-  // Pull requests surface should show, then open the surface. The surface
-  // reads this selection on mount.
-  useGitHubPullRequestsStore.getState().selectPullRequest(directory, repo, number);
-  const dirKey = normalizeDirectoryPathKey(directory);
-  void import('@/stores/useUIStore').then(({ useUIStore }) => {
-    useUIStore.getState().openContextSurface(dirKey, 'pull-requests');
-  }).catch(() => {});
-  void import('@/stores/useGitHubScopeStore').then(({ useGitHubScopeStore }) => {
-    useGitHubScopeStore.getState().setSelectedRepo(directory, repo);
-  }).catch(() => {});
 };

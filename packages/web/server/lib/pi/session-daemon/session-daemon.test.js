@@ -68,7 +68,7 @@ class FakeSession {
 
   async prompt(text, options) {
     this.promptCalls.push({ text, options });
-    options?.preflightResult?.(true);
+    options?.preflightResult?.('started');
     const deliverAs = options?.streamingBehavior;
     this.sent.push({ text, options: deliverAs ? { deliverAs } : undefined });
   }
@@ -2202,6 +2202,7 @@ describe('Pi session daemon spike', () => {
     const toolStart = frames.find((frame) => frame.event === 'session.tool.start');
     expect(JSON.stringify(toolStart.payload)).not.toContain('pi-clipboard-');
     expect(toolStart.payload.input).toEqual({ path: '[attachment]' });
+    expect(toolStart.payload.render).toBeUndefined();
     const toolUpdate = frames.find((frame) => frame.event === 'session.tool.update');
     expect(toolUpdate.payload.output).toContain('[attachment]');
     expect(toolUpdate.payload.output).not.toContain('pi-clipboard-');
@@ -2210,6 +2211,223 @@ describe('Pi session daemon spike', () => {
     expect(toolEnd.payload.output).not.toContain('pi-clipboard-');
     expect(toolEnd.payload.metadata).toEqual({ truncation: { truncated: true } });
     expect(toolEnd.payload.endedAt).toBeTypeOf('number');
+    expect(toolEnd.payload.render).toBeUndefined();
+    await client.close();
+  });
+
+  it('renders extension tools with renderCall and renderResult on live events and settles history', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'pichamber-pi-daemon-extension-tool-'));
+    const endpoint = testDaemonEndpoint(root);
+    const session = new FakeSession('pi-session-ext-tool');
+    const customToolDef = {
+      renderCall: (args) => ({
+        render: () => [`custom_call:${args.target}`],
+      }),
+      renderResult: (result, { expanded }) => ({
+        render: () => [`custom_result:${result.content?.[0]?.text}:${expanded}`],
+      }),
+    };
+    session.extensionRunner = {
+      getToolDefinition: (name) => (name === 'custom_tool' ? customToolDef : undefined),
+    };
+
+    daemon = createSessionDaemon({ endpoint, credential, cwd: root, createRuntime: async () => ({ session, async dispose() {} }) });
+    await daemon.start();
+    const client = connectClient(endpoint);
+    await client.authenticate();
+    await client.request('sessions.create', { cwd: root });
+
+    const startEventPromise = client.next((frame) => frame.event === 'session.tool.start');
+    const immediateUpdatePromise = client.next((frame) => frame.event === 'session.tool.update');
+    const trailingUpdatePromise = client.next((frame) => frame.event === 'session.tool.update' && frame.payload.render !== undefined);
+    const endEventPromise = client.next((frame) => frame.event === 'session.tool.end');
+
+    session.emit({
+      type: 'tool_execution_start',
+      toolCallId: 'call-1',
+      toolName: 'custom_tool',
+      args: { target: 'alpha' },
+    });
+
+    const startFrame = await startEventPromise;
+    expect(startFrame.payload.render).toEqual({
+      call: ['custom_call:alpha'],
+    });
+
+    // Emitting update immediately (< 250ms after start) is throttled: immediate frame omits render
+    session.emit({
+      type: 'tool_execution_update',
+      toolCallId: 'call-1',
+      toolName: 'custom_tool',
+      args: { target: 'alpha' },
+      partialResult: { content: [{ type: 'text', text: 'part-1' }] },
+    });
+
+    const immediateUpdate = await immediateUpdatePromise;
+    expect(immediateUpdate.payload.render).toBeUndefined();
+
+    // Trailing update arrives with render
+    const trailingUpdate = await trailingUpdatePromise;
+    expect(trailingUpdate.payload.render).toEqual({
+      call: ['custom_call:alpha'],
+      result: ['custom_result:part-1:false'],
+      resultExpanded: ['custom_result:part-1:true'],
+    });
+
+    // A client opening the session mid-run receives the latest live render.
+    session.isStreaming = true;
+    session.entries = [
+      { type: 'message', id: 'user-1', timestamp: '2026-01-01T00:00:00.000Z', message: { role: 'user', content: 'run tool' } },
+      {
+        type: 'message',
+        id: 'assistant-1',
+        timestamp: '2026-01-01T00:00:01.000Z',
+        message: {
+          role: 'assistant',
+          provider: 'test',
+          model: 'model',
+          content: [{ type: 'toolCall', id: 'call-1', name: 'custom_tool', arguments: { target: 'alpha' } }],
+        },
+      },
+    ];
+    const midRun = await client.request('sessions.open', { sessionId: 'pi-session-ext-tool', directory: root });
+    const runningPart = midRun.result.messages
+      .flatMap((entry) => entry.parts)
+      .find((part) => part.type === 'tool');
+    expect(runningPart.state).toBe('running');
+    expect(runningPart.render).toEqual({
+      call: ['custom_call:alpha'],
+      result: ['custom_result:part-1:false'],
+      resultExpanded: ['custom_result:part-1:true'],
+    });
+    session.isStreaming = false;
+
+    session.emit({
+      type: 'tool_execution_end',
+      toolCallId: 'call-1',
+      toolName: 'custom_tool',
+      args: { target: 'alpha' },
+      result: { content: [{ type: 'text', text: 'final-1' }] },
+      isError: false,
+    });
+
+    const endFrame = await endEventPromise;
+    expect(endFrame.payload.render).toEqual({
+      call: ['custom_call:alpha'],
+      result: ['custom_result:final-1:false'],
+      resultExpanded: ['custom_result:final-1:true'],
+    });
+
+    // Test history projection
+    session.entries = [
+      {
+        type: 'message',
+        id: 'user-1',
+        timestamp: '2026-01-01T00:00:00.000Z',
+        message: { role: 'user', content: 'run tool' },
+      },
+      {
+        type: 'message',
+        id: 'assistant-1',
+        timestamp: '2026-01-01T00:00:01.000Z',
+        message: {
+          role: 'assistant',
+          provider: 'test',
+          model: 'model',
+          content: [
+            { type: 'toolCall', id: 'call-1', name: 'custom_tool', arguments: { target: 'alpha' } },
+          ],
+        },
+      },
+      {
+        type: 'message',
+        id: 'result-1',
+        timestamp: '2026-01-01T00:00:02.000Z',
+        message: {
+          role: 'toolResult',
+          toolCallId: 'call-1',
+          content: [{ type: 'text', text: 'final-1' }],
+          isError: false,
+        },
+      },
+    ];
+
+    const openResult = await client.request('sessions.open', { sessionId: 'pi-session-ext-tool', directory: root });
+    const assistantMsg = openResult.result.messages.find((m) => m.message.role === 'assistant');
+    const toolPart = assistantMsg.parts.find((p) => p.type === 'tool');
+    expect(toolPart.render).toEqual({
+      call: ['custom_call:alpha'],
+      result: ['custom_result:final-1:false'],
+      resultExpanded: ['custom_result:final-1:true'],
+    });
+
+    await client.close();
+  });
+
+  it('renders settled extension tools only for the selected history page', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'pichamber-pi-daemon-extension-tool-page-'));
+    const endpoint = testDaemonEndpoint(root);
+    const session = new FakeSession('pi-session-ext-tool-page');
+    const renderedResults = new Set();
+    const customToolDef = {
+      renderCall: (args) => ({ render: () => [`call:${args.n}`] }),
+      renderResult: (result) => {
+        renderedResults.add(result.content?.[0]?.text);
+        return { render: () => [`result:${result.content?.[0]?.text}`] };
+      },
+    };
+    session.extensionRunner = {
+      getToolDefinition: (name) => (name === 'custom_tool' ? customToolDef : undefined),
+    };
+    const toolCount = 200;
+    const historyEntries = [
+      { type: 'message', id: 'user-0', timestamp: '2026-01-01T00:00:00.000Z', message: { role: 'user', content: 'go' } },
+      ...Array.from({ length: toolCount }, (_, n) => [
+        {
+          type: 'message',
+          id: `assistant-${n}`,
+          timestamp: '2026-01-01T00:00:01.000Z',
+          message: {
+            role: 'assistant',
+            provider: 'test',
+            model: 'model',
+            content: [{ type: 'toolCall', id: `call-${n}`, name: 'custom_tool', arguments: { n } }],
+          },
+        },
+        {
+          type: 'message',
+          id: `result-${n}`,
+          timestamp: '2026-01-01T00:00:02.000Z',
+          message: { role: 'toolResult', toolCallId: `call-${n}`, content: [{ type: 'text', text: `r${n}` }], isError: false },
+        },
+      ]).flat(),
+    ];
+
+    daemon = createSessionDaemon({ endpoint, credential, cwd: root, createRuntime: async () => ({ session, async dispose() {} }) });
+    await daemon.start();
+    const client = connectClient(endpoint);
+    await client.authenticate();
+    await client.request('sessions.create', { cwd: root });
+    session.entries = historyEntries;
+
+    const opened = (await client.request('sessions.open', { sessionId: 'pi-session-ext-tool-page', directory: root })).result;
+    const pageTools = opened.messages.flatMap((entry) => entry.parts).filter((part) => part.type === 'tool');
+    expect(pageTools.length).toBeGreaterThan(0);
+    expect(pageTools.length).toBeLessThan(toolCount);
+    expect(pageTools.every((part) => part.render?.result?.[0] === `result:r${part.input.n}`)).toBe(true);
+    // Only the selected tail (plus at most the one boundary candidate) ran extension renderers.
+    expect(renderedResults.size).toBeLessThanOrEqual(pageTools.length + 1);
+    expect(renderedResults.has('r0')).toBe(false);
+
+    const older = (await client.request('sessions.messages', {
+      sessionId: 'pi-session-ext-tool-page',
+      directory: root,
+      before: opened.beforeCursor,
+    })).result;
+    const olderTools = older.messages.flatMap((entry) => entry.parts).filter((part) => part.type === 'tool');
+    expect(olderTools.length).toBeGreaterThan(0);
+    expect(olderTools.every((part) => Array.isArray(part.render?.result))).toBe(true);
+
     await client.close();
   });
 
@@ -2372,6 +2590,54 @@ describe('Pi session daemon spike', () => {
     await expect(recoveredDeltaPromise).resolves.toMatchObject({ payload: { delta: 'Recovered from tool failure' } });
     expect(messageStart.payload.parentId).toBe(userStart.payload.messageId);
     expect(recoveredStart.payload.parentId).toBe(userStart.payload.messageId);
+    session.emit({ type: 'agent_settled' });
+    await client.close();
+  });
+
+  it('skips publishing tool execution events for nested tool calls carrying parentToolCallId', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'pichamber-pi-daemon-nested-tool-'));
+    const endpoint = testDaemonEndpoint(root);
+    const session = new FakeSession('pi-session-nested-tool');
+    daemon = createSessionDaemon({ endpoint, credential, cwd: root, createRuntime: async () => ({ session, async dispose() {} }) });
+    await daemon.start();
+    const client = connectClient(endpoint);
+    await client.authenticate();
+    await client.request('sessions.create', { cwd: root });
+
+    const parentToolStartPromise = client.next((frame) => frame.event === 'session.tool.start' && frame.payload?.partId?.includes('parent-call'));
+    const parentToolEndPromise = client.next((frame) => frame.event === 'session.tool.end' && frame.payload?.partId?.includes('parent-call'));
+    const unexpectedNestedEvent = client.next((frame) =>
+      (frame.event === 'session.tool.start' || frame.event === 'session.tool.delta' || frame.event === 'session.tool.end')
+      && frame.payload?.partId?.includes('nested-call'),
+    );
+
+    session.emit({ type: 'message_start', message: { role: 'user', content: 'run tool', timestamp: 0 } });
+    session.emit({ type: 'message_start', message: { role: 'assistant', timestamp: 1 } });
+    session.emit({
+      type: 'message_end',
+      message: {
+        role: 'assistant',
+        content: [
+          { type: 'toolCall', id: 'parent-call', name: 'parent_tool', arguments: {} },
+        ],
+      },
+    });
+
+    // Parent tool starts
+    session.emit({ type: 'tool_execution_start', toolCallId: 'parent-call', toolName: 'parent_tool', args: {} });
+
+    // Nested tool events with parentToolCallId
+    session.emit({ type: 'tool_execution_start', toolCallId: 'nested-call', parentToolCallId: 'parent-call', toolName: 'nested_tool', args: {} });
+    session.emit({ type: 'tool_execution_update', toolCallId: 'nested-call', parentToolCallId: 'parent-call', toolName: 'nested_tool', delta: 'nested output' });
+    session.emit({ type: 'tool_execution_end', toolCallId: 'nested-call', parentToolCallId: 'parent-call', toolName: 'nested_tool', result: { content: [{ type: 'text', text: 'nested done' }] } });
+
+    // Parent tool ends
+    session.emit({ type: 'tool_execution_end', toolCallId: 'parent-call', toolName: 'parent_tool', result: { content: [{ type: 'text', text: 'parent done' }] } });
+
+    await expect(parentToolStartPromise).resolves.toBeDefined();
+    await expect(parentToolEndPromise).resolves.toBeDefined();
+    await expect(unexpectedNestedEvent).rejects.toThrow(/Timed out/);
+
     session.emit({ type: 'agent_settled' });
     await client.close();
   });
@@ -2599,7 +2865,7 @@ describe('Pi session daemon spike', () => {
     let finishTurn;
     session.prompt = (text, options) => {
       session.promptCalls.push({ text, options });
-      options?.preflightResult?.(true);
+      options?.preflightResult?.('started');
       const deliverAs = options?.streamingBehavior;
       session.sent.push({ text, options: deliverAs ? { deliverAs } : undefined });
       return new Promise((resolve) => {
@@ -2642,7 +2908,7 @@ describe('Pi session daemon spike', () => {
     const finishSends = [];
     session.prompt = (text, options) => {
       session.promptCalls.push({ text, options });
-      options?.preflightResult?.(true);
+      options?.preflightResult?.('started');
       const deliverAs = options?.streamingBehavior;
       session.sent.push({ text, options: deliverAs ? { deliverAs } : undefined });
       return new Promise((resolve) => finishSends.push(resolve));
@@ -2750,7 +3016,7 @@ describe('Pi session daemon spike', () => {
     let sendCount = 0;
     session.prompt = (text, options) => {
       session.promptCalls.push({ text, options });
-      options?.preflightResult?.(true);
+      options?.preflightResult?.('started');
       session.sent.push({ text, options: options?.streamingBehavior ? { deliverAs: options.streamingBehavior } : undefined });
       sendCount += 1;
       if (sendCount === 1) return new Promise((_, reject) => { rejectFirst = reject; });
@@ -2785,7 +3051,7 @@ describe('Pi session daemon spike', () => {
     const session = new FakeSession('session-1', sessionFile);
     session.prompt = (text, options) => {
       session.promptCalls.push({ text, options });
-      options?.preflightResult?.(true);
+      options?.preflightResult?.('started');
       session.sent.push({ text, options: options?.streamingBehavior ? { deliverAs: options.streamingBehavior } : undefined });
       session.isStreaming = true;
       return Promise.reject(new Error('Stream ended without finish_reason'));

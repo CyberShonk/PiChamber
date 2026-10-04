@@ -289,11 +289,17 @@ export function ThemeSystemProvider({ children, defaultThemeId }: ThemeSystemPro
     metaThemeColorMedia.setAttribute('content', chromeColor);
   }, []);
 
+  const hasAppliedThemeRef = useRef(false);
   useIsomorphicLayoutEffect(() => {
     if (typeof window === 'undefined') {
       return;
     }
-    const restoreTransitions = suppressTransitionsForThemeSwitch();
+    // Only a real switch needs transitions suppressed. On the first
+    // application the app's elements were just inserted and have no prior
+    // computed style, so nothing can transition; toggling the root class there
+    // only forces two extra full-tree style recalculations during startup.
+    const restoreTransitions = hasAppliedThemeRef.current ? suppressTransitionsForThemeSwitch() : undefined;
+    hasAppliedThemeRef.current = true;
     cssGenerator.apply(currentTheme);
     updateBrowserChrome(currentTheme);
 

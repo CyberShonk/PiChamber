@@ -17,15 +17,23 @@ import { getRuntimeKey } from '../runtime-switch';
 import {
   API_BASE,
   GIT_STATUS_CACHE_TTL_MS,
-  GIT_REPO_CHECK_CACHE_TTL_MS,
+  GIT_REPO_CHECK_POSITIVE_TTL_MS,
+  GIT_REPO_CHECK_NEGATIVE_TTL_MS,
+  GIT_WORKTREES_CACHE_TTL_MS,
   gitStatusCache,
   gitStatusInFlight,
   gitRepoCache,
   gitRepoInFlight,
+  gitWorktreesCache,
+  gitWorktreesInFlight,
   getDirectoryCacheKey,
   getStatusCacheKey,
   getStatusCacheVersion,
+  getRepoCheckCacheVersion,
+  getWorktreesCacheVersion,
   invalidateGitStatusCache,
+  invalidateGitRepoCheckCache,
+  invalidateGitWorktreesCache,
   buildUrl,
 } from './gitHttpHelpers';
 
@@ -43,16 +51,21 @@ export async function checkIsGitRepository(directory: string): Promise<boolean> 
   }
 
   const task = (async () => {
+    const cacheVersion = getRepoCheckCacheVersion(key);
     const response = await runtimeFetch(buildUrl(`${API_BASE}/check`, directory));
     if (!response.ok) {
       throw new Error(`Failed to check git repository: ${response.statusText}`);
     }
     const data = await response.json();
     const isGitRepository = Boolean(data.isGitRepository);
-    gitRepoCache.set(key, {
-      value: isGitRepository,
-      expiresAt: Date.now() + GIT_REPO_CHECK_CACHE_TTL_MS,
-    });
+    // Failures throw above and are never cached; a thrown `response.json()`
+    // likewise leaves no entry, so failure never becomes "not a repo".
+    if (getRepoCheckCacheVersion(key) === cacheVersion) {
+      gitRepoCache.set(key, {
+        value: isGitRepository,
+        expiresAt: Date.now() + (isGitRepository ? GIT_REPO_CHECK_POSITIVE_TTL_MS : GIT_REPO_CHECK_NEGATIVE_TTL_MS),
+      });
+    }
     return isGitRepository;
   })();
 
@@ -113,11 +126,44 @@ const readGitError = async (response: Response, fallback: string): Promise<Error
 };
 
 export async function listGitWorktrees(directory: string): Promise<GitWorktree[]> {
-  const response = await runtimeFetch(buildUrl(`${API_BASE}/worktrees`, directory));
-  if (!response.ok) throw await readGitError(response, 'Failed to list git worktrees');
-  const payload = await response.json() as { worktrees?: GitWorktree[] };
-  if (!Array.isArray(payload.worktrees)) throw new Error('Git worktree response is invalid');
-  return payload.worktrees;
+  const key = getDirectoryCacheKey(getRuntimeKey(), directory);
+  const now = Date.now();
+  const cached = gitWorktreesCache.get(key);
+  if (cached && cached.expiresAt > now) {
+    return cached.value;
+  }
+
+  const inFlight = gitWorktreesInFlight.get(key);
+  if (inFlight) {
+    return inFlight;
+  }
+
+  const task = (async () => {
+    const cacheVersion = getWorktreesCacheVersion(key);
+    const response = await runtimeFetch(buildUrl(`${API_BASE}/worktrees`, directory));
+    if (!response.ok) throw await readGitError(response, 'Failed to list git worktrees');
+    const payload = await response.json() as { worktrees?: GitWorktree[] };
+    if (!Array.isArray(payload.worktrees)) throw new Error('Git worktree response is invalid');
+    // Failure throws above and is never cached as an empty topology.
+    // A listing that raced a create/delete returns its topology to its own
+    // caller but must not cache it past the mutation's invalidation.
+    if (getWorktreesCacheVersion(key) === cacheVersion) {
+      gitWorktreesCache.set(key, {
+        value: payload.worktrees,
+        expiresAt: Date.now() + GIT_WORKTREES_CACHE_TTL_MS,
+      });
+    }
+    return payload.worktrees;
+  })();
+
+  gitWorktreesInFlight.set(key, task);
+  try {
+    return await task;
+  } finally {
+    if (gitWorktreesInFlight.get(key) === task) {
+      gitWorktreesInFlight.delete(key);
+    }
+  }
 }
 
 export async function validateGitWorktree(
@@ -144,6 +190,8 @@ export async function createGitWorktree(
   });
   if (!response.ok) throw await readGitError(response, 'Failed to create git worktree');
   invalidateGitStatusCache(directory);
+  invalidateGitWorktreesCache(directory);
+  invalidateGitRepoCheckCache(directory);
   return response.json();
 }
 
@@ -159,6 +207,10 @@ export async function deleteGitWorktree(
   if (!response.ok) throw await readGitError(response, 'Failed to close git worktree');
   invalidateGitStatusCache(directory);
   invalidateGitStatusCache(input.directory);
+  invalidateGitWorktreesCache(directory);
+  invalidateGitWorktreesCache(input.directory);
+  invalidateGitRepoCheckCache(directory);
+  invalidateGitRepoCheckCache(input.directory);
   return response.json();
 }
 

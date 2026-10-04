@@ -18,20 +18,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Radio } from '@/components/ui/radio';
 import { reportSettingsSaveState } from '@/lib/persistence';
 import { runtimeFetch } from '@/lib/runtime-fetch';
-
-interface ModelStatus {
-  id: string;
-  description: string;
-  sizeBytes: number;
-  installed: boolean;
-  corrupt: boolean;
-  downloading: boolean;
-  downloadProgress: number | null;
-  downloadError: string | null;
-}
-interface PublicProvider { id: string; label: string; baseUrl: string; model: string; apiKeyConfigured: boolean }
-interface SttConfig { enabled: boolean; providerConfigId: string; language: string; localModelId: string; providers: PublicProvider[] }
-interface SttStatus { config: SttConfig; models: ModelStatus[] }
+import { fetchSttStatus, type SttStatus, type SttConfigState as SttConfig } from '@/lib/dictation/stt-status';
 
 const REMOTE_ID = 'openai-compatible';
 const megabytes = (bytes: number): string => `${Math.round(bytes / 1024 / 1024)} MB`;
@@ -45,10 +32,12 @@ export function DictationSettings() {
   const [busyModel, setBusyModel] = React.useState<string | null>(null);
   const [savingRemote, setSavingRemote] = React.useState(false);
 
-  const refresh = React.useCallback(async () => {
-    const response = await runtimeFetch('/api/stt/status');
-    if (!response.ok) throw new Error('Could not load dictation settings');
-    const next = await response.json() as SttStatus;
+  const refresh = React.useCallback(async (options?: { fresh?: boolean }) => {
+    // Mount and background reads share the runtime-scoped status memo.
+    // Post-action refreshes and the download-progress poll pass
+    // `{ fresh: true }` so they observe the server's current state.
+    const next = await fetchSttStatus(options);
+    setStatus(next);
     setStatus(next);
     setLoadError(null);
     const remote = next.config.providers.find((entry) => entry.id === REMOTE_ID);
@@ -61,7 +50,7 @@ export function DictationSettings() {
   React.useEffect(() => { void refresh().catch((error) => setLoadError(error.message)); }, [refresh]);
   React.useEffect(() => {
     if (!status?.models.some((model) => model.downloading)) return;
-    const timer = window.setInterval(() => void refresh().catch(() => {}), 1500);
+    const timer = window.setInterval(() => void refresh({ fresh: true }).catch(() => {}), 1500);
     return () => window.clearInterval(timer);
   }, [refresh, status?.models]);
 
@@ -85,7 +74,7 @@ export function DictationSettings() {
       const suffix = method === 'POST' ? '/download' : '';
       const response = await runtimeFetch(`/api/stt/models/${encodeURIComponent(modelId)}${suffix}`, { method });
       if (!response.ok) throw new Error((await response.json().catch(() => null))?.error || 'Model action failed');
-      await refresh();
+      await refresh({ fresh: true });
     } catch (error) { setLoadError(error instanceof Error ? error.message : String(error)); }
     finally { setBusyModel(null); }
   };

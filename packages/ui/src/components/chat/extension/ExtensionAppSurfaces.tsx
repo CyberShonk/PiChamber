@@ -1,10 +1,8 @@
 import * as React from 'react';
 
-import { usePiSessionSnapshot } from '@/sync/pi-session-context';
 import { getPiSessionStore } from '@/apps/pi-session-store';
 import { parseExtensionAppCommand } from '@/lib/pi/extension-app-command';
 import { Button } from '@/components/ui/button';
-import { Icon } from '@/components/icon/Icon';
 
 /**
  * Sandboxed extension app surfaces (`pichamber.app` entries).
@@ -44,7 +42,7 @@ const buildSandboxedDocument = (html: string, appId: string, token: string): str
   return `${html}${bridge}`;
 };
 
-const ExtensionAppFrame: React.FC<{
+export const ExtensionAppFrame: React.FC<{
   sessionId: string;
   appId: string;
   title?: string;
@@ -77,18 +75,13 @@ const ExtensionAppFrame: React.FC<{
 
   return (
     <div
-      className="overflow-hidden rounded-xl border border-border/60 bg-card shadow-sm transition-[opacity,transform] duration-150"
+      className="overflow-hidden rounded-md border border-border/60 bg-background"
       data-testid={`extension-app-${appId}`}
     >
-      <div className="flex items-center justify-between gap-2 border-b border-border/40 bg-muted/40 px-3 py-2">
-        <div className="flex min-w-0 items-center gap-2">
-          <span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-interactive-hover text-muted-foreground">
-            <Icon name="plug-2" className="size-3.5" />
-          </span>
-          <span className="truncate typography-ui-label font-medium text-foreground">
-            {title ?? appId}
-          </span>
-        </div>
+      <div className="flex items-center justify-between gap-2 border-b border-border/60 px-2 py-1">
+        <span className="min-w-0 truncate typography-ui-label text-foreground" title={title ?? appId}>
+          {title ?? appId}
+        </span>
         <Button variant="ghost" size="xs" onClick={() => setHidden(true)} aria-label="Hide app surface">
           Hide
         </Button>
@@ -101,48 +94,6 @@ const ExtensionAppFrame: React.FC<{
         className="w-full border-0 bg-background"
         style={{ height: MAX_APP_HEIGHT_PX }}
       />
-    </div>
-  );
-};
-
-/** Renders every registered app surface for the session above the composer. */
-export const ExtensionAppSurfaces: React.FC<{ sessionId?: string | null }> = ({ sessionId }) => {
-  const selectedSessionId = usePiSessionSnapshot((state) => state.selectedSessionId);
-  const activeSessionId = sessionId ?? selectedSessionId;
-
-  const apps = usePiSessionSnapshot(
-    (state) => (
-      activeSessionId
-        ? [...(state.reducer.bySession.get(activeSessionId)?.extensionApps.values() ?? [])]
-        : []
-    ),
-    (a, b) => (
-      a.length === b.length && a.every((app, index) => {
-        const other = b[index];
-        return Boolean(other)
-          && app.appId === other?.appId
-          && app.title === other.title
-          && app.html === other.html;
-      })
-    ),
-    `session:${activeSessionId ?? ''}`,
-  );
-
-  if (!activeSessionId || apps.length === 0) return null;
-
-  return (
-    <div className="chat-input-column" data-testid="extension-app-surfaces">
-      <div className="flex flex-col gap-3">
-        {apps.map((app) => (
-          <ExtensionAppFrame
-            key={app.appId}
-            sessionId={activeSessionId}
-            appId={app.appId}
-            title={app.title}
-            html={app.html ?? ''}
-          />
-        ))}
-      </div>
     </div>
   );
 };

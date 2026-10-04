@@ -33,6 +33,8 @@ export type ChatViewportProps = {
   isLoadingOlder: boolean;
   sessionIsWorking: boolean;
   sessionAwaitingRecovery: boolean;
+  /** Plain prompt send still waiting for the server user-message echo. */
+  awaitingPromptEcho: boolean;
   streamingMessageId: string | null;
   activeStreamingPhase: StreamPhase | null;
   retryOverlay: {
@@ -75,6 +77,7 @@ export const ChatViewport = React.memo(
     isLoadingOlder,
     sessionIsWorking,
     sessionAwaitingRecovery,
+    awaitingPromptEcho,
     streamingMessageId,
     activeStreamingPhase,
     retryOverlay,
@@ -242,6 +245,7 @@ export const ChatViewport = React.memo(
                 messages={renderedMessages}
                 sessionIsWorking={sessionIsWorking}
                 sessionAwaitingRecovery={sessionAwaitingRecovery}
+                awaitingPromptEcho={awaitingPromptEcho}
                 activeStreamingMessageId={streamingMessageId}
                 activeStreamingPhase={activeStreamingPhase}
                 retryOverlay={retryOverlay}
@@ -322,6 +326,7 @@ export const ChatViewport = React.memo(
       prev.isLoadingOlder === next.isLoadingOlder &&
       prev.sessionIsWorking === next.sessionIsWorking &&
       prev.sessionAwaitingRecovery === next.sessionAwaitingRecovery &&
+      prev.awaitingPromptEcho === next.awaitingPromptEcho &&
       prev.streamingMessageId === next.streamingMessageId &&
       prev.activeStreamingPhase === next.activeStreamingPhase &&
       prev.retryOverlay === next.retryOverlay &&

@@ -324,6 +324,64 @@ div[data-chat-input-footer="true"] {
   );
 }
 
+/* By-folder sticky folder header. Sticky offsets resolve inside the scroller's
+   top padding, so the header paints a cover over that strip (its ::before).
+   Rows scrolling under a stuck header fade out through this overlay. The stuck
+   state comes from a scroll-state container query; engines without it keep a
+   hard edge instead of a fade. */
+.oc-sidebar-sticky-header {
+  container-type: scroll-state;
+}
+
+.oc-sidebar-sticky-header-fade {
+  opacity: 0;
+}
+
+@container scroll-state(stuck: top) {
+  .oc-sidebar-sticky-header-fade {
+    opacity: 1;
+  }
+}
+
+/* Sidebar session row while its agent is working: the working indicator sits
+   over the right edge of the row and the row content fades out beneath it. A
+   mask (not a painted gradient) keeps this independent of the row's hover,
+   selection, and fork backgrounds. Rows whose quick actions take that edge on
+   hover drop the fade while hovered or focused. */
+.oc-session-row-working-fade {
+  /* Width of the fully hidden strip: the row padding plus the indicator. */
+  --oc-working-clear: 1.75rem;
+  mask-image: linear-gradient(to left, transparent var(--oc-working-clear), #000 calc(var(--oc-working-clear) + 1.5rem));
+  -webkit-mask-image: linear-gradient(to left, transparent var(--oc-working-clear), #000 calc(var(--oc-working-clear) + 1.5rem));
+}
+
+/* The indicator also carries the turn time, stacked under it. */
+.oc-session-row-working-fade[data-working-duration="true"] {
+  --oc-working-clear: 3.5rem;
+}
+
+/* Glow behind the working indicator; opacity-only so it never repaints. */
+.oc-session-row-working-aura {
+  animation: pulse-opacity 2.4s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .oc-session-row-working-aura {
+    animation: none;
+  }
+}
+
+.group:focus-within > .oc-session-row-working-fade[data-clear-on-hover="true"] {
+  mask-image: none;
+  -webkit-mask-image: none;
+}
+
+@media (hover: hover) {
+  .group:hover > .oc-session-row-working-fade[data-clear-on-hover="true"] {
+    mask-image: none;
+    -webkit-mask-image: none;
+  }
+}
 
 @keyframes spin-once {
   from {
@@ -401,12 +459,10 @@ button svg,
   shape-rendering: geometricPrecision;
 }
 
-/* GPU acceleration for non-spinning SVGs */
-button svg:not(.animate-spin),
-[role="button"] svg:not(.animate-spin) {
-  transform: translateZ(0);
-  -webkit-transform: translateZ(0);
-}
+/* Do not force button icons onto GPU layers (translateZ/will-change here).
+   Every icon became its own compositor layer and overlap testing promoted
+   neighbouring rows too: ~125 layers vs ~29, and ~30% more main-thread work
+   per frame whenever anything animated. Rendering is pixel-identical without it. */
 
 /* Fix SVG elements inside buttons - remove any rect/circle backgrounds */
 button svg rect,
@@ -1702,16 +1758,72 @@ input[aria-label="Terminal input"] {
   }
 }
 
-/* Loading label shimmer. Intentionally non-composited (background-position)
-   per request; bounded to the single main-chat status line — sidebar
-   indicators render grid-only with no shimmer. */
-@keyframes shimmer-text {
-  0% {
-    background-position: 200% 0;
+/* "Working" shimmer (see `ShimmerGlint`). Same look as the former
+   background-position gradient sweep (muted 35% → foreground 50% → muted 65%
+   over a 200% tile, 1.4s, two passes per cycle), but compositor-only: the
+   host paints the dim text once; `.oc-shimmer-band` slides a soft mask
+   window across it and its `::after` counter-slides the bright copy so the
+   glyphs stay aligned. Nothing repaints per frame (measured ~68ms/s of
+   main-thread paint/commit for the gradient vs ~4ms/s for this). */
+@keyframes oc-shimmer-band {
+  from {
+    transform: translateX(-66.6667%);
   }
-  100% {
-    background-position: -200% 0;
+  to {
+    transform: translateX(0);
   }
+}
+
+@keyframes oc-shimmer-glint {
+  from {
+    transform: translateX(400%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+.oc-shimmer-host,
+.oc-shimmer-verb,
+.pixel-loader-label {
+  position: relative;
+  color: var(--muted-foreground);
+}
+
+.oc-shimmer-clip {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  user-select: none;
+}
+
+/* Six host widths wide: the mask tiles every two widths, and the band travels
+   four widths per cycle so a tile always covers the host. */
+.oc-shimmer-band {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 600%;
+  display: flex;
+  align-items: center;
+  -webkit-mask-image: linear-gradient(90deg, transparent 35%, #000 50%, transparent 65%);
+  mask-image: linear-gradient(90deg, transparent 35%, #000 50%, transparent 65%);
+  -webkit-mask-size: 33.3333% 100%;
+  mask-size: 33.3333% 100%;
+  animation: oc-shimmer-band 1.4s linear infinite;
+}
+
+.oc-shimmer-band::after {
+  content: attr(data-shimmer-text);
+  display: block;
+  width: calc(100% / 6);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--foreground);
+  animation: oc-shimmer-glint 1.4s linear infinite;
 }
 
 /* Turn footer arrival: softens the instant swap from the working status
@@ -1765,33 +1877,24 @@ input[aria-label="Terminal input"] {
 }
 
 .agent-thinking-label-enter {
-  animation:
-    agent-thinking-label-in 180ms ease-out both,
-    shimmer-text 1.4s linear infinite;
+  animation: agent-thinking-label-in 180ms ease-out both;
 }
 
 /* Running tool verb shimmer: the SAME treatment as the agent working
-   animation (`AgentThinkingLoader` label) — gradient sweep via the accepted
-   `shimmer-text` keyframes with semantic tokens, so all "working" shimmer
-   reads as one signal. Scoped to running verbs (few at a time) and capped by
+   animation (`AgentThinkingLoader` label) — `ShimmerGlint` over the
+   `oc-shimmer-verb` host, so all "working" shimmer reads as one signal.
+   Scoped to running verbs (few at a time) and capped by
    `MinDurationShineText`'s busy cap, like the single status line.
-   CSS owns `color: transparent` (callers strip their inline title color
-   while busy) so the reduced-motion fallback below can restore a visible
-   static dim — an inline transparent would beat it and leave invisible text. */
-.oc-shimmer-verb {
-  background-image: linear-gradient(90deg, var(--muted-foreground) 35%, var(--foreground) 50%, var(--muted-foreground) 65%);
-  background-size: 200% 100%;
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-  animation: shimmer-text 1.4s linear infinite;
-}
+   CSS owns the base color (callers strip their inline title color while
+   busy) so the reduced-motion fallback below can restore the static dim. */
 
 @media (prefers-reduced-motion: reduce) {
-  /* Reduced motion falls back to the static dimmed verb. */
+  /* Reduced motion drops the sweep and falls back to the static dimmed verb. */
+  .oc-shimmer-clip {
+    display: none;
+  }
+
   .oc-shimmer-verb {
-    animation: none;
-    background-image: none;
     color: var(--tools-description);
   }
 }
@@ -1914,7 +2017,6 @@ input[aria-label="Terminal input"] {
 
   .pixel-loader-label {
     animation: none !important;
-    background-image: none !important;
     color: var(--muted-foreground) !important;
   }
 

@@ -36,6 +36,37 @@ const createPreviewUrl = (file: File, mime: string): string | undefined => {
   return URL.createObjectURL(file)
 }
 
+/**
+ * Preview URL ownership: the composer draft owns every object URL from
+ * `createPreviewUrl` while it is visible (`attachedFiles`) or stashed
+ * (`stashedAttachmentsByDraft`). Session-switch transfers ownership between
+ * the two without revoking; restore reuses the same URL.
+ *
+ * Handoffs that leave the draft (queue entries, worktree captures,
+ * failed-send records, retry clones) receive clones with `previewUrl`
+ * stripped and never own a URL: dispatch uses `dataUrl`/upload ids and no
+ * message/transcript UI renders `previewUrl` (`sendMessage` maps
+ * `url: dataUrl`; queue chips show counts only). `serializeAttachmentsForQueue`
+ * and `cloneAttachmentSnapshot` never release: the source stays in the draft
+ * until the caller detaches it after a successful handoff, so a failed queue
+ * or send keeps a working preview. The last
+ * store-owned copy's drop (remove/detach/clear/replace/evict/session
+ * cleanup) revokes exactly once via the guard below. Retained files (failed
+ * or expired uploads awaiting retry, runtime-switch retryables) keep their
+ * URLs because they are still rendered.
+ */
+const revokedPreviewUrls = new Set<string>()
+
+const revokePreviewUrl = (url: string | undefined): void => {
+  if (!url || revokedPreviewUrls.has(url)) return
+  revokedPreviewUrls.add(url)
+  if (typeof URL.revokeObjectURL === "function") URL.revokeObjectURL(url)
+}
+
+const revokePreviewUrls = (files: readonly AttachedFile[]): void => {
+  for (const file of files) revokePreviewUrl(file.previewUrl)
+}
+
 const readFileAsDataUrl = (file: Blob, mime: string): Promise<string> => new Promise((resolve, reject) => {
   const reader = new FileReader()
   reader.onload = () => {
@@ -50,7 +81,12 @@ const readFileAsDataUrl = (file: Blob, mime: string): Promise<string> => new Pro
 
 export const serializeAttachmentsForQueue = async (files: readonly AttachedFile[]): Promise<AttachedFile[]> =>
   Promise.all(files.map(async (file) => {
-    if (file.source !== "local" || file.dataUrl.startsWith("data:")) return file
+    // Queue entries never own a revocable URL: strip it on every path. The
+    // source keeps its URL until the caller detaches it after the handoff
+    // succeeds; detach performs the revoke.
+    if (file.source !== "local" || file.dataUrl.startsWith("data:")) {
+      return { ...file, previewUrl: undefined }
+    }
     const blob = file.file instanceof Blob ? file.file : null
     if (!blob) throw new Error("Attachment data is unavailable")
     return { ...file, dataUrl: await readFileAsDataUrl(blob, file.mimeType), previewUrl: undefined }
@@ -180,7 +216,7 @@ const uploadAttachment = async (id: string): Promise<void> => {
   }
 }
 
-const cancelAttachment = (file: AttachedFile, deleteRemote: boolean): void => {
+const abortAttachmentTransport = (file: AttachedFile): void => {
   uploadGenerations.set(file.id, (uploadGenerations.get(file.id) ?? 0) + 1)
   uploadControllers.get(file.id)?.abort()
   uploadControllers.delete(file.id)
@@ -189,7 +225,11 @@ const cancelAttachment = (file: AttachedFile, deleteRemote: boolean): void => {
   expiryTimers.delete(file.id)
   const queuedIndex = uploadQueue.indexOf(file.id)
   if (queuedIndex >= 0) uploadQueue.splice(queuedIndex, 1)
-  if (file.previewUrl && typeof URL.revokeObjectURL === "function") URL.revokeObjectURL(file.previewUrl)
+}
+
+const cancelAttachment = (file: AttachedFile, deleteRemote: boolean): void => {
+  abortAttachmentTransport(file)
+  revokePreviewUrl(file.previewUrl)
   if (deleteRemote && file.uploadState?.status === "ready") {
     void piClient.deleteAttachment(file.uploadState.attachmentId, { runtimeKey: getRuntimeKey() }).catch(() => undefined)
   }
@@ -201,6 +241,16 @@ const cancelFiles = (files: readonly AttachedFile[], deleteRemote: boolean): voi
 
 /** Stash bound: entries hold File handles and data URLs, unlike text drafts. */
 const MAX_STASHED_ATTACHMENT_DRAFTS = 10
+/** Byte bound for stashed drafts: sum of `File.size` across stashed entries. */
+const MAX_STASHED_ATTACHMENT_BYTES = 50 * 1024 * 1024
+
+const stashedAttachmentBytes = (stashed: Record<string, AttachedFile[]>): number => {
+  let total = 0
+  for (const files of Object.values(stashed)) {
+    for (const file of files) total += Number.isFinite(file.size) ? file.size : 0
+  }
+  return total
+}
 
 export type SyntheticContextPart = {
   text: string
@@ -226,6 +276,43 @@ export type PendingWorktreeRestore = {
   attachments: AttachedFile[];
   /** Ownership token: the exact failed payload read at restore time. */
   expectedFailedSend: WorktreeFailedSend;
+};
+
+/**
+ * One-shot successful-send clear signal for a chat draft.
+ *
+ * A sending composer can unmount mid-send (for example, `prompt()` flips the
+ * session busy synchronously and the transcript branch swaps to a fresh
+ * `ChatInput` instance). The dead instance still persists the cleared draft
+ * and detaches its attachments at the store level, but its `setMessage("")`
+ * is a no-op, so the live instance keeps the sent text. Publishing this
+ * memory-only signal lets whichever instance currently owns the same draft
+ * key finish the clear. It never persists to storage and never survives a
+ * runtime switch.
+ */
+export type SentDraftClearSignal = {
+  /** Chat-draft identity key (`getChatDraftIdentityKey`) that was sent. */
+  draftKey: string;
+  /** Exact text that was sent; consumers clear only on strict equality. */
+  text: string;
+  /** Monotonic id so repeated identical sends are distinct signals. */
+  nonce: number;
+};
+
+let sentDraftClearNonce = 0;
+
+/**
+ * Send/clear contract predicate shared by the publisher and every consumer:
+ * a signal applies only to its own draft key and only while the composer
+ * still shows exactly what was sent. Never wipe edited or retyped text.
+ */
+export const shouldApplySentDraftClear = (
+  signal: SentDraftClearSignal | null,
+  draftKey: string,
+  currentText: string,
+): boolean => {
+  if (!signal || signal.draftKey !== draftKey) return false;
+  return currentText === signal.text;
 };
 
 export type InputState = {
@@ -260,6 +347,16 @@ export type InputState = {
   consumePendingWorktreeRestore: () => PendingWorktreeRestore | null
   /** Runtime-switch cleanup: drop a deferred restore so stale state cannot linger. */
   resetForRuntimeSwitch: () => void
+  /**
+   * One-shot successful-send clear signal (memory-only: never persisted,
+   * cleared on runtime switch). Published by the sending composer after it
+   * persists the cleared draft; consumed by the instance currently owning
+   * the same draft key. A signal for another key must be ignored, never
+   * consumed. Failure paths publish nothing.
+   */
+  sentDraftClear: SentDraftClearSignal | null
+  publishSentDraftClear: (draftKey: string, text: string) => void
+  consumeSentDraftClear: (nonce: number) => void
   addAttachedFile: (file: File) => Promise<boolean>
   retryAttachmentUpload: (id: string) => void
   removeAttachedFile: (id: string) => void
@@ -295,6 +392,7 @@ export const useInputStore = create<InputState>()((set, get) => ({
   attachedFiles: [],
   stashedAttachmentsByDraft: {},
   activeAttachmentsDraftKey: null,
+  sentDraftClear: null,
 
   setPendingInputText: (text, mode = "replace") => set({ pendingInputText: text, pendingInputMode: mode }),
   consumePendingInputText: () => {
@@ -333,6 +431,20 @@ export const useInputStore = create<InputState>()((set, get) => ({
   },
   resetForRuntimeSwitch: () => {
     if (get().pendingWorktreeRestore !== null) set({ pendingWorktreeRestore: null })
+    // A pending clear targets the previous runtime's draft identity. Drop
+    // it so stale state cannot clear a same-keyed draft on the new runtime.
+    if (get().sentDraftClear !== null) set({ sentDraftClear: null })
+  },
+  publishSentDraftClear: (draftKey, text) => {
+    if (!draftKey) return
+    sentDraftClearNonce += 1
+    set({ sentDraftClear: { draftKey, text, nonce: sentDraftClearNonce } })
+  },
+  consumeSentDraftClear: (nonce) => {
+    // Guarded to the exact nonce so consuming a stale signal never drops a
+    // newer send's signal published before this consumer ran.
+    if (get().sentDraftClear?.nonce !== nonce) return
+    set({ sentDraftClear: null })
   },
 
   addAttachedFile: async (file: File) => {
@@ -457,6 +569,11 @@ export const useInputStore = create<InputState>()((set, get) => ({
       nextStashed = {}
       for (const [key, files] of Object.entries(stashed)) {
         const kept = files.filter((file) => !idSet.has(file.id))
+        // A send that resolves after a draft switch drops its stashed
+        // originals here: their preview URLs die with this last owner.
+        // Uploads stay running and remote bytes stay daemon-owned, matching
+        // the visible-detach contract above.
+        revokePreviewUrls(files.filter((file) => idSet.has(file.id)))
         if (kept.length > 0) nextStashed[key] = kept
       }
     }
@@ -523,10 +640,16 @@ export const useInputStore = create<InputState>()((set, get) => ({
       if (key !== prevKey && key !== nextKey) nextStashed[key] = files
     }
     if (current.length > 0) nextStashed[prevKey] = current
-    const keys = Object.keys(nextStashed)
-    for (const key of keys.slice(0, Math.max(0, keys.length - MAX_STASHED_ATTACHMENT_DRAFTS))) {
-      cancelFiles(nextStashed[key] ?? [], true)
-      delete nextStashed[key]
+    // Bound the stash by count and by total bytes, oldest-first. Insertion
+    // order is recency (the just-stashed previous draft is newest), so
+    // shifting from the front evicts the least-recently-visible draft.
+    // Evicting a draft revokes its preview URLs via the guarded release.
+    const evictionOrder = Object.keys(nextStashed)
+    while (evictionOrder.length > MAX_STASHED_ATTACHMENT_DRAFTS || stashedAttachmentBytes(nextStashed) > MAX_STASHED_ATTACHMENT_BYTES) {
+      const oldest = evictionOrder.shift()
+      if (!oldest) break
+      cancelFiles(nextStashed[oldest] ?? [], true)
+      delete nextStashed[oldest]
     }
     set({
       attachedFiles: restored,
@@ -564,7 +687,11 @@ export const useInputStore = create<InputState>()((set, get) => ({
 
   setAttachedFiles: (files) => {
     attachmentReadGeneration += 1
-    cancelFiles(get().attachedFiles, false)
+    // Queued-edit restore (`popToInput`) re-adds the visible files it
+    // already holds: revoking those URLs would orphan the retained previews,
+    // so only the files that actually leave the draft are released.
+    const nextIds = new Set(files.map((file) => file.id))
+    cancelFiles(get().attachedFiles.filter((file) => !nextIds.has(file.id)), false)
     set({
       attachedFiles: files.map((file): AttachedFile => file.source === "local" && file.uploadState === undefined
         ? { ...file, uploadState: { status: "failed", error: "Upload needs to be refreshed. Retry the upload." } }
@@ -601,11 +728,13 @@ subscribeRuntimeEndpointWillChange(() => {
     ? { ...file, uploadState: { status: "failed", error: "The runtime changed. Retry the upload." } satisfies AttachmentUploadState }
     : file)
   const files = useInputStore.getState().attachedFiles
-  cancelFiles(files, false)
+  // Abort transport only: the files stay visible/stashed as retryable
+  // failures, so their still-rendered preview URLs must survive the switch.
+  for (const file of files) abortAttachmentTransport(file)
   const stashed = useInputStore.getState().stashedAttachmentsByDraft ?? {}
   const nextStashed: Record<string, AttachedFile[]> = {}
   for (const [key, stashedFiles] of Object.entries(stashed)) {
-    cancelFiles(stashedFiles, false)
+    for (const file of stashedFiles) abortAttachmentTransport(file)
     nextStashed[key] = markRuntimeChanged(stashedFiles)
   }
   useInputStore.setState({
@@ -615,5 +744,8 @@ subscribeRuntimeEndpointWillChange(() => {
     // identity and failed payload. Drop it so stale retained state cannot
     // linger or restore into the new runtime.
     pendingWorktreeRestore: null,
+    // Same staleness rule as the deferred restore: a pending clear carries
+    // the previous runtime's draft key and must not fire on the new runtime.
+    sentDraftClear: null,
   })
 })

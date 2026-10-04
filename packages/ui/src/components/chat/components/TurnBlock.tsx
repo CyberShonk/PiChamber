@@ -22,6 +22,12 @@ export interface TurnBlockProps {
   nextEntryFirstMessage?: ChatMessageEntry;
   /** Live session activity keeps a latest turn visible before its first assistant record arrives. */
   sessionIsWorking: boolean;
+  /**
+   * True while a plain prompt send still waits for the server to echo its
+   * user message. Suppresses the last-turn working fallback so the previous
+   * settled turn does not flash live status before the new turn appears.
+   */
+  awaitingPromptEcho?: boolean;
   /** The session was last seen working while the transport is unverified. */
   sessionAwaitingRecovery?: boolean;
   onMessageContentChange: (reason?: ContentChangeReason) => void;
@@ -40,6 +46,7 @@ export const TurnBlock = React.memo(
     nextEntryFirstMessage,
     sessionIsWorking,
     sessionAwaitingRecovery = false,
+    awaitingPromptEcho = false,
     onMessageContentChange,
     getAnimationHandlers,
     scrollToBottom,
@@ -255,6 +262,7 @@ export const TurnBlock = React.memo(
       turnIsInActiveStream: turn.stream.isStreaming && turnOwnsAuthoritativeStream,
       activeStreamingMessageId,
       isSteering: turn.isSteering,
+      awaitingPromptEcho,
     });
 
     return (

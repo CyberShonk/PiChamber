@@ -1159,9 +1159,11 @@ describe('PiSessionStore hydrate/overlay reconciliation', () => {
       parts: createReducerPartMap([['p1', { id: 'p1', index: 0, type: 'text', text: 'hello', streaming: true }]]),
       streamingMessages: new Set(['a1']),
     });
+    // A mid-turn detail that reports the turn running and lacks the local
+    // in-flight assistant message.
     const fetched = reducerSession({
       sessionId: 's1',
-      lifecycle: 'idle',
+      lifecycle: 'busy',
       lastSequence: 12,
       messages: new Map([['old', history], ['u1', user]]),
     });
@@ -1325,6 +1327,7 @@ describe('PiSessionStore hydrate/overlay reconciliation', () => {
     });
     const fetched = reducerSession({
       sessionId: 's1',
+      lifecycle: 'busy',
       lastSequence: 12,
       messages: new Map([['entry_user', persistedUser]]),
     });
@@ -1867,6 +1870,9 @@ describe('PiSessionStore behaviour parity', () => {
       getSession: async (id) => ({
         session: { id, directory: '/repo', createdAt: 1, updatedAt: 1 },
         lastSequence: 9,
+        // The turn the live event started is still running on the daemon.
+        isStreaming: true,
+        lifecycle: 'busy',
         messages: [{
           message: { ...priorUser, sessionId: id, directory: '/repo' },
           parts: [{ id: 'u-old:text', index: 0, type: 'text', text: 'prior prompt' }],
@@ -2169,6 +2175,79 @@ describe('PiSessionStore behaviour parity', () => {
       expect(internal.hydratedSessionIds.has('alive')).toBe(true);
       expect(internal.hydratedSessionIds.has('leased')).toBe(false);
       expect(state.sessionLoadErrorById.get('leased')?.code).toBe('SESSION_IN_USE');
+    } finally {
+      stubs.restore();
+    }
+    store.dispose();
+  });
+
+  test('a transient detail failure behind an attached stream fails that chat without latching the cluster error', async () => {
+    const store = new PiSessionStore();
+    const internal = asInternal(store);
+    const stream = { dispose: () => undefined };
+    internal.stream = stream;
+    internal.state = {
+      ...store.getState(),
+      directory: '/repo',
+      connection: 'ready',
+      selectedSessionId: 'cold',
+    };
+    let failNext = true;
+    const stubs = stubDaemons({
+      getSession: async (id: string) => {
+        if (failNext) {
+          failNext = false;
+          throw new PiRequestError('DAEMON_UNAVAILABLE', 'network waking');
+        }
+        return emptyDetail(id, '/repo', 1);
+      },
+    });
+    try {
+      await store.select('cold');
+      expect(store.getState().connection).toBe('ready');
+      expect(internal.stream).toBe(stream);
+      expect(store.getState().sessionLoadErrorById.get('cold')?.code).toBe('DAEMON_UNAVAILABLE');
+
+      // A later successful load (retry, snapshot restore) clears the chat error.
+      await store.ensureHydrated('cold');
+      expect(store.getState().sessionLoadErrorById.has('cold')).toBe(false);
+      expect(store.getState().connection).toBe('ready');
+    } finally {
+      stubs.restore();
+    }
+    store.dispose();
+  });
+
+  test('opening a resident chat during a cluster error re-verifies instead of blindly marking ready', async () => {
+    const store = new PiSessionStore();
+    const internal = asInternal(store);
+    internal.stream = { dispose: () => undefined };
+    const session = reducerSession({ sessionId: 's1', lifecycle: 'idle' });
+    internal.hydratedSessionIds = new Set(['s1']);
+    internal.state = {
+      ...store.getState(),
+      directory: '/repo',
+      connection: 'error',
+      error: new PiRequestError('DAEMON_UNAVAILABLE', 'down'),
+      reducer: { bySession: new Map([['s1', session]]), lastSequence: new Map([['s1', 1]]) },
+      hydratedSessionIds: new Set(['s1']),
+    };
+    const reconnects: string[] = [];
+    internal.reconnect = async (sessionId) => {
+      reconnects.push(sessionId);
+    };
+    const stubs = stubDaemons();
+    try {
+      await internal.hydrate('s1', internal.runtimeGeneration);
+      expect(reconnects).toEqual(['s1']);
+      expect(store.getState().connection).toBe('error');
+      expect(stubs.calls.getSession).toBe(0);
+
+      // A stray error on an otherwise ready cluster is still cleared.
+      internal.state = { ...store.getState(), connection: 'ready' };
+      await internal.hydrate('s1', internal.runtimeGeneration);
+      expect(reconnects).toEqual(['s1']);
+      expect(store.getState().error).toBeNull();
     } finally {
       stubs.restore();
     }

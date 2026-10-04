@@ -15,6 +15,13 @@ mock.module('../ChatMessage', () => ({
   },
 }));
 
+mock.module('../MarkdownRenderer', () => ({
+  MarkdownRenderer: (props: { content?: unknown }) => {
+    const text = typeof props.content === 'string' ? props.content : '';
+    return React.createElement('div', { 'data-markdown-content': 'true' }, text);
+  },
+}));
+
 const { MessageRow } = await import('./MessageRow');
 const { UngroupedMessageRow } = await import('./UngroupedMessageRow');
 
@@ -56,13 +63,14 @@ const renderUngrouped = (entry: ChatMessageEntry): string =>
   );
 
 describe('MessageRow extension routing (ungrouped)', () => {
-  test('extension role renders ExtensionMessageCard with customType/text/details and never enters ChatMessage', () => {
+  test('extension role renders ExtensionNoteRow with customType/text/details and never enters ChatMessage', () => {
     const markup = renderUngrouped(makeExtensionEntry('ext-fallback-1'));
 
     expect(markup).toContain('data-extension-ui="ext-fallback-1"');
-    expect(markup).toContain('my-extension');
+    expect(markup).toContain('>my-extension<');
     expect(markup).toContain('Status update');
-    expect(markup).toContain('&quot;count&quot;: 3');
+    expect(markup).toContain('aria-expanded="false"');
+    expect(markup).not.toContain('&quot;count&quot;: 3');
 
     expect(chatMessageRenderCount).toBe(0);
     expect(chatMessageRenderedIds).toEqual([]);
@@ -95,7 +103,7 @@ describe('MessageRow extension routing (ungrouped)', () => {
     );
 
     expect(markup).toContain('data-extension-ui="ext-direct-1"');
-    expect(markup).toContain('my-extension');
+    expect(markup).toContain('>my-extension<');
     expect(chatMessageRenderCount).toBe(0);
     expect(chatMessageRenderedIds).toEqual([]);
   });

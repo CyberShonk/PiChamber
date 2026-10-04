@@ -99,9 +99,15 @@ export const PiSessionCatalogFeeder: React.FC = () => {
         return;
       }
 
-      const pendingDirectories = directories.filter((directory) => (
-        store.getState().catalog.listStatusByDirectory.get(directory) !== 'ready'
-      ));
+      // Skip directories another caller is already listing: a second
+      // `refreshDirectoryCatalog` supersedes the in-flight one and costs a
+      // duplicate `listSessions` whenever the directory set grows mid-boot
+      // (worktree discovery). A failed listing becomes 'failed' and is
+      // retried on the next signature change, as before.
+      const pendingDirectories = directories.filter((directory) => {
+        const status = store.getState().catalog.listStatusByDirectory.get(directory);
+        return status !== 'ready' && status !== 'loading';
+      });
       if (pendingDirectories.length === 0) {
         lastSignature = signature;
         return;

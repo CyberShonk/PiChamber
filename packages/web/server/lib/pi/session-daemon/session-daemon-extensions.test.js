@@ -56,7 +56,7 @@ class ExtensibleFakeSession {
   }
 
   async prompt(text, options) {
-    options?.preflightResult?.(true);
+    options?.preflightResult?.('started');
   }
 
   async navigateTree() {
@@ -310,10 +310,13 @@ describe('Pi session daemon extension bridging', () => {
     session.boundBindings.onError({ extensionPath: '/tmp/ext.ts', event: 'tool_call', error: 'boom' });
     const errorEvent = await client.next((message) => message.event === 'extension.error');
     expect(errorEvent.payload).toMatchObject({
-      source: '/tmp/ext.ts',
+      source: 'ext',
       event: 'tool_call',
       message: 'boom',
     });
+    expect(errorEvent.payload.source).not.toContain('/tmp');
+    const { directory: _dir, ...errorPayload } = errorEvent.payload;
+    expect(JSON.stringify(errorPayload)).not.toContain('/tmp');
   });
 
   it('projects appended custom entries and custom messages as extension events', async () => {
@@ -321,9 +324,15 @@ describe('Pi session daemon extension bridging', () => {
 
     session.emit({
       type: 'entry_appended',
+      entry: { type: 'custom', id: 'state-1', customType: 'plannotator', data: { phase: 'idle' }, timestamp: '2026-01-01T00:00:00.000Z' },
+    });
+    session.emit({
+      type: 'entry_appended',
       entry: { type: 'custom', id: 'entry-1', customType: 'pichamber.ui', data: { component: 'progress', props: { value: 40 } }, timestamp: '2026-01-01T00:00:01.000Z' },
     });
     const entryEvent = await client.next((message) => message.event === 'extension.entry');
+    // Private extension state (non-`pichamber.*` appendEntry) is never published.
+    expect(client.events.some((message) => message.event === 'extension.entry' && message.payload?.customType === 'plannotator')).toBe(false);
     expect(entryEvent.payload).toMatchObject({
       id: 'entry-1',
       customType: 'pichamber.ui',
@@ -354,6 +363,7 @@ describe('Pi session daemon extension bridging', () => {
     const { client, session } = await startWithExtensibleSession({
       entries: [
         { type: 'message', id: 'm-user', timestamp: baseTimestamp, message: { role: 'user', content: 'hello', timestamp: Date.parse(baseTimestamp) } },
+        { type: 'custom', id: 'e-state', customType: 'plannotator', data: { phase: 'idle' }, timestamp: baseTimestamp },
         { type: 'custom', id: 'e-1', customType: 'pichamber.ui', data: { component: 'kv', props: { rows: [] } }, timestamp: baseTimestamp },
         {
           type: 'custom_message',
@@ -424,13 +434,44 @@ describe('Pi session daemon extension bridging', () => {
     await expect(dialogPromise).resolves.toBe(false);
     await client.close();
   });
+
+  it('clears extension state and cancels pending dialogs when an active session is deleted', async () => {
+    const { client, session } = await startWithExtensibleSession();
+    const ui = session.boundBindings.uiContext;
+
+    ui.setStatus('del-status', 'pending');
+    ui.setWidget('del-widget', ['w1']);
+    ui.setWorkingMessage('busy deleting');
+    ui.getEditorText(); // tracks draft
+
+    const dialogPromise = ui.confirm('Delete now?', 'Proceed with deletion');
+    const dialogMsg = await client.next((message) => message.event === 'extension.dialog');
+    expect(dialogMsg.payload.title).toBe('Delete now?');
+
+    const deleteRes = await client.request('sessions.delete', { sessionId: session.sessionId });
+    expect(deleteRes.result).toBeTruthy();
+
+    await expect(dialogPromise).resolves.toBe(false);
+    const dismissEvent = await client.next((message) => message.event === 'extension.dialog.dismiss'
+      && message.payload?.requestId === dialogMsg.payload.requestId);
+    expect(dismissEvent.payload.reason).toBe('session-closed');
+
+    // Draft updates are rejected because session extension state was cleared
+    const draftRes = await client.request('extensions.draft', {
+      sessionId: session.sessionId,
+      text: 'late text',
+      revision: 1,
+    });
+    expect(draftRes.result).toEqual({ accepted: false });
+    await client.close();
+  });
 });
 
 describe('Pi session daemon extension panels, apps, and forms', () => {
   let daemon;
   let sessions = [];
 
-  const startWithExtensibleSession = async () => {
+  const startWithExtensibleSession = async ({ entries } = {}) => {
     const root = await mkdtemp(join(tmpdir(), 'pichamber-pi-daemon-panel-'));
     const projectDir = join(root, 'project');
     const agentDir = join(root, 'agent');
@@ -438,6 +479,7 @@ describe('Pi session daemon extension panels, apps, and forms', () => {
     await mkdir(agentDir, { recursive: true });
     const endpoint = join(root, 'daemon.sock');
     const session = new ExtensibleFakeSession();
+    if (entries) session.entries = entries;
     sessions.push(session);
 
     daemon = createSessionDaemon({
@@ -559,5 +601,283 @@ describe('Pi session daemon extension panels, apps, and forms', () => {
     expect(result.extensions[0].name).toBe('modes');
     expect(JSON.stringify(result)).not.toContain('/home/someone');
     expect(result.extensions[0].id).not.toContain('/');
+  });
+
+  it('lists directory-based extensions with directory names and opaque ids', async () => {
+    const { client, session } = await startWithExtensibleSession();
+    session.extensionRunner = {
+      getExtensionPaths: () => [
+        '/home/someone/secret/extensions/browser/index.ts',
+        '/home/someone/secret/extensions/web-search/index.js',
+        '/home/someone/secret/extensions/modes.ts',
+      ],
+      getRegisteredCommands: () => [],
+    };
+
+    const result = (await client.request('extensions.list', {})).result;
+    expect(result.extensions.map((e) => e.name)).toEqual(['browser', 'web-search', 'modes']);
+    const ids = new Set(result.extensions.map((e) => e.id));
+    expect(ids.size).toBe(3);
+    expect(JSON.stringify(result)).not.toContain('/home/someone');
+  });
+
+  it('emits extension.editor with mode paste for pasteToEditor and mode set for setEditorText', async () => {
+    const { client, session } = await startWithExtensibleSession();
+    const ui = session.boundBindings.uiContext;
+
+    ui.pasteToEditor('hello paste');
+    const pasteEvent = await client.next((message) => message.event === 'extension.editor' && message.payload?.text === 'hello paste');
+    expect(pasteEvent.payload).toMatchObject({ text: 'hello paste', mode: 'paste' });
+
+    ui.setEditorText('hello set');
+    const setEvent = await client.next((message) => message.event === 'extension.editor' && message.payload?.text === 'hello set');
+    expect(setEvent.payload).toMatchObject({ text: 'hello set', mode: 'set' });
+  });
+
+  it('excludes idd pichamber.ui entries from sessions.open messages while rebuilding them into live panel snapshots on open and handling removed: true', async () => {
+    const { client, session } = await startWithExtensibleSession({
+      entries: [
+        {
+          type: 'custom',
+          id: 'entry-1',
+          customType: 'pichamber.ui',
+          data: { id: 'status-panel', title: 'Status', component: 'badges', props: { status: 'running' } },
+          timestamp: '2026-01-01T00:00:01.000Z',
+        },
+        {
+          type: 'custom',
+          id: 'entry-2',
+          customType: 'pichamber.ui',
+          data: { id: 'status-panel', title: 'Status', component: 'badges', props: { status: 'completed' } },
+          timestamp: '2026-01-01T00:00:02.000Z',
+        },
+        {
+          type: 'custom',
+          id: 'entry-3',
+          customType: 'pichamber.ui',
+          data: { id: 'temp-panel', title: 'Temp', component: 'progress' },
+          timestamp: '2026-01-01T00:00:03.000Z',
+        },
+        {
+          type: 'custom',
+          id: 'entry-4',
+          customType: 'pichamber.ui',
+          data: { id: 'temp-panel', removed: true },
+          timestamp: '2026-01-01T00:00:04.000Z',
+        },
+        {
+          type: 'custom',
+          id: 'card-1',
+          customType: 'pichamber.ui',
+          data: { component: 'one-off-card', title: 'Card' },
+          timestamp: '2026-01-01T00:00:05.000Z',
+        },
+      ],
+    });
+
+    const openRes = await client.request('sessions.open', { sessionId: session.sessionId });
+    expect(openRes.result.extensionPanels).toHaveLength(1);
+    expect(openRes.result.extensionPanels[0]).toMatchObject({
+      id: 'status-panel',
+      title: 'Status',
+      component: 'badges',
+      props: { status: 'completed' },
+    });
+    // Id'd entries entry-1, entry-2, entry-3, entry-4 must NOT appear in messages.
+    // The un-id'd card-1 entry DOES appear in messages.
+    const extensionMessages = openRes.result.messages.filter((m) => m.message.role === 'extension');
+    expect(extensionMessages).toHaveLength(1);
+    expect(extensionMessages[0].message.id).toBe('card-1');
+  });
+
+  it('renders component factory widgets and coalesces requestRender updates', async () => {
+    const { client, session } = await startWithExtensibleSession();
+    const ui = session.boundBindings.uiContext;
+
+    let renderCount = 0;
+    let widgetLines = ['initial line'];
+    let disposed = false;
+    let capturedTui = null;
+    let capturedTheme = null;
+
+    ui.setWidget('dynamic-widget', (tui, theme) => {
+      capturedTui = tui;
+      capturedTheme = theme;
+      return {
+        render: (width) => {
+          renderCount += 1;
+          expect(width).toBe(100);
+          return widgetLines;
+        },
+        dispose: () => {
+          disposed = true;
+        },
+      };
+    });
+
+    const initialWidget = await client.next((message) => message.event === 'extension.widget' && message.payload?.key === 'dynamic-widget');
+    expect(initialWidget.payload.lines).toEqual(['initial line']);
+    expect(renderCount).toBe(1);
+    expect(capturedTui.terminal.columns).toBe(100);
+    expect(capturedTheme.name).toBe('pichamber');
+
+    // Trigger requestRender with updated lines
+    widgetLines = ['updated line'];
+    capturedTui.requestRender();
+
+    const updatedWidget = await client.next((message) => message.event === 'extension.widget' && message.payload?.lines?.[0] === 'updated line');
+    expect(updatedWidget.payload.lines).toEqual(['updated line']);
+
+    // Replacing the widget disposes the previous component
+    ui.setWidget('dynamic-widget', ['replaced with string']);
+    const stringWidget = await client.next((message) => message.event === 'extension.widget' && message.payload?.lines?.[0] === 'replaced with string');
+    expect(stringWidget.payload.lines).toEqual(['replaced with string']);
+    expect(disposed).toBe(true);
+
+    // Clearing the widget
+    ui.setWidget('dynamic-widget', undefined);
+    const cleared = await client.next((message) => message.event === 'extension.widget' && message.payload?.key === 'dynamic-widget' && !message.payload?.lines);
+    expect(cleared.payload.key).toBe('dynamic-widget');
+  });
+
+  it('handles component factory errors gracefully without crashing the daemon', async () => {
+    const { client, session } = await startWithExtensibleSession();
+    const ui = session.boundBindings.uiContext;
+
+    // Throwing factory
+    ui.setWidget('faulty-factory', () => {
+      throw new Error('Factory explosion');
+    });
+
+    const errorEvent = await client.next((message) => message.event === 'extension.error' && message.payload?.source === 'extension.widget');
+    expect(errorEvent.payload.message).toContain('Factory explosion');
+
+    // Throwing render
+    let renderDisposed = false;
+    let capturedTui = null;
+    let shouldThrow = false;
+
+    ui.setWidget('faulty-render', (tui) => {
+      capturedTui = tui;
+      return {
+        render: () => {
+          if (shouldThrow) throw new Error('Render crash');
+          return ['safe line'];
+        },
+        dispose: () => {
+          renderDisposed = true;
+        },
+      };
+    });
+
+    await client.next((message) => message.event === 'extension.widget' && message.payload?.key === 'faulty-render' && message.payload?.lines);
+
+    shouldThrow = true;
+    capturedTui.requestRender();
+
+    const renderError = await client.next((message) => message.event === 'extension.error' && message.payload?.source === 'extension.widget' && message.payload?.event === 'render');
+    expect(renderError.payload.message).toContain('Render crash');
+    expect(renderDisposed).toBe(true);
+  });
+
+  it('publishes extension.working events and includes working state in snapshots', async () => {
+    const { client, session } = await startWithExtensibleSession();
+    const ui = session.boundBindings.uiContext;
+
+    ui.setWorkingMessage('Analyzing repository...');
+    const workingEvent1 = await client.next((message) => message.event === 'extension.working');
+    expect(workingEvent1.payload).toMatchObject({ message: 'Analyzing repository...' });
+
+    ui.setWorkingVisible(false);
+    const workingEvent2 = await client.next((message) => message.event === 'extension.working' && message.payload?.visible === false);
+    expect(workingEvent2.payload).toMatchObject({ message: 'Analyzing repository...', visible: false });
+
+    const openRes = await client.request('sessions.open', { sessionId: session.sessionId });
+    expect(openRes.result.extensionWorking).toEqual({
+      message: 'Analyzing repository...',
+      visible: false,
+    });
+
+    ui.setWorkingMessage(undefined);
+    const workingEvent3 = await client.next((message) => message.event === 'extension.working' && message.payload?.message === undefined);
+    expect(workingEvent3.payload).toMatchObject({ visible: false });
+  });
+
+  it('supports ctx.ui.getEditorText lazy draft mirror end-to-end', async () => {
+    const { client, session } = await startWithExtensibleSession();
+    const ui = session.boundBindings.uiContext;
+
+    // 1. First getEditorText() call returns '' and publishes extension.editor.track exactly once
+    const firstText = ui.getEditorText();
+    expect(firstText).toBe('');
+    const trackEvent = await client.next((message) => message.event === 'extension.editor.track');
+    expect(trackEvent.payload).toMatchObject({
+      sessionId: session.sessionId,
+      enabled: true,
+    });
+
+    // Subsequent calls return current mirror and do not publish tracking again
+    expect(ui.getEditorText()).toBe('');
+
+    // Snapshot reflects extensionDraftTracked: true
+    const snapshotRes1 = await client.request('sessions.open', { sessionId: session.sessionId });
+    expect(snapshotRes1.result.extensionDraftTracked).toBe(true);
+
+    // 2. extensions.draft with revision 1 updates the mirror
+    const draftRes1 = await client.request('extensions.draft', {
+      sessionId: session.sessionId,
+      text: 'Draft content from composer',
+      revision: 1,
+    });
+    expect(draftRes1.result).toEqual({ accepted: true });
+    expect(ui.getEditorText()).toBe('Draft content from composer');
+
+    // 3. Stale revision is rejected/ignored
+    const staleRes = await client.request('extensions.draft', {
+      sessionId: session.sessionId,
+      text: 'Stale draft',
+      revision: 1,
+    });
+    expect(staleRes.result).toEqual({ accepted: false });
+    expect(ui.getEditorText()).toBe('Draft content from composer');
+
+    // 4. Untracked session draft update is rejected
+    const untrackedRes = await client.request('extensions.draft', {
+      sessionId: 'untracked-session-xyz',
+      text: 'Some text',
+      revision: 10,
+    });
+    expect(untrackedRes.result).toEqual({ accepted: false });
+
+    // 5. setEditorText and pasteToEditor update the mirror
+    ui.setEditorText('Replaced by extension');
+    expect(ui.getEditorText()).toBe('Replaced by extension');
+    ui.pasteToEditor(' - appended');
+    expect(ui.getEditorText()).toBe('Replaced by extension - appended');
+
+    // 6. Next newer revision updates the mirror
+    const draftRes2 = await client.request('extensions.draft', {
+      sessionId: session.sessionId,
+      text: 'Fresh user typing',
+      revision: 2,
+    });
+    expect(draftRes2.result).toEqual({ accepted: true });
+    expect(ui.getEditorText()).toBe('Fresh user typing');
+
+    // 7. Prompt submission resets the mirror text (keeps tracking)
+    await client.request('sessions.prompt', {
+      sessionId: session.sessionId,
+      text: 'User prompt',
+    });
+    expect(ui.getEditorText()).toBe('');
+
+    // Can still send new draft after prompt
+    const draftRes3 = await client.request('extensions.draft', {
+      sessionId: session.sessionId,
+      text: 'Typing next turn',
+      revision: 3,
+    });
+    expect(draftRes3.result).toEqual({ accepted: true });
+    expect(ui.getEditorText()).toBe('Typing next turn');
   });
 });

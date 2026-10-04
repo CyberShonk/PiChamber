@@ -1,3 +1,5 @@
+import { raceSignalAbort } from './concurrency';
+import { isCapacitorApp } from './platform';
 import { getActiveRelayTunnel } from './relay/runtime-tunnel';
 import { TUNNEL_PARSE_BASE } from './relay/tunnel-payloads';
 import { buildRuntimeAuthHeaders } from './runtime-auth';
@@ -221,9 +223,11 @@ const resolveRuntimeFetchInput = (input: string | URL | Request, query?: Runtime
 // event stream, and never a request carrying an AbortSignal (so one caller
 // aborting can't cancel the shared fetch for the others). The entry is removed
 // as soon as the request settles, so this only ever shares overlapping in-flight
-// requests — it never serves a stale/cached response.
+// requests — it never serves a stale/cached response. `runtime` (daemon health)
+// is included so concurrent boot probes from the config check, first-attach
+// open, and project-less connect merge into one request.
 // ---------------------------------------------------------------------------
-const COALESCE_READ_PATH = /\/api\/pi\/(health|projects|sessions|providers|resources|settings)(\b|\/|\?|$)/;
+const COALESCE_READ_PATH = /\/api\/pi\/(health|projects|sessions|providers|resources|runtime|settings)(\b|\/|\?|$)/;
 const READ_COALESCE = new Map<string, Promise<Response>>();
 
 const coalesceReadKey = (method: string, url: string, hasSignal: boolean): string | null => {
@@ -243,6 +247,8 @@ export const runtimeFetch = async (input: string | URL | Request, init: RuntimeF
   const relay = getActiveRelayTunnel();
   const relayPath = relay ? extractRelayPath(input, query) : null;
 
+  const signal = requestInit.signal ?? (input instanceof Request ? input.signal : undefined);
+
   let doFetch: () => Promise<Response>;
   let url: string;
   let method: string;
@@ -258,9 +264,14 @@ export const runtimeFetch = async (input: string | URL | Request, init: RuntimeF
     const resolvedInput = resolveRuntimeFetchInput(input, query);
     const inputHeaders = resolvedInput instanceof Request ? resolvedInput.headers : undefined;
     const headers = await mergeHeaders(inputHeaders, requestInit.headers, shouldAttachRuntimeAuth(resolvedInput));
-    doFetch = resolvedInput instanceof Request
+    let directFetch = resolvedInput instanceof Request
       ? () => fetch(new Request(resolvedInput, { ...requestInit, headers }))
       : () => fetch(resolvedInput, { ...requestInit, headers });
+    if (isCapacitorApp() && signal) {
+      const underlyingFetch = directFetch;
+      directFetch = () => raceSignalAbort(underlyingFetch, signal);
+    }
+    doFetch = directFetch;
     url =
       resolvedInput instanceof Request ? resolvedInput.url
       : resolvedInput instanceof URL ? resolvedInput.toString()

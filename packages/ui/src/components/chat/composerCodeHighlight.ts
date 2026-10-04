@@ -1,20 +1,23 @@
 /**
  * Per-language syntax highlighting for fenced code blocks in the chat composer.
  *
- * Reuses the editor's CodeMirror language resolver and Lezer parsers so a
- * ```bash / ```ts block in the composer is colored the same way it is in the
- * file editor and in rendered messages. Output is fed into the composer's
- * highlight overlay (see composerHighlight.ts), which sits behind a transparent
- * <textarea>; the overlay may only change color / decoration / background, never
- * glyph metrics, so every token class below is color-only.
+ * Language packs load on demand (see `./language/fencedCodeLanguages.ts`):
+ * `highlightFencedCode` is synchronous and highlights only blocks whose pack
+ * has already arrived, falling back to the uniform `codeFence` styling until
+ * then. `preloadFencedCodeLanguages` starts the missing packs and resolves
+ * true when a new language arrived, so the editor can re-highlight.
  *
- * Only languages the resolver returns synchronously are highlighted. Unknown or
- * lazily-loaded languages fall back to the uniform `codeFence` styling.
+ * Output is fed into the composer's CodeMirror decorations (see
+ * composerHighlight.ts). Only color / decoration / background classes are
+ * emitted, never glyph-metric changes.
+ *
+ * Unknown or still-loading languages fall back to the uniform `codeFence`
+ * styling.
  */
 
 import { Language } from '@codemirror/language';
 import { highlightTree, tagHighlighter, tags as t } from '@lezer/highlight';
-import { codeBlockLanguageResolver } from '@/lib/codemirror/languageByExtension';
+import { getLoadedFencedLanguage, loadFencedLanguage } from './composer/language/fencedCodeLanguages';
 import { isFenceClose, matchFenceOpen, type HighlightRange } from './composerHighlight';
 
 const CODE_BG = 'bg-[var(--surface-subtle)]';
@@ -84,13 +87,30 @@ const MAX_PARSE_LENGTH = 20_000;
 
 const resolveSyncLanguage = (info: string): Language | null => {
     if (!info) return null;
-    try {
-        const resolved = codeBlockLanguageResolver(info);
-        return resolved instanceof Language ? resolved : null;
-    } catch {
-        return null;
-    }
+    return getLoadedFencedLanguage(info);
 };
+
+/**
+ * Start loading every fenced-code language in `text` that has not arrived
+ * yet. Resolves true when at least one new language became available (the
+ * caller should re-highlight), false when nothing needed loading or every
+ * load resolved to null (unknown or failed — retry allowed later).
+ */
+export async function preloadFencedCodeLanguages(text: string): Promise<boolean> {
+    if (!text || (!text.includes('```') && !text.includes('~~~'))) return false;
+
+    const pending = new Set<string>();
+    for (const line of text.split('\n')) {
+        const fenceOpen = matchFenceOpen(line);
+        if (!fenceOpen?.lang) continue;
+        if (getLoadedFencedLanguage(fenceOpen.lang)) continue;
+        pending.add(fenceOpen.lang);
+    }
+    if (pending.size === 0) return false;
+
+    const loaded = await Promise.all([...pending].map((info) => loadFencedLanguage(info)));
+    return loaded.some((language) => language !== null);
+}
 
 /**
  * Produce syntax-token highlight ranges for every fenced code block in `text`

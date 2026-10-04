@@ -1,5 +1,6 @@
 import React from 'react';
 import { cn } from '@/lib/utils';
+import { ShimmerGlint } from '@/components/chat/ShimmerGlint';
 
 const MAX_BUSY_DURATION_MS = 5 * 60 * 1000; // 5 minutes cap
 
@@ -79,10 +80,10 @@ export const MinDurationShineText: React.FC<MinDurationShineTextProps> = ({
         };
     }, [active, minDurationMs, isBusy]);
 
-    // While busy the shimmer class owns the text fill (transparent +
-    // background-clip:text gradient, same as the AgentThinkingLoader label).
-    // The caller's inline title color is dropped so it cannot cover the
-    // gradient — and so the reduced-motion static fallback stays visible.
+    // While busy the shimmer class owns the base text color and
+    // `ShimmerGlint` sweeps the highlight (same as the AgentThinkingLoader
+    // label). The caller's inline title color is dropped so the shimmer base
+    // and the reduced-motion static fallback apply.
     // Settled rows keep their inline dimmed color untouched.
     const busyStyle = React.useMemo(() => {
         if (!isBusy) {
@@ -107,6 +108,9 @@ export const MinDurationShineText: React.FC<MinDurationShineTextProps> = ({
             title={title}
         >
             {children}
+            {/* The highlight copy is drawn from a string; non-text children
+                keep the static dimmed base. */}
+            {isBusy && typeof children === 'string' ? <ShimmerGlint text={children} /> : null}
         </span>
     );
 };

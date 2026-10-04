@@ -54,6 +54,61 @@ what is mounted: `--session`, `--tab`, `--panel <mode>`, `--expand-projects`,
 `--expand-sessions`, and `--then-tab` (navigate away after settling, to measure
 what a surface keeps doing once the user has left it).
 
+## Network request volume (profile:idle)
+
+The idle report also measures network volume over CDP, which the CPU/heap
+sections cannot see: every `Network.requestWillBeSent` is recorded with its
+method and URL pathname. Query string values are never stored or printed
+(they carry local paths and tokens); only sorted query parameter names are
+kept, e.g. `GET /api/git/check{?directory}`.
+
+Each row also reports `distinct`: how many different full query strings the
+group contained. The query strings are held in memory only to compute that
+count. `count` far above `distinct` means identical requests repeated (a
+missing cache or dedupe); `count == distinct` means per-entity fan-out.
+
+Requests whose pathname starts with `/api/` form the API table; everything
+else (scripts, styles, images, fonts, `data:`/`blob:` URLs) counts as
+static/other. WebSocket connections (`Network.webSocketCreated`) and
+EventSource streams (`type === "EventSource"`) are counted separately.
+
+`idle-summary.json` carries the result under `network`:
+
+- `settle`: startup plus settle phase (the final page load through the end of settling; when `--panel` or `--expand-projects` reloads the page, only the reload is counted, so the window always covers exactly one boot),
+  so one-off startup traffic stays distinguishable from steady state.
+- `idle`: the input-free recording window only, with `totalApi`,
+  `apiPerMinute`, `totalStatic`, `wsOpened`, `sseOpened`, and `grouped`
+  (`METHOD pathname`, count plus per-minute, sorted by count desc).
+- `cycle`: present only with `--cycle-panels`; see below.
+
+A run that records zero requests and zero sockets reports a `livenessWarning`
+instead of a clean zero: page load always issues requests, so an empty capture
+is a disabled instrument, not a quiet app.
+
+### Panel-switch refetches
+
+```bash
+bun run profile:idle -- --url http://127.0.0.1:4599 --cycle-panels git,terminal,files
+bun run profile:idle -- --url http://127.0.0.1:4599 --cycle-panels git,terminal --cycle-rounds 5 --cycle-dwell-ms 3000
+bun run profile:idle -- --url http://127.0.0.1:4599 --budget-requests-per-minute 20
+```
+
+`--cycle-panels <mode,mode,...>` reproduces the exact user interaction under
+investigation: after the input-free idle window it clicks each right-rail
+context-panel button in order (`files` is an alias for the `file` mode,
+`diff` resolves to the git surface like `openContextSurface` does), dwells
+`--cycle-dwell-ms` per mode (default 2000), and repeats the sequence
+`--cycle-rounds` times (default 3). Requests between one activation and the
+next are attributed to the switch that preceded them.
+
+Each switch is verified against an independent DOM signal (the rail button
+reports pressed and the `aside[data-context-panel]` panel is laid out open);
+the run throws when a switch does not take effect, when a rail button is
+missing (e.g. a content-driven surface with no tab), or when a mode name is
+unknown. `--budget-requests-per-minute <n>` fails the run when idle API
+req/min exceeds it, and `--baseline` comparisons print the idle (and settle)
+API req/min delta next to the metric table.
+
 ## profile:session
 
 Opens the app in a reusable browser profile, creates a session through the
@@ -184,5 +239,6 @@ workload under test.
 | `metrics.mjs` | Metric derivations shared by the profilers: growth rates, percentiles, long-task and trace-event summaries. |
 | `cpu-profile.mjs` | Aggregates `Profiler.stop()` output into self time per function. |
 | `idle-probe.mjs` | Page-side instrumentation installed before application code runs; attributes scheduled work to the call site that scheduled it. Must never change observable behaviour. |
+| `network.mjs` | Network-volume helpers for the idle profiler: report-safe URL sanitizing (pathnames plus query names, never values), settle/idle/cycle window summaries, `--cycle-panels` mode normalization, and the rail click/verify page scripts. |
 | `scenario.mjs` | Shared scenario setup, currently sidebar expansion. Setup always runs before the measured window. |
 | `animation-fixture.html` | Isolated animation variants for `profile:animation`. |

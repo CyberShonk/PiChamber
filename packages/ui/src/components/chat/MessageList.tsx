@@ -11,6 +11,7 @@ import { useTurnRecords } from './hooks/useTurnRecords';
 import { useOlderHistoryDemand } from './hooks/useOlderHistoryDemand';
 import { applyCompactionOverlay } from './lib/turns/applyCompactionOverlay';
 import { applyRetryOverlay } from './lib/turns/applyRetryOverlay';
+import { buildStaticRenderEntries, type RenderEntry } from './lib/turns/staticRenderEntries';
 import { buildLiveStreamingEntry, type StreamingTailEntry } from './lib/turns/streamingTailEntry';
 import { revealTurnAssistantMessage } from './lib/turns/turnAssistantReveal';
 import { getNormalizedMessageForDisplay, hasCompactionPart } from './lib/messageDisplayNormalization';
@@ -165,6 +166,8 @@ interface MessageListProps {
     sessionIsWorking?: boolean;
     /** Latest turn was last seen working while the transport is unverified. */
     sessionAwaitingRecovery?: boolean;
+    /** Plain prompt send still waiting for the server user-message echo. */
+    awaitingPromptEcho?: boolean;
     activeStreamingMessageId?: string | null;
     activeStreamingPhase?: StreamPhase | null;
     retryOverlay?: {
@@ -195,16 +198,6 @@ export interface MessageListHandle {
     scrollToBottom: () => void;
 }
 
-type RenderEntry =
-    | {
-        kind: 'ungrouped';
-        key: string;
-        message: ChatMessageEntry;
-        previousMessage?: ChatMessageEntry;
-        nextMessage?: ChatMessageEntry;
-    }
-    | { kind: 'history-gate'; key: string; turns: TurnRecord[] }
-    | { kind: 'turn'; key: string; turn: TurnRecord; isLastTurn: boolean; nextEntryFirstMessage?: ChatMessageEntry };
 
 interface MessageListEntryProps {
     entry: RenderEntry;
@@ -213,6 +206,7 @@ interface MessageListEntryProps {
     scrollToBottom?: () => void;
     sessionIsWorking: boolean;
     sessionAwaitingRecovery?: boolean;
+    awaitingPromptEcho?: boolean;
     shouldAnimateUserMessage: (message: ChatMessageEntry) => boolean;
     onUserAnimationConsumed: (messageId: string) => void;
     activeStreamingMessageId?: string | null;
@@ -228,6 +222,7 @@ const MessageListEntry = React.memo(({
     scrollToBottom,
     sessionIsWorking,
     sessionAwaitingRecovery = false,
+    awaitingPromptEcho = false,
     shouldAnimateUserMessage,
     onUserAnimationConsumed,
     activeStreamingMessageId,
@@ -270,6 +265,7 @@ const MessageListEntry = React.memo(({
             nextEntryFirstMessage={entry.nextEntryFirstMessage}
             sessionIsWorking={sessionIsWorking}
             sessionAwaitingRecovery={sessionAwaitingRecovery}
+            awaitingPromptEcho={awaitingPromptEcho}
             shouldAnimateUserMessage={shouldAnimateUserMessage}
             onUserAnimationConsumed={onUserAnimationConsumed}
             activeStreamingMessageId={activeStreamingMessageId}
@@ -592,6 +588,7 @@ const StreamingTailContent: React.FC<{
     scrollToBottom?: () => void;
     sessionIsWorking: boolean;
     sessionAwaitingRecovery?: boolean;
+    awaitingPromptEcho?: boolean;
     shouldAnimateUserMessage: (message: ChatMessageEntry) => boolean;
     onUserAnimationConsumed: (messageId: string) => void;
     activeStreamingMessageId?: string | null;
@@ -605,6 +602,7 @@ const StreamingTailContent: React.FC<{
     scrollToBottom,
     sessionIsWorking,
     sessionAwaitingRecovery = false,
+    awaitingPromptEcho = false,
     shouldAnimateUserMessage,
     onUserAnimationConsumed,
     activeStreamingMessageId,
@@ -626,6 +624,7 @@ const StreamingTailContent: React.FC<{
             scrollToBottom={scrollToBottom}
             sessionIsWorking={sessionIsWorking}
             sessionAwaitingRecovery={sessionAwaitingRecovery}
+            awaitingPromptEcho={awaitingPromptEcho}
             shouldAnimateUserMessage={shouldAnimateUserMessage}
             onUserAnimationConsumed={onUserAnimationConsumed}
             activeStreamingMessageId={activeStreamingMessageId}
@@ -641,6 +640,7 @@ const MessageList = React.forwardRef<MessageListHandle, MessageListProps>(({
     messages,
     sessionIsWorking = false,
     sessionAwaitingRecovery = false,
+    awaitingPromptEcho = false,
     activeStreamingMessageId = null,
     activeStreamingPhase = null,
     retryOverlay = null,
@@ -820,46 +820,19 @@ const MessageList = React.forwardRef<MessageListHandle, MessageListProps>(({
     const hasUngroupedStaticEntries = projection.ungroupedMessageIds.size > 0;
     const staticEntryMessages = hasUngroupedStaticEntries ? displayMessages : EMPTY_STATIC_ENTRY_MESSAGES;
     const staticEntryUngroupedIds = hasUngroupedStaticEntries ? projection.ungroupedMessageIds : EMPTY_UNGROUPED_MESSAGE_IDS;
-    const staticRenderEntries = React.useMemo<RenderEntry[]>(() => streamPerfMeasure('ui.message_list.render_entries_ms', () => {
-        const turnEntries = staticTurns.map((turn) => ({
-            kind: 'turn' as const,
-            key: `turn:${turn.turnId}`,
-            turn,
-            isLastTurn: turn.turnId === projection.lastTurnId,
-        }));
-
-        if (staticEntryUngroupedIds.size === 0) {
-            return turnEntries;
-        }
-
-        const turnEntryByUserMessageId = new Map<string, RenderEntry>();
-        turnEntries.forEach((entry) => {
-            turnEntryByUserMessageId.set(entry.turn.userMessage.info.id, entry);
-        });
-
-        const orderedEntries: RenderEntry[] = [];
-        staticEntryMessages.forEach((message, index) => {
-            const turnEntry = turnEntryByUserMessageId.get(message.info.id);
-            if (turnEntry) {
-                orderedEntries.push(turnEntry);
-                return;
-            }
-
-            if (!staticEntryUngroupedIds.has(message.info.id)) {
-                return;
-            }
-
-            orderedEntries.push({
-                kind: 'ungrouped',
-                key: `msg:${message.info.id}`,
-                message,
-                previousMessage: index > 0 ? staticEntryMessages[index - 1] : undefined,
-                nextMessage: index < staticEntryMessages.length - 1 ? staticEntryMessages[index + 1] : undefined,
-            });
-        });
-
-        return orderedEntries;
-    }), [projection.lastTurnId, staticEntryMessages, staticEntryUngroupedIds, staticTurns]);
+    // Ungrouped messages after the tail turn's user message render after the
+    // streaming tail (see buildStaticRenderEntries).
+    const tailUserMessageId = streamingTurn?.userMessage.info.id;
+    const { entries: staticRenderEntries, trailing: trailingUngroupedEntries } = React.useMemo(
+        () => streamPerfMeasure('ui.message_list.render_entries_ms', () => buildStaticRenderEntries({
+            staticTurns,
+            messages: staticEntryMessages,
+            ungroupedMessageIds: staticEntryUngroupedIds,
+            lastTurnId: projection.lastTurnId,
+            tailUserMessageId,
+        })),
+        [projection.lastTurnId, staticEntryMessages, staticEntryUngroupedIds, staticTurns, tailUserMessageId],
+    );
 
     const trailingStreamingEntry = React.useMemo<StreamingTailEntry | undefined>(() => {
         if (streamingTurn) {
@@ -992,8 +965,9 @@ const MessageList = React.forwardRef<MessageListHandle, MessageListProps>(({
     }, []);
 
     const allEntries = React.useMemo(() => {
-        return trailingStreamingEntry ? [...historyEntries, trailingStreamingEntry] : historyEntries;
-    }, [historyEntries, trailingStreamingEntry]);
+        const withTail = trailingStreamingEntry ? [...historyEntries, trailingStreamingEntry] : historyEntries;
+        return trailingUngroupedEntries.length > 0 ? [...withTail, ...trailingUngroupedEntries] : withTail;
+    }, [historyEntries, trailingStreamingEntry, trailingUngroupedEntries]);
 
     const stableHistoryContentChange = useStableEvent((reason?: ContentChangeReason) => {
         onMessageContentChange(reason);
@@ -1401,12 +1375,25 @@ const MessageList = React.forwardRef<MessageListHandle, MessageListProps>(({
                                 scrollToBottom={stableScrollToBottom}
                                 sessionIsWorking={sessionIsWorking}
                                 sessionAwaitingRecovery={sessionAwaitingRecovery}
+                                awaitingPromptEcho={awaitingPromptEcho}
                                 shouldAnimateUserMessage={shouldAnimateUserMessage}
                                 onUserAnimationConsumed={onUserAnimationConsumed}
                                 activeStreamingMessageId={activeStreamingMessageId}
                                 activeStreamingPhase={activeStreamingPhase}
                                                 />
                         ) : null}
+                        {trailingUngroupedEntries.map((entry) => (
+                            <MessageListEntry
+                                key={entry.key}
+                                entry={entry}
+                                onMessageContentChange={stableTailContentChange}
+                                getAnimationHandlers={stableGetAnimationHandlers}
+                                scrollToBottom={stableScrollToBottom}
+                                sessionIsWorking={sessionIsWorking}
+                                shouldAnimateUserMessage={shouldAnimateUserMessage}
+                                onUserAnimationConsumed={onUserAnimationConsumed}
+                            />
+                        ))}
                     </div>
                 </FadeInDisabledProvider>
 

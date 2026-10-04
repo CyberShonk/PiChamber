@@ -1,4 +1,5 @@
 import React from 'react';
+import { getRuntimeKey } from '@/lib/runtime-switch';
 import { useGitStore } from '@/stores/useGitStore';
 import { useRuntimeAPIs } from '@/hooks/useRuntimeAPIs';
 import { runBackgroundNetworkTask } from '@/lib/background-network';
@@ -26,28 +27,53 @@ export const useProjectRepoStatus = (args: Args): void => {
   const { git } = useRuntimeAPIs();
   const ensureStatus = useGitStore((state) => state.ensureStatus);
 
+  // Stable identity for the project set: `normalizedProjects` is rebuilt by
+  // the parent memo whenever the projects array churns, which used to
+  // re-fire `ensureStatus` per project (one `/check` + `/status` each) with
+  // no content change.
+  const projectPathsKey = React.useMemo(
+    () => normalizedProjects.map((project) => project.normalizedPath).slice().sort().join('\0'),
+    [normalizedProjects],
+  );
+  const lastEnsureKeyRef = React.useRef<string | null>(null);
+
   // Derive repo status from centralized Git store
   React.useEffect(() => {
     if (!enabled || !git || normalizedProjects.length === 0) {
+      lastEnsureKeyRef.current = null;
       setProjectRepoStatus(new Map());
       return;
     }
+    // Runtime switches change `getRuntimeKey()` and rebuild `git`; either
+    // must re-run even when the project set is unchanged.
+    const key = `${getRuntimeKey()}\0${projectPathsKey}`;
+    if (lastEnsureKeyRef.current === key) return;
+    lastEnsureKeyRef.current = key;
 
     // Trigger ensureStatus for each project to populate store
     normalizedProjects.forEach((project) => {
       void runBackgroundNetworkTask(() => ensureStatus(project.normalizedPath, git));
     });
-  }, [enabled, normalizedProjects, git, ensureStatus, setProjectRepoStatus]);
+  }, [enabled, normalizedProjects, projectPathsKey, git, ensureStatus, setProjectRepoStatus]);
 
-  // Read isGitRepo from the store-populated state
+  // Read isGitRepo from the store-populated state. Guarded so parent array
+  // identity churn alone does not publish a new Map (and re-render) with
+  // identical content.
+  const lastRepoStatusKeyRef = React.useRef<string | null>(null);
   React.useEffect(() => {
-    if (!enabled) return;
+    if (!enabled) {
+      lastRepoStatusKeyRef.current = null;
+      return;
+    }
     const next = new Map<string, boolean | null>();
     normalizedProjects.forEach((project) => {
       next.set(project.id, gitRepoStatus.get(project.normalizedPath)?.isGitRepo ?? null);
     });
+    const key = normalizedProjects.map((project) => `${project.id}:${String(next.get(project.id))}`).join('|');
+    if (lastRepoStatusKeyRef.current === key) return;
+    lastRepoStatusKeyRef.current = key;
     setProjectRepoStatus(next);
-  }, [enabled, normalizedProjects, gitRepoStatus, setProjectRepoStatus]);
+  }, [enabled, normalizedProjects, projectPathsKey, gitRepoStatus, setProjectRepoStatus]);
 
   const projectGitBranchesKey = React.useMemo(() => {
     return normalizedProjects

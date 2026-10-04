@@ -4,6 +4,9 @@ import { Icon } from '@/components/icon/Icon';
 import { toast } from '@/components/ui';
 import { Button } from '@/components/ui/button';
 import { ScrollShadow } from '@/components/ui/ScrollShadow';
+import { MobileSurfaceHeader } from '@/apps/MobileSurfaceHeader';
+import { FileTypeIcon } from '@/components/icons/FileTypeIcon';
+import { getGitRailPresentation } from '@/lib/surfaces/registry';
 import type { GitStatus } from '@/lib/api/types';
 import type { GitRemote } from '@/lib/api/types';
 import { getLanguageFromExtension, isImageFile } from '@/lib/toolHelpers';
@@ -12,6 +15,8 @@ import { lazyWithChunkRecovery } from '@/lib/chunkLoadRecovery';
 import { ChangesPanel, type ChangesGroupConfig } from './ChangesPanel';
 import { CommitSection } from './CommitSection';
 import { SyncActions } from './SyncActions';
+import { BranchSelector } from './BranchSelector';
+import { WorktreeBranchDisplay } from './WorktreeBranchDisplay';
 import { PierreDiffViewer } from '../PierreDiffViewer';
 
 const DiffView = lazyWithChunkRecovery(() =>
@@ -37,6 +42,13 @@ type MobileGitChromeProps = {
   unstagedChangeEntries: GitStatus['files'];
   effectiveRemotes: GitRemote[];
   syncAction: SyncAction;
+  localBranches: string[];
+  remoteBranches: string[];
+  branchInfo: Record<string, { ahead?: number; behind?: number }> | undefined;
+  isWorktreeMode: boolean;
+  onCheckoutBranch: (branch: string) => void;
+  onCreateBranch: (name: string, remote?: GitRemote) => Promise<void>;
+  onRenameBranch?: (oldName: string, newName: string) => Promise<void>;
   commitAction: CommitAction;
   commitMessage: string;
   hasPendingIndexMutation: boolean;
@@ -68,6 +80,13 @@ export const MobileGitChrome: React.FC<MobileGitChromeProps> = ({
   unstagedChangeEntries,
   effectiveRemotes,
   syncAction,
+  localBranches,
+  remoteBranches,
+  branchInfo,
+  isWorktreeMode,
+  onCheckoutBranch,
+  onCreateBranch,
+  onRenameBranch,
   commitAction,
   commitMessage,
   hasPendingIndexMutation,
@@ -175,8 +194,11 @@ export const MobileGitChrome: React.FC<MobileGitChromeProps> = ({
     return groups;
   }, [handleViewChangeDiff, onMoveChangePaths, onRevertFile, stagedChangeEntries, unstagedChangeEntries]);
 
+  const { label: surfaceLabel, icon: surfaceIcon } = getGitRailPresentation(isGitRepo);
+
   const renderListState = React.useCallback((state: React.ReactNode) => (
-    <div className="flex h-full flex-col overflow-hidden bg-transparent text-foreground">
+    <div className="flex h-full flex-col overflow-hidden bg-background text-foreground">
+      <MobileSurfaceHeader icon={surfaceIcon} title={surfaceLabel} />
       <div className="flex shrink-0 items-center gap-2 px-3 py-2">
         <p className="min-w-0 flex-1 truncate typography-ui-label text-muted-foreground">
           {status?.current || currentDirectory || ''}
@@ -184,7 +206,7 @@ export const MobileGitChrome: React.FC<MobileGitChromeProps> = ({
       </div>
       <div className="min-h-0 flex-1">{state}</div>
     </div>
-  ), [currentDirectory, status]);
+  ), [currentDirectory, status, surfaceIcon, surfaceLabel]);
 
   if (!currentDirectory) {
     return renderListState(<MobileGitState message="Select a session or directory to view Git status" />);
@@ -221,23 +243,42 @@ export const MobileGitChrome: React.FC<MobileGitChromeProps> = ({
   }
 
   return (
-    <div className="flex h-full flex-col overflow-hidden bg-transparent text-foreground">
-      <div className="flex shrink-0 items-center gap-2 px-3 py-2">
-        <p className="min-w-0 flex-1 truncate typography-ui-label text-muted-foreground">
-          {status?.current || currentDirectory}
-        </p>
-        <SyncActions
-          syncAction={syncAction}
-          remotes={effectiveRemotes}
-          onFetch={(remote) => onSyncAction('fetch', remote)}
-          onSync={(remote) => onSyncAction('sync', remote)}
-          disabled={commitAction !== null || isLoadingStatus}
-          aheadCount={status?.ahead ?? 0}
-          behindCount={status?.behind ?? 0}
-          trackingRemoteName={status?.tracking?.split('/')[0]}
-          hasUncommittedChanges={changeEntries.length > 0}
-        />
-      </div>
+    <div className="flex h-full flex-col overflow-hidden bg-background text-foreground">
+      <MobileSurfaceHeader
+        leading={
+          <div className="min-w-0 flex-1 -ml-2">
+            {isWorktreeMode ? (
+              <WorktreeBranchDisplay
+                currentBranch={status?.current}
+                onRename={onRenameBranch}
+              />
+            ) : (
+              <BranchSelector
+                currentBranch={status?.current}
+                localBranches={localBranches}
+                remoteBranches={remoteBranches}
+                branchInfo={branchInfo}
+                onCheckout={onCheckoutBranch}
+                onCreate={onCreateBranch}
+                remotes={effectiveRemotes}
+              />
+            )}
+          </div>
+        }
+        actions={
+          <SyncActions
+            syncAction={syncAction}
+            remotes={effectiveRemotes}
+            onFetch={(remote) => onSyncAction('fetch', remote)}
+            onSync={(remote) => onSyncAction('sync', remote)}
+            disabled={commitAction !== null || isLoadingStatus}
+            aheadCount={status?.ahead ?? 0}
+            behindCount={status?.behind ?? 0}
+            trackingRemoteName={status?.tracking?.split('/')[0]}
+            hasUncommittedChanges={changeEntries.length > 0}
+          />
+        }
+      />
       {changeEntries.length > 0 ? (
         <div className="flex min-h-0 flex-1 flex-col">
           <div className="min-h-0 flex-1 overflow-hidden px-3 pt-2">
@@ -323,20 +364,22 @@ const MobileDiffDetail: React.FC<{
   const language = React.useMemo(() => getLanguageFromExtension(path) || 'text', [path]);
 
   return (
-    <div className="flex h-full flex-col overflow-hidden bg-transparent text-foreground">
-      <header className="flex h-[var(--oc-header-height,56px)] shrink-0 items-center gap-1 px-2 text-foreground">
-        <button
-          type="button"
-          className="flex size-10 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:bg-interactive-hover hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-          aria-label="Back"
-          onClick={onBack}
-        >
-          <Icon name="arrow-left" className="size-5" />
-        </button>
-        <div className="min-w-0 flex-1 px-2">
-          <h2 className="truncate typography-ui-label text-foreground">{path}</h2>
-        </div>
-      </header>
+    <div className="flex h-full flex-col overflow-hidden bg-background text-foreground">
+      <MobileSurfaceHeader
+        leading={
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            aria-label="Back"
+            onClick={onBack}
+          >
+            <Icon name="arrow-left" className="size-4" />
+          </Button>
+        }
+        icon={<FileTypeIcon filePath={path} className="size-4 shrink-0" />}
+        title={path}
+      />
       <div className="min-h-0 flex-1 overflow-hidden">
         {!fileExists ? (
           <MobileGitState icon message="File is no longer changed" description="Go back to Changes and refresh the list." />

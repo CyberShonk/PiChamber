@@ -9,7 +9,7 @@ import type { SessionGroup } from './types';
 import { renderHighlightedText } from './highlightedText';
 import type { MainTab } from '@/stores/useUIStore';
 import { useGitHubSelectedRepo } from '@/stores/useGitHubScopeStore';
-import { openPullRequestInSurface } from '@/components/views/github/PullRequestsSurface';
+import { openPullRequestInSurface } from '@/components/views/github/openPullRequestInSurface';
 
 export interface SessionGroupHeaderProps {
   group: SessionGroup;

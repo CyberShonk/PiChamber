@@ -11,6 +11,7 @@ import { useGitHubScope } from '@/stores/useGitHubScopeStore';
 import { copyTextToClipboard } from '@/lib/clipboard';
 import { toast } from '@/components/ui';
 import { cn } from '@/lib/utils';
+import { useDeviceInfo } from '@/lib/device';
 
 /**
  * Detail scaffold shared by PR and issue detail views.
@@ -267,9 +268,11 @@ export const GitHubDetailHeader: React.FC<{
   primary,
   menu,
 }) => {
+  const { isMobile, isTablet } = useDeviceInfo();
+  const isTouchDetail = isMobile || isTablet;
   return (
     <div className="min-w-0 px-2 pt-1 pb-2">
-      <div className="flex h-7 min-w-0 items-center gap-1">
+      <div className={cn('flex min-w-0 items-center gap-1', isTouchDetail ? 'h-9' : 'h-7')}>
         <Button
           type="button"
           variant="ghost"
@@ -277,7 +280,7 @@ export const GitHubDetailHeader: React.FC<{
           onClick={onBack}
           title={backLabel}
           aria-label={backLabel}
-          className="size-6 shrink-0"
+          className={cn('shrink-0', isTouchDetail ? 'size-9' : 'size-6')}
         >
           <Icon name="arrow-left" className="size-4" />
         </Button>

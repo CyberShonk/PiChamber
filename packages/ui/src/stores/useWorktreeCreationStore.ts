@@ -71,7 +71,7 @@ type WorktreeCreationRequestParams = {
   };
   /** Nullable: a missing runtime git still retains `failedSend` in task state. */
   git: GitAPI | null | undefined;
-  refreshProject: (projectRoot: string, git: GitAPI) => Promise<unknown>;
+  refreshProject: (projectRoot: string, git: GitAPI, options?: { force?: boolean }) => Promise<unknown>;
   pollIntervalMs?: number;
 };
 
@@ -258,7 +258,9 @@ export const useWorktreeCreationStore = create<WorktreeCreationStore>()((set, ge
 
     const refreshIfCurrentRuntime = (): void => {
       if (!git || intent.runtimeKey !== getRuntimeKey()) return;
-      void refreshProject(intent.projectRoot, git).catch(() => undefined);
+      // Forced: creation may have partially completed, so the freshness
+      // window must not hide the new topology.
+      void refreshProject(intent.projectRoot, git, { force: true }).catch(() => undefined);
     };
 
     setEntryState(key, intent, { phase: 'naming', label: 'Naming worktree...' });
@@ -322,7 +324,8 @@ export const useWorktreeCreationStore = create<WorktreeCreationStore>()((set, ge
       }
 
       try {
-        await refreshProject(intent.projectRoot, git);
+        // Forced: this follows a setup-ready mutation, not background polling.
+        await refreshProject(intent.projectRoot, git, { force: true });
       } catch {
         // The worktree is already setup-ready; discovery refresh is best-effort.
       }
