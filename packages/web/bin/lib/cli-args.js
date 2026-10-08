@@ -560,7 +560,7 @@ OPTIONS:
   --hostname              Alias for --host outside tunnel commands
   --lan                   Bind to 0.0.0.0 for LAN access
   --server <url>          Public/server URL for pairing links
-  --relay                 pair: also include the end-to-end-encrypted relay transport
+  --relay                 pair: also include the end-to-end-encrypted relay transport (requires PICHAMBER_RELAY_URL)
   --tailscale             pair/serve: enable Tailscale remote access (tailnet-only serve)
   --public                With --tailscale: public internet via Funnel instead of tailnet-only
   --https-port <port>     Tailscale HTTPS port: 443, 8443, or 10000 (default: 443)
@@ -722,9 +722,9 @@ OPTIONS:
   --server-url <url>      Alias for --server
   --relay                 Also include the end-to-end-encrypted relay transport
                           so the link works away from the local network. The
-                          device prefers the direct connection when reachable;
-                          the instance brings the relay up on its own. Set
-                          PICHAMBER_RELAY_URL to use a self-hosted relay.
+                          device prefers the direct connection when reachable.
+                          Requires a relay URL via PICHAMBER_RELAY_URL
+                          (self-hosted relay).
   --name <label>          Label saved with the remote client token
   --ui-password <value>   Protect browser access when UI routes are enabled
   --api-only              Start in headless/API-only mode when starting

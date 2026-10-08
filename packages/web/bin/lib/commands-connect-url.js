@@ -18,7 +18,6 @@ import { createRemoteClientAuthRuntime } from '../../server/lib/client-auth/remo
 import { createClientPairingRuntime } from '../../server/lib/client-auth/pairing.js';
 import { createRelayIdentityRuntime } from '../../server/lib/relay/identity.js';
 import { createRelayIdentityStore } from '../../server/lib/relay/identity-store.js';
-import { DEFAULT_RELAY_URL } from '../../server/lib/relay/service.js';
 import { bytesToBase64Url } from '../../server/lib/relay/e2ee.js';
 import {
   intro as clackIntro,
@@ -114,15 +113,16 @@ function isValidRelayUrl(value) {
   }
 }
 
-// Resolve the relay endpoint the same way the running host does (service.js):
-// PICHAMBER_RELAY_URL env override, then the stored setting, then the default —
-// so the pairing link points at the same relay the host connects out to.
+// Relay candidates require an explicitly configured relay endpoint: the
+// PICHAMBER_RELAY_URL env override or the stored setting. There is no hosted
+// default — without one there is nothing for the client to dial out to, so no
+// relay candidate is emitted and no relay identity keys are generated.
 function resolveRelayUrl(settings) {
   const envUrl = process.env.PICHAMBER_RELAY_URL;
   if (isValidRelayUrl(envUrl)) return envUrl.trim();
   const stored = settings?.privateRelay?.relayUrl;
   if (isValidRelayUrl(stored)) return stored.trim();
-  return DEFAULT_RELAY_URL;
+  return null;
 }
 
 // Minimal settings.json read for non-identity relay config (privateRelay
@@ -143,18 +143,22 @@ async function readPairingRelaySettings() {
 // generating it if the relay was never enabled) into a pairing-v2 relay
 // candidate. Relay is a transport, not a separate link format: the candidate
 // carries no token — the client redeems the one-time pairing secret over the
-// E2EE tunnel like any other candidate. `enabled` reports whether the host relay
-// is actually on (a relay candidate only connects when the host is relaying).
+// E2EE tunnel like any other candidate. `enabled` reports whether the relay is
+// enabled in settings; `candidate` is null when no relay URL is configured, in
+// which case no identity keys are generated. A relay candidate only connects
+// when the host is relaying.
 async function buildRelayPairingCandidate() {
   const settings = await readPairingRelaySettings();
   const relayUrl = resolveRelayUrl(settings);
+  const enabled = settings?.privateRelay?.enabled === true;
+  if (!relayUrl) return { enabled, relayUrl: null, candidate: null };
   const identityRuntime = createRelayIdentityRuntime({
     crypto,
     ...createRelayIdentityStore({ dataDir: getPiChamberDataDir() }),
   });
   const identity = await identityRuntime.getRelayIdentity();
   return {
-    enabled: settings?.privateRelay?.enabled === true,
+    enabled,
     relayUrl,
     serverId: identity.serverId,
     candidate: {
@@ -330,14 +334,20 @@ function createConnectUrlCommand({ serveCommand }) {
     const label = options.name || os.hostname();
 
     // Direct candidate for the reachable server URL, plus the relay transport as
-    // a fallback candidate — one link that works both on the LAN and off-network.
-    // Candidate priorities make the client prefer the direct route and try the
-    // relay last, mirroring the UI's "Anywhere" pairing. `--relay` opts in even
-    // when the host relay is not up yet (the demand-driven lifecycle starts it);
-    // otherwise the relay rides along only when it is already enabled.
+    // a fallback candidate when a relay URL is configured — one link that works
+    // both on the LAN and off-network. Candidate priorities make the client
+    // prefer the direct route and try the relay last. `--relay` opts in when the
+    // relay is enabled in settings; without a configured relay URL there is no
+    // relay candidate.
     const candidates = [{ type: serverUrl.startsWith('https://') ? 'tunnel' : 'lan', url: serverUrl, priority: 10 }];
     const relay = await buildRelayPairingCandidate();
-    if (options.relay || relay.enabled) candidates.push(relay.candidate);
+    if (options.relay && !relay.relayUrl) {
+      throw new TunnelCliError(
+        'Relay requested but no relay URL is configured. Set PICHAMBER_RELAY_URL to a ws:// or wss:// relay URL (self-hosted relay) and try again.',
+        EXIT_CODE.USAGE_ERROR,
+      );
+    }
+    if (relay.candidate && (options.relay || relay.enabled)) candidates.push(relay.candidate);
 
     // Tailscale: persist the config on the RUNNING server and wait for a
     // terminal state, then append the ts.net URL (when live) as a candidate.
@@ -350,8 +360,7 @@ function createConnectUrlCommand({ serveCommand }) {
     }
 
     const pairingRuntime = createCliPairingRuntime();
-    // Mark relay-carrying sessions like the server route does, so the host's
-    // demand-driven relay lifecycle keeps the relay up while the link is pending.
+    // The pairing record reflects the transports carried by the link.
     const usesRelay = candidates.some((candidate) => candidate.type === 'relay');
     const { pairing } = await pairingRuntime.createPairingSession({ label, usesRelay });
     const connectUrl = encodePairingConnectUrl(buildPairingPayload({ pairing, label, candidates }));
@@ -399,11 +408,11 @@ function createConnectUrlCommand({ serveCommand }) {
         logStatus('warn', '[TAILSCALE_NOT_ACTIVE]', `Tailscale state is ${tailscale.state ?? 'unknown'}${tailscale.errorMessage ? `: ${tailscale.errorMessage}` : ''}. The link below carries the remaining candidates.`);
       }
     }
-    if (options.relay || relay.enabled) {
+    if (relay.candidate && (options.relay || relay.enabled)) {
       clackLog.info(`Relay fallback: ${relay.relayUrl}`);
     }
-    if (options.relay && !relay.enabled) {
-      logStatus('info', '[RELAY_STARTING]', 'Relay is not up yet. A running instance starts it within a minute; a stopped instance starts it on next launch.');
+    if (!relay.candidate && relay.enabled) {
+      logStatus('warn', '[RELAY_NO_URL]', 'Relay is enabled in settings but no relay URL is configured (PICHAMBER_RELAY_URL). The link has no relay fallback.');
     }
     if (pairing.fingerprint) {
       clackLog.info(`Fingerprint: ${pairing.fingerprint}`);

@@ -1,5 +1,5 @@
-// Host relay identity: the EXISTING ECDSA P-256 signing keypair (shared with
-// the push relay via signing-key.js — same store, same serverId) plus a NEW
+// Host relay identity: the EXISTING ECDSA P-256 signing keypair (via
+// signing-key.js — same store, same serverId) plus a NEW
 // long-lived ECDH P-256 encryption keypair for the E2EE channel (WebCrypto
 // keys are single-purpose, so signing and encryption keys must differ).
 // Both keypairs persist as `relaySigningKey` / `relayEncryptionKey` in the
