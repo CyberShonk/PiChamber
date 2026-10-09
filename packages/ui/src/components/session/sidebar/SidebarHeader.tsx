@@ -24,6 +24,8 @@ type Props = {
   onToggleSelectionMode: () => void;
   /** Dedicated mobile: occupy the same header band as the chat and workspace drawers. */
   mobileVariant?: boolean;
+  onClose?: () => void;
+  nativeAppVariant?: boolean;
 };
 
 export function SidebarHeader(props: Props): React.ReactNode {
@@ -47,6 +49,8 @@ export function SidebarHeader(props: Props): React.ReactNode {
     selectionModeEnabled,
     onToggleSelectionMode,
     mobileVariant = false,
+    onClose,
+    nativeAppVariant = false,
   } = props;
 
   if (hideDirectoryControls) {
@@ -55,6 +59,7 @@ export function SidebarHeader(props: Props): React.ReactNode {
 
   const actionClassName = cn(
     headerActionButtonClass,
+    nativeAppVariant && 'min-h-[44px] min-w-[44px]',
     'text-muted-foreground hover:text-foreground',
     !mobileVariant && 'hover:bg-transparent',
   );
@@ -70,6 +75,7 @@ export function SidebarHeader(props: Props): React.ReactNode {
             mobileVariant ? 'h-[var(--oc-header-height,56px)] gap-1' : 'min-h-8 gap-2 px-2',
           )}
         >
+          {nativeAppVariant ? <span className="min-w-0 flex-1 truncate typography-ui-header">Sessions</span> : null}
           <div className={cn('flex min-w-0 items-center', mobileVariant ? 'gap-1 overflow-x-auto' : 'gap-1.5')} data-no-drawer-swipe={mobileVariant ? "true" : undefined}>
             {onOpenSettings ? (
               <Tooltip>
@@ -155,7 +161,7 @@ export function SidebarHeader(props: Props): React.ReactNode {
           </div>
 
           <div className={cn('flex shrink-0 items-center', mobileVariant ? 'gap-1' : 'gap-1.5')}>
-            <Tooltip>
+            {!nativeAppVariant ? <Tooltip>
               <TooltipTrigger asChild>
                 <button
                   type="button"
@@ -168,7 +174,7 @@ export function SidebarHeader(props: Props): React.ReactNode {
                 </button>
               </TooltipTrigger>
               <TooltipContent side="bottom" sideOffset={4}><p>{"Search sessions"}</p></TooltipContent>
-            </Tooltip>
+            </Tooltip> : null}
 
             <Tooltip>
               <TooltipTrigger asChild>
@@ -191,12 +197,17 @@ export function SidebarHeader(props: Props): React.ReactNode {
               </TooltipContent>
             </Tooltip>
 
+            {nativeAppVariant && onClose ? (
+              <button type="button" onClick={onClose} className={actionClassName} aria-label="Close sessions">
+                <Icon name="close" className={headerActionIconClass} />
+              </button>
+            ) : null}
           </div>
         </div>
 
-        {isSessionSearchOpen ? (
+        {nativeAppVariant || isSessionSearchOpen ? (
           <div className={cn(mobileVariant ? 'pb-2' : 'pb-1')}>
-            <div className="mb-1 flex items-center justify-between px-0.5 typography-micro text-muted-foreground/80">
+            <div className={cn("mb-1 flex items-center justify-between px-0.5 typography-micro text-muted-foreground/80", nativeAppVariant && !hasSessionSearchQuery && "hidden")}>
               {hasSessionSearchQuery ? (
                 <span>{searchMatchCount === 1
                   ? `${searchMatchCount} match`
@@ -210,7 +221,10 @@ export function SidebarHeader(props: Props): React.ReactNode {
                 value={sessionSearchQuery}
                 onChange={(event) => setSessionSearchQuery(event.target.value)}
                 placeholder={"Search sessions..."}
-                className="h-8 w-full rounded-md border border-border bg-transparent pl-8 pr-8 typography-ui-label text-foreground outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+                aria-label={nativeAppVariant ? "Search sessions" : undefined}
+                autoCapitalize={nativeAppVariant ? "none" : undefined}
+                autoCorrect={nativeAppVariant ? "off" : undefined}
+                className={cn("w-full rounded-md border border-border bg-transparent pl-8 typography-ui-label text-foreground outline-none focus-visible:ring-2 focus-visible:ring-primary/50", nativeAppVariant ? "h-11 pr-10 text-[16px]" : "h-8 pr-8")}
                 onKeyDown={(event) => {
                   if (event.key === 'Escape') {
                     event.stopPropagation();

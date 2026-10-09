@@ -8,6 +8,7 @@ import {
     DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
+import { Button } from '@/components/ui/button';
 
 type ComposerAttachmentControlsProps = {
     footerIconButtonClass: string;
@@ -31,11 +32,11 @@ type ComposerAttachmentControlsProps = {
     /** Disable the settings control while a send is in flight. */
     disabled?: boolean;
     /**
-     * Open the GitHub link picker. When present, the desktop attach menu
-     * gains a "Link issue / pull request" entry; mobile keeps its direct
-     * native picker and does not offer linking (documented gap).
+     * Open the GitHub link picker. Desktop offers a menu item; mobile
+     * keeps the direct native file picker and offers a separate link button.
      */
     onLinkGitHub?: () => void;
+    nativeApp?: boolean;
 };
 
 /**
@@ -115,6 +116,21 @@ export const ComposerAttachmentControls = React.memo(function ComposerAttachment
                     </DropdownMenu>
                 )}
             </div>
+
+            {props.nativeApp && props.onOpenMobileSheet && onLinkGitHub ? (
+                <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="min-h-[44px] min-w-[44px] shrink-0"
+                    onClick={onLinkGitHub}
+                    disabled={isAttachmentDisabled}
+                    title="Link issue / pull request"
+                    aria-label="Link issue / pull request"
+                >
+                    <Icon name="github" className={iconSizeClass} />
+                </Button>
+            ) : null}
 
             {onOpenSettings ? (
                 <button

@@ -68,6 +68,7 @@ import { toast } from '@/components/ui';
 import { copyTextToClipboard } from '@/lib/clipboard';
 import { buildExportFilename, downloadAsMarkdown, formatSessionAsMarkdown, saveAsMarkdownDesktop } from '@/lib/exportSession';
 import { Button } from '@/components/ui/button';
+import { useMobileAppActions } from '@/apps/mobileAppContext';
 import type { MobileWorkspaceTab, MobileWorkspaceTabDef } from '@/apps/mobileWorkspaceTabs';
 import { getVisibleMobileWorkspaceTabs } from '@/apps/mobileWorkspaceTabs';
 import {
@@ -175,10 +176,12 @@ export const Header: React.FC<HeaderProps> = ({
 
   const { isMobile } = useDeviceInfo();
   const { enabled: isTabletLayoutEnabled } = useTabletLayout();
+  const mobileActions = useMobileAppActions();
+  const nativeApp = mobileActions?.nativeApp === true;
   const isTabletWorkspaceMode = Boolean(isTabletLayoutEnabled && onSelectTabletWorkspaceTab && tabletWorkspaceTab !== undefined);
   const tabletWorkspaceTabs = React.useMemo<MobileWorkspaceTabDef[]>(
-    () => [...getVisibleMobileWorkspaceTabs(tabletGitHubTabsAvailable)],
-    [tabletGitHubTabsAvailable],
+    () => [...getVisibleMobileWorkspaceTabs(tabletGitHubTabsAvailable, nativeApp)],
+    [tabletGitHubTabsAvailable, nativeApp],
   );
   const [tabletMetadataOpen, setTabletMetadataOpen] = React.useState(false);
 
@@ -1412,13 +1415,15 @@ export const Header: React.FC<HeaderProps> = ({
             )}
           </div>
 
-          <div className="flex items-center gap-1 shrink-0">
+          <div className={cn("flex items-center gap-1 shrink-0", nativeApp && isTabletWorkspaceMode && "min-w-0 max-w-[60%]")}>
+            {nativeApp && isTabletWorkspaceMode && <Button variant="ghost" size="icon" aria-label="Quick navigation" onClick={() => mobileActions?.openTools?.()}><Icon name="search" className="size-4" /></Button>}
             {isTabletWorkspaceMode && (
               <>
                 <div
-                  className="flex items-center gap-0.5 rounded-lg bg-[var(--surface-muted)]/50 p-0.5"
+                  className={cn("flex items-center gap-0.5 rounded-lg bg-[var(--surface-muted)]/50 p-0.5", nativeApp && "min-w-0 overflow-x-auto scrollbar-none")}
                   role="tablist"
                   aria-label="Workspace"
+                  data-no-drawer-swipe={nativeApp ? "true" : undefined}
                 >
                   {tabletWorkspaceTabs.map((tab) => {
                     const isActive = rightDrawerOpen && tabletWorkspaceTab === tab.id;
@@ -1443,6 +1448,7 @@ export const Header: React.FC<HeaderProps> = ({
                               // 44px touch targets for the workspace switcher
                               // (overrides the shared h-9 icon size via merge).
                               'relative h-11 w-11 rounded-lg',
+                              nativeApp && 'shrink-0',
                               isActive && 'bg-interactive-selection text-interactive-selection-foreground'
                             )}
                           >

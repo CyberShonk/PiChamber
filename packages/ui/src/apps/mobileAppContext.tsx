@@ -2,6 +2,10 @@
 import React from 'react';
 
 export type MobileAppActions = {
+  /** Native shell presentation; absent for the browser mobile app. */
+  nativeApp?: boolean;
+  /** Native quick navigation and transcript utilities. */
+  openTools?: () => void;
   /** Open the Changes surface as a modal and (optionally) navigate it to a specific diff. */
   openChanges: (options?: { diffPath?: string | null; staged?: boolean }) => void;
   /** Open the Files surface as a modal. */

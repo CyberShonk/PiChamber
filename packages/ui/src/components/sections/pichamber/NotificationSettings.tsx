@@ -1,4 +1,5 @@
 import React from 'react';
+import { NativeNotificationControls } from '@/apps/native/NativeNotificationControls';
 import { useUIStore } from '@/stores/useUIStore';
 import { isDesktopShell } from '@/lib/desktop';
 import { toast } from '@/components/ui';
@@ -421,6 +422,8 @@ export const NotificationSettings: React.FC = () => {
               }
               ariaLabel={"Enable notifications"}
             />
+
+            {isNativeApp && <NativeNotificationControls />}
 
             {/* The native Capacitor app never notifies while focused (hard rule) and uses
                 generic, non-customizable text, so the "notify while focused" toggle and the

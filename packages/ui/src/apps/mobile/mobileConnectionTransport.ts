@@ -1,3 +1,4 @@
+import { classifyNativeConnectionFailure, setNativeConnectionFailure } from '../native/connectionFailure';
 import { isCapacitorApp } from '@/lib/platform';
 import { adoptRelayTunnel, isRelayModeActive } from '@/lib/relay/runtime-tunnel';
 import { createRelayTunnelClient } from '@/lib/relay/tunnel-client';
@@ -108,6 +109,7 @@ export const nativeHttpRequest = async (
 ): Promise<MobileFetchResponse | null> => {
   if (!isCapacitorApp()) return null;
   const timeoutMs = options?.timeoutMs ?? MOBILE_CONNECT_TIMEOUT_MS;
+  const endpointGeneration = getRuntimeEndpointGeneration();
   try {
     const { CapacitorHttp } = await import('@capacitor/core');
     const headers = Object.fromEntries(new Headers(init?.headers).entries());
@@ -118,7 +120,10 @@ export const nativeHttpRequest = async (
       data: getJsonRequestData(init?.body),
       connectTimeout: timeoutMs,
       readTimeout: timeoutMs,
+      // Pairing credentials must not follow a redirect to another authority.
+      disableRedirects: true,
     });
+    if (endpointGeneration === getRuntimeEndpointGeneration()) setNativeConnectionFailure(null);
     return {
       ok: response.status >= 200 && response.status < 300,
       status: response.status,
@@ -126,14 +131,10 @@ export const nativeHttpRequest = async (
       json: async () => parseMaybeJson(response.data),
     };
   } catch (error) {
-    console.warn(
-      '[mobile-connect]',
-      'native-http failed',
-      logDetail({
-        url,
-        error: error instanceof Error ? error.message : String(error),
-      })
-    );
+    const failure = classifyNativeConnectionFailure(error);
+    if (endpointGeneration === getRuntimeEndpointGeneration()) setNativeConnectionFailure(failure);
+    recordMobileDiagnostic('native-http', { code: failure.kind, detail: failure.message });
+    console.warn('[mobile-connect]', 'native-http failed', failure.kind);
     return null;
   }
 };
@@ -142,15 +143,10 @@ export const browserFetchRequest = async (
   url: string,
   init?: RequestInit
 ): Promise<MobileFetchResponse | null> => {
-  const response = await fetch(url, init).catch((error) => {
-    console.warn(
-      '[mobile-connect]',
-      'browser-fetch failed',
-      logDetail({
-        url,
-        error: error instanceof Error ? error.message : String(error),
-      })
-    );
+  const response = await fetch(url, { ...init, redirect: 'error' }).catch((error) => {
+    const failure = classifyNativeConnectionFailure(error);
+    recordMobileDiagnostic('browser-fetch', { code: failure.kind, detail: failure.message });
+    console.warn('[mobile-connect]', 'browser-fetch failed', failure.kind);
     return null;
   });
   if (!response) return null;
@@ -333,11 +329,7 @@ export const probeConnectionCandidates = async (
           payload && typeof payload === 'object'
             ? (payload as Record<string, unknown>).serverId
             : null;
-        if (
-          typeof reported === 'string' &&
-          reported &&
-          reported !== expectedServerId
-        ) {
+        if (reported !== expectedServerId) {
           logConnect('probe:server-id-mismatch', { url });
           continue;
         }
@@ -618,11 +610,7 @@ export const establishLiveTransport = async (
         payload && typeof payload === 'object'
           ? (payload as Record<string, unknown>).serverId
           : null;
-      if (
-        typeof reported === 'string' &&
-        reported &&
-        reported !== expectedServerId
-      ) {
+      if (reported !== expectedServerId) {
         logConnect('establish:server-id-mismatch', { url });
         continue;
       }

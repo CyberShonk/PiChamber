@@ -80,3 +80,53 @@ Required local tools:
 ## Generated Assets
 
 Launcher, splash, and notification icons are generated from the PiChamber SVG mark with `bun run icons:brand` (same command that writes desktop/web brand PNGs). Do not restore Capacitor's default app or Android Studio placeholders.
+
+## Native workspace features
+
+The native shell opts into client presentation through
+`MobileAppActions.nativeApp` in the shared UI. Context and Extensions load when
+opened. Pull requests include Code and inline review. The phone session drawer
+uses 92% width with Recent and Projects views, persistent search, and a separate
+action footer. The title switcher searches 50 recent sessions and can open the
+full drawer. Hosted browser presentation keeps its original defaults.
+
+Temporary iOS overlays do not trigger stream replacement. Recovery follows
+actual backgrounding or hidden WebView visibility and consumes duplicate resume
+signals once. Mobile paired-host probes require the expected server ID before
+sending credentials. This is a routing check, not certificate pinning. HTTP and
+HTTPS remain supported; URLs containing credentials are rejected.
+
+Native requests still use system certificate trust. No custom trust delegate,
+private CA importer, certificate pinning, or host API change is included. Native
+HTTP and WebView EventSource have separate request paths and require device
+checks for private certificates and LAN permission behavior.
+
+## Device appearance and conveniences
+
+New native installations default to Red Carbon. Appearance includes the
+supplied matte graphite and red gasket preview, theme selection, haptic feedback,
+Reduce Motion and opt-in offline copies. These preferences are device-local.
+Existing device theme choices are preserved; host appearance is not overwritten.
+
+Quick navigation opens from the search button or Command/Control-K. It includes
+recent session/project/branch search, recorded unread completion/error attention,
+loaded transcript search, message jumps, independent command/output copying,
+workspace shortcuts, native sharing and offline copies. Copies are labeled
+read-only snapshots, limited to three copies of 600 KB each and up to 200 loaded
+messages per explicit save. Older unloaded history is not included.
+
+Notification settings show OS permission and host registration independently,
+with retry, iOS Settings and a replaceable device test scheduled five seconds
+later. Background the app to see the test. Remote notifications use the existing
+APNs/FCM host/relay configuration; a device test does not verify remote delivery.
+Foreground push presentation remains suppressed. Multiline iOS terminal pastes
+require confirmation. Composer large pastes can be attached as text instead.
+Native archive undo is limited to successful IDs and the original host.
+
+The iOS target compiles `NativeAppPlugin.swift` and registers it from
+`BridgeViewController`. Rebuild the native shell after applying this source patch;
+a web-asset-only update cannot add the bridge. Native keyboard frames ignore
+floating keyboards and use system geometry/timing for docked keyboards. Verify
+rotation, dictation height changes, interactive dismissal and Reduce Motion on
+physical devices. The source does not add a share extension or background
+execution entitlement. Incoming content still uses the existing picker/paste flow.
