@@ -571,6 +571,7 @@ export const loadMobileConnections = async (): Promise<MobileSavedConnection[]> 
 };
 
 export const upsertMobileConnection = async (connection: {
+  hasToken?: boolean;
   id?: string;
   label: string;
   candidates: MobileTransportCandidate[];

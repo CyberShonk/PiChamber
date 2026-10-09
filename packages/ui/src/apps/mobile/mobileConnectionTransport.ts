@@ -71,7 +71,7 @@ export const logConnect = (
         ? detail.reason
         : typeof detail.result === 'string'
           ? detail.result
-          : undefined,
+          : typeof detail.status === 'string' ? detail.status : undefined,
   });
 };
 
@@ -255,6 +255,7 @@ export const probeRelaySession = async (
       return finish(token ? 'auth-failed' : 'needs-login');
     if (!session.ok && session.status !== 404) return finish('unreachable');
     const status = await readSessionStatus(session);
+    if (!token && isCapacitorApp() && status?.disabled !== true) return finish('needs-login');
     if (status && status.disabled !== true && status.authenticated === false) {
       return finish(token ? 'auth-failed' : 'needs-login');
     }
@@ -381,8 +382,7 @@ export const probeConnectionCandidates = async (
       if (
         !token &&
         isCapacitorApp() &&
-        !authDisabled &&
-        status?.scope !== 'client'
+        !authDisabled
       )
         return { status: 'needs-login' };
       return {
@@ -527,20 +527,14 @@ export const autoConnectLastInstance = async (): Promise<AutoConnectOutcome> => 
 
   let token: string | undefined;
   if (isCapacitorApp()) {
-    if (!candidate.hasToken) {
-      return { status: 'no-candidate' };
-    }
-    const readResult = await readSecureToken(secureTokenKeyOf(candidate));
+    const readResult = candidate.hasToken
+      ? await readSecureToken(secureTokenKeyOf(candidate))
+      : { status: 'absent' as const };
     if (readResult.status === 'failure') {
       return { status: 'unreachable', label: candidate.label };
     }
-    if (readResult.status === 'absent' || !readResult.token) {
-      // The row says a credential was saved but the secure store has none
-      // (backup restore, reinstall, undecryptable entry): re-pair with a
-      // notice instead of silently dropping to the connect screen.
-      return { status: 'needs-login', label: candidate.label };
-    }
-    token = readResult.token;
+    if (readResult.status === 'present') token = readResult.token;
+    recordMobileDiagnostic('credential-read', { code: readResult.status });
   } else {
     token = candidate.clientToken;
     if (!token) return { status: 'no-candidate' };
@@ -564,12 +558,13 @@ export const autoConnectLastInstance = async (): Promise<AutoConnectOutcome> => 
     candidates: candidate.candidates,
     // Trust on first use: pin the verified identity when unknown.
     ...(!candidate.pinnedServerId && result.serverId ? { pinnedServerId: result.serverId } : {}),
+    hasToken: Boolean(token),
   });
   if (isStale()) {
     closeChosenTransportTunnel(result.transport);
     return { status: 'no-candidate' };
   }
-  switchToTransport(result.transport, token, {
+  switchToTransport(result.transport, token ?? null, {
     runtimeKey: secureTokenKeyOf(candidate),
   });
   return { status: 'connected' };
@@ -615,6 +610,7 @@ export const validateMobileConnectionSession = async (
   if (!session || (!session.ok && session.status !== 404)) return false;
 
   const status = await readSessionStatus(session);
+  if (!token && isCapacitorApp() && status?.disabled !== true) return false;
   return !(status && status.disabled !== true && status.authenticated === false);
 };
 
@@ -893,10 +889,10 @@ const runReprobeActiveConnection = async (): Promise<ReprobeOutcome> => {
         token = readResult.token;
       } else {
         if (isStale()) return 'no-connection';
-        // Read failure/timeout is temporary: let the recovery controller
-        // retry. An authoritatively absent token while active.hasToken is
-        // true can never recover by retrying — enter the re-pair flow.
-        return readResult.status === 'absent' ? 'needs-login' : 'unreachable';
+        recordMobileDiagnostic('credential-read', { code: readResult.status });
+        // Missing credentials require a host probe: an auth-disabled host
+        // remains usable. Read failures remain temporary, never an auth bypass.
+        if (readResult.status === 'failure') return 'unreachable';
       }
     }
     // Secure read resolved after a disconnect/switch: never use the old
@@ -905,10 +901,10 @@ const runReprobeActiveConnection = async (): Promise<ReprobeOutcome> => {
   } else {
     token = active.clientToken;
   }
-  if (!token) return 'unreachable';
+  if (!token && !isCapacitorApp()) return 'unreachable';
   if (isStale()) return 'no-connection';
 
-  const currentIndex = active.candidates.findIndex((candidate) =>
+  const currentIndex = !token ? -1 : active.candidates.findIndex((candidate) =>
     transportMatchesCurrentRuntime(
       candidate.kind === 'relay'
         ? { kind: 'relay', relay: candidate.relay }
@@ -935,12 +931,13 @@ const runReprobeActiveConnection = async (): Promise<ReprobeOutcome> => {
       label: active.label,
       candidates: active.candidates,
       ...(!active.pinnedServerId && better.serverId ? { pinnedServerId: better.serverId } : {}),
+      hasToken: Boolean(token),
     });
     if (isStale()) {
       closeChosenTransportTunnel(better.transport);
       return 'no-connection';
     }
-    switchToTransport(better.transport, token, {
+    switchToTransport(better.transport, token ?? null, {
       runtimeKey: secureTokenKeyOf(active),
     });
     return 'switched';
@@ -981,12 +978,13 @@ const runReprobeActiveConnection = async (): Promise<ReprobeOutcome> => {
       label: active.label,
       candidates: active.candidates,
       ...(!active.pinnedServerId && fallback.serverId ? { pinnedServerId: fallback.serverId } : {}),
+      hasToken: Boolean(token),
     });
     if (isStale()) {
       closeChosenTransportTunnel(fallback.transport);
       return 'no-connection';
     }
-    switchToTransport(fallback.transport, token, {
+    switchToTransport(fallback.transport, token ?? null, {
       runtimeKey: secureTokenKeyOf(active),
     });
     return 'switched';

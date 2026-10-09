@@ -134,6 +134,7 @@ export const useMobileConnection = (onConnected: () => void): UseMobileConnectio
   // Persist metadata for a connection and reflect it in state immediately.
   const persistMetadata = React.useCallback(
     (draft: {
+      hasToken?: boolean;
       id?: string;
       label: string;
       candidates: MobileTransportCandidate[];
@@ -234,6 +235,7 @@ export const useMobileConnection = (onConnected: () => void): UseMobileConnectio
           label,
           candidates,
           clientToken: token,
+          hasToken: Boolean(token),
           ...(learnedPin ? { pinnedServerId: learnedPin } : {}),
         });
         switchToTransport(result.transport, token ?? null, {

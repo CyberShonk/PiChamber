@@ -1,7 +1,8 @@
 import React from 'react';
 import { getRuntimeKey } from '@/lib/runtime-switch';
 import { nativeHaptic } from './native/device';
-const NativeQuickNavigation = React.lazy(() => import('./native/NativeQuickNavigation').then((module) => ({ default: module.NativeQuickNavigation })));
+import { NativeOnDemand } from './native/NativeOnDemand';
+const loadNativeQuickNavigation = () => import('./native/NativeQuickNavigation').then((module) => module.NativeQuickNavigation);
 const NativeOfflineView = React.lazy(() => import('./native/NativeOfflineView').then((module) => ({ default: module.NativeOfflineView })));
 const readNativeWorkspaceTab = (): MobileWorkspaceTab => {
   try { return sanitizeMobileWorkspaceTab(localStorage.getItem(`pichamber.native.workspace.${getRuntimeKey()}`), true); } catch { return 'changes'; }
@@ -729,7 +730,7 @@ export const MobileShell: React.FC<MobileShellProps> = ({ onActiveConnectionDele
         {(activeSurface === 'tools' || activeSurface === 'offline') && showCapacitorOnlyFeatures ? (
           <MobileFullscreenSurface open variant={surfaceVariant} dialogAlign="app" onClose={closeSurface} ariaLabel={activeSurface === 'tools' ? 'Quick navigation' : 'Offline copies'} title={activeSurface === 'tools' ? 'Quick navigation' : 'Offline copies'}>
             <React.Suspense fallback={<p className="p-4" role="status">Loading…</p>}>
-              {activeSurface === 'offline' ? <NativeOfflineView /> : <NativeQuickNavigation onClose={closeSurface} onOffline={() => openSurface('offline')} onWorkspace={(tab) => { setWorkspaceTab(tab); setWorkspaceOpenSafely(true); }} />}
+              {activeSurface === 'offline' ? <NativeOfflineView /> : <NativeOnDemand load={loadNativeQuickNavigation} componentProps={{ onClose: closeSurface, onOffline: () => openSurface('offline'), onWorkspace: (tab: 'terminal' | 'context' | 'extensions') => { setWorkspaceTab(tab); setWorkspaceOpenSafely(true); } }} />}
             </React.Suspense>
           </MobileFullscreenSurface>
         ) : null}
