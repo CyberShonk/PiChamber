@@ -159,7 +159,8 @@ is lazy-loaded only through the app-capability branch. Both consume the existing
 shared catalog and selection actions. Native search matches title, project,
 branch, and directory without issuing additional requests.
 
-Native lifecycle recovery arms on Capacitor pause or WebView hidden visibility.
+Native lifecycle recovery arms on Capacitor pause. Android also uses WebView
+hidden visibility; iOS does not, because overlays can hide the WebView.
 On iOS, appStateChange(false) also occurs for system overlays, so it changes
 active chrome without arming recovery. Resume, active, and visible signals
 consume a real background cycle once. The hook retains listeners across
@@ -201,3 +202,8 @@ interactive dismissal; older shells retain the Capacitor event fallback.
 Pairing HTTP requests reject redirects and retain system TLS trust. Diagnostic
 categories are sanitized before display or logging; raw request exceptions and
 URLs are not copied into the native error hint.
+
+Relay session probes classify non-authentication HTTP failures as unreachable,
+retaining credentials for recovery. HTTP 401 or an explicit unauthenticated
+session still requires sign-in. Native push errors classify missing iOS push
+entitlements without displaying raw native error payloads.

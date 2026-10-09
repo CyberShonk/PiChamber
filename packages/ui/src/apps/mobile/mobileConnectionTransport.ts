@@ -253,7 +253,7 @@ export const probeRelaySession = async (
     if (!session) return finish('unreachable');
     if (session.status === 401)
       return finish(token ? 'auth-failed' : 'needs-login');
-    if (!session.ok && session.status !== 404) return finish('auth-failed');
+    if (!session.ok && session.status !== 404) return finish('unreachable');
     const status = await readSessionStatus(session);
     if (status && status.disabled !== true && status.authenticated === false) {
       return finish(token ? 'auth-failed' : 'needs-login');

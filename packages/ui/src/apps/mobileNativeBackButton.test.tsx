@@ -249,6 +249,30 @@ describe('Native lifecycle and Android hardware back button handling', () => {
     expect(removeCalls).toBe(3);
   });
 
+  test('iOS visibility overlays do not arm recovery; native background still wakes once', async () => {
+    const dom = installDom();
+    restores.push(dom.restore);
+    (window as typeof window & { Capacitor: { getPlatform: () => string } }).Capacitor.getPlatform = () => 'ios';
+    let calls = 0;
+    const Component = () => { useNativeMobileLifecycle(() => { calls += 1; }); return null; };
+    const root = createRoot(dom.container);
+    roots.push(root);
+    await act(async () => { root.render(<Component />); });
+    await flush();
+    const emit = (name: string, data = {}) => listeners.get(name)?.forEach((callback) => callback(data));
+    emit('appStateChange', { isActive: false });
+    dom.setVisibility('hidden');
+    dom.setVisibility('visible');
+    emit('appStateChange', { isActive: true });
+    expect(calls).toBe(0);
+    emit('pause');
+    dom.setVisibility('hidden');
+    emit('resume');
+    dom.setVisibility('visible');
+    emit('appStateChange', { isActive: true });
+    expect(calls).toBe(1);
+  });
+
   test('registers exactly one native listener across multiple hook mounts and callback changes', async () => {
     const dom = installDom();
     restores.push(dom.restore);
