@@ -9,7 +9,7 @@ let permissionRequests = 0;
 let deviceRegistrations = 0;
 let deviceUnregistrations = 0;
 const endpointListeners = new Set<() => void>();
-const listeners = new Map<string, Set<(value: { value?: string }) => void>>();
+const listeners = new Map<string, Set<(value: { value?: string; error?: string }) => void>>();
 const serverRegistrations: Array<{ runtimeKey: string; token: string }> = [];
 const serverUnregistrations: string[] = [];
 let serverResponse: () => Promise<{ ok: true } | null> = async () => ({ ok: true });
@@ -27,7 +27,7 @@ mock.module('@/contexts/runtimeAPIRegistry', () => ({ getRegisteredRuntimeAPIs: 
 mock.module('@capacitor/push-notifications', () => ({ PushNotifications: {
   checkPermissions: async () => ({ receive: permission }),
   requestPermissions: async () => { permissionRequests++; return { receive: 'granted' }; },
-  addListener: async (name: string, callback: (value: { value?: string }) => void) => {
+  addListener: async (name: string, callback: (value: { value?: string; error?: string }) => void) => {
     const set = listeners.get(name) ?? new Set(); listeners.set(name, set); set.add(callback);
     return { remove: async () => { set.delete(callback); } };
   },
@@ -199,6 +199,17 @@ describe('native push registration runtime boundary', () => {
     expect(permissionRequests).toBe(1);
     expect(status.registration).toBe('failed');
     expect(status.error).not.toContain('test-device-token');
+  });
+  test('missing iOS push entitlement is actionable without leaking the native error', async () => {
+    await mount();
+    await act(async () => {
+      listeners.get('registrationError')?.forEach((listener) => listener({ error: 'no valid aps-environment entitlement; private-device-data' }));
+    });
+    await flush();
+    expect(status.registration).toBe('failed');
+    expect(status.error).toContain('push-enabled provisioning profile');
+    expect(status.error).not.toContain('private-device-data');
+    expect(serverRegistrations).toHaveLength(0);
   });
   test('turning off notifications unregisters the current device and host', async () => {
     await mount(); await emitToken();
