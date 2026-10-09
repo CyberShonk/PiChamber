@@ -20,8 +20,8 @@ public class NativeAppPlugin: CAPPlugin, CAPBridgedPlugin {
         DispatchQueue.main.async { [weak self] in
             let mode = call.getString("mode") ?? "system"
             let style: UIUserInterfaceStyle = mode == "dark" ? .dark : mode == "light" ? .light : .unspecified
-            self?.bridge?.viewController.overrideUserInterfaceStyle = style
-            self?.bridge?.viewController.view.window?.overrideUserInterfaceStyle = style
+            self?.bridge?.viewController?.overrideUserInterfaceStyle = style
+            self?.bridge?.viewController?.view.window?.overrideUserInterfaceStyle = style
             call.resolve()
         }
     }
