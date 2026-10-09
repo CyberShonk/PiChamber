@@ -1,4 +1,7 @@
 /* eslint-disable */
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { NativeOnDemand } from '@/apps/native/NativeOnDemand';
+import { isCapacitorApp } from '@/lib/platform';
 import React from "react";
 // sessionStore removed — currentSessionId comes from useSessionUIStore
 import { useConfigStore } from "@/stores/useConfigStore";
@@ -174,6 +177,7 @@ import { useComposerDictation } from "@/lib/dictation/use-composer-dictation";
 // Shiki stacks into the eager startup graph for a dialog opened on demand.
 // Opened on demand; its detail scaffold pulls the GitHub rich-body renderer
 // (dompurify) that the composer must not load at startup.
+const loadNativeGitHubLinkPicker = () => import("../views/github/agent/GitHubLinkPicker").then((module) => module.GitHubLinkPicker);
 const GitHubLinkPicker = lazyWithChunkRecovery(
   () => import("../views/github/agent/GitHubLinkPicker").then((module) => ({ default: module.GitHubLinkPicker })),
 );
@@ -2895,13 +2899,22 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         }}
       />
 
-      {githubLinkOpen && (currentSessionDirectoryForSync ?? currentDirectory) ? (
+      {githubLinkOpen && ((currentSessionDirectoryForSync ?? currentDirectory) || isCapacitorApp()) ? (
         <React.Suspense fallback={null}>
-          <GitHubLinkPicker
+          {isCapacitorApp() && !(currentSessionDirectoryForSync ?? currentDirectory) ? (
+            <Dialog open onOpenChange={(open) => { if (!open) setGithubLinkOpen(false); }}>
+              <DialogContent><DialogHeader><DialogTitle>Link issue or pull request</DialogTitle>
+                <DialogDescription>Choose a project before linking an issue or pull request.</DialogDescription>
+              </DialogHeader></DialogContent>
+            </Dialog>
+          ) : isCapacitorApp() ? <NativeOnDemand load={loadNativeGitHubLinkPicker}
+            componentProps={{ directory: (currentSessionDirectoryForSync ?? currentDirectory) as string, open: githubLinkOpen, onClose: () => setGithubLinkOpen(false) }}
+            fallback={(state) => <Dialog open onOpenChange={(open) => { if (!open) setGithubLinkOpen(false); }}><DialogContent><DialogHeader><DialogTitle>Link issue or pull request</DialogTitle><DialogDescription>Choose GitHub context for your message.</DialogDescription></DialogHeader>{state}</DialogContent></Dialog>}
+          /> : <GitHubLinkPicker
             directory={(currentSessionDirectoryForSync ?? currentDirectory) as string}
             open={githubLinkOpen}
             onClose={() => setGithubLinkOpen(false)}
-          />
+          />}
         </React.Suspense>
       ) : null}
 

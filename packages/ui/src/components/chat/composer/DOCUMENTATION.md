@@ -255,3 +255,8 @@ Native app controls optionally provide keyboard dismissal without clearing the
 draft, light send feedback and a text attachment choice for pastes over 10,000
 characters. Delayed paste actions check host, session and editor identity before
 changing content. Hosted and desktop composer behavior remains unchanged.
+
+The native GitHub link picker uses NativeOnDemand to commit its module when the
+first load finishes. Loading and failed loads remain visible in a closable dialog;
+Retry does not require opening another composer control. Hosted/desktop retain
+the existing lazy picker. Closing during load prevents late mounting.

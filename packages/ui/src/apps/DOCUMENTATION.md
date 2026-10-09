@@ -207,3 +207,10 @@ Relay session probes classify non-authentication HTTP failures as unreachable,
 retaining credentials for recovery. HTTP 401 or an explicit unauthenticated
 session still requires sign-in. Native push errors classify missing iOS push
 entitlements without displaying raw native error payloads.
+
+Native tokenless saved connections probe the host before deciding whether sign-in
+is required. Only an explicit auth-disabled session permits native access without
+a bearer; cookies cannot stand in for a missing credential. Secure read failures
+remain retryable. Successful tokenless connections clear stale hasToken metadata.
+NativeOnDemand resolves Quick navigation and the native composer GitHub picker
+through committed state, with failure and retry UI and late-unmount cancellation.

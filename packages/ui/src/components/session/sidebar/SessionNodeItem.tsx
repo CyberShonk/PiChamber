@@ -1,5 +1,6 @@
 /* eslint-disable */
 import React from 'react';
+import { nativeHaptic } from '@/apps/native/device';
 import type { Session } from '@/lib/chat/types';
 import { ContextMenu } from '@base-ui/react/context-menu';
 import { cn } from '@/lib/utils';
@@ -321,6 +322,7 @@ function SessionNodeItemComponent(props: SessionNodeItemProps): React.ReactNode 
   };
 
   const handleContextMenuOpenChange = (open: boolean) => {
+    if (open && !isContextMenuOpen) nativeHaptic('impact');
     setIsContextMenuOpen(open);
   };
 

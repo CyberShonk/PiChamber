@@ -1,4 +1,6 @@
 import React from 'react';
+import { useMobileAppActions } from '@/apps/mobileAppContext';
+import { Button } from '@/components/ui/button';
 import { Dialog } from '@base-ui/react/dialog';
 import type { Session } from '@/lib/chat/types';
 import { Icon } from '@/components/icon/Icon';
@@ -25,6 +27,7 @@ type DirectoryBucket = {
 const PAGE_SIZE = 100;
 
 export function ArchiveView(): React.ReactNode {
+  const nativeApp = useMobileAppActions()?.nativeApp === true;
   const open = useUIStore((state) => state.isArchivePageOpen);
   const setOpen = useUIStore((state) => state.setArchivePageOpen);
   const setActiveMainTab = useUIStore((state) => state.setActiveMainTab);
@@ -148,21 +151,25 @@ export function ArchiveView(): React.ReactNode {
     <Dialog.Root open={open} onOpenChange={setOpen}>
       <Dialog.Portal>
         <Dialog.Backdrop className="fixed inset-0 z-50 bg-black/25 dark:bg-black/40 transition-opacity duration-150 data-[starting-style]:opacity-0 data-[ending-style]:opacity-0" />
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 max-[640px]:p-2 pointer-events-none">
-          <Dialog.Popup className="pointer-events-auto relative flex h-[min(84vh,720px)] max-h-[calc(100dvh-2rem)] w-[min(92vw,960px)] flex-col overflow-hidden rounded-2xl border border-border/80 bg-background shadow-2xl transition-all duration-150 data-[starting-style]:scale-[0.98] data-[starting-style]:opacity-0 data-[ending-style]:scale-[0.98] data-[ending-style]:opacity-0 max-[640px]:h-[calc(100dvh-1rem)] max-[640px]:max-h-none max-[640px]:w-[calc(100vw-1rem)] max-[640px]:rounded-xl">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 max-[640px]:p-2 pointer-events-none" style={nativeApp ? { paddingTop: 'max(0.5rem, var(--oc-safe-area-top, 0px))', paddingBottom: 'max(0.5rem, env(safe-area-inset-bottom, 0px))' } : undefined}>
+          <Dialog.Popup style={nativeApp ? { height: 'min(720px, calc(100dvh - var(--oc-safe-area-top, 0px) - env(safe-area-inset-bottom, 0px) - 1rem))', maxHeight: 'calc(100dvh - var(--oc-safe-area-top, 0px) - env(safe-area-inset-bottom, 0px) - 1rem)' } : undefined} className="pointer-events-auto relative flex h-[min(84vh,720px)] max-h-[calc(100dvh-2rem)] w-[min(92vw,960px)] flex-col overflow-hidden rounded-2xl border border-border/80 bg-background shadow-2xl transition-all duration-150 data-[starting-style]:scale-[0.98] data-[starting-style]:opacity-0 data-[ending-style]:scale-[0.98] data-[ending-style]:opacity-0 max-[640px]:h-[calc(100dvh-1rem)] max-[640px]:max-h-none max-[640px]:w-[calc(100vw-1rem)] max-[640px]:rounded-xl">
             <Dialog.Title className="sr-only">{"Archived sessions"}</Dialog.Title>
             <Dialog.Description className="sr-only">
               {"Browse and restore archived sessions."}
             </Dialog.Description>
-            <Dialog.Close
+            {!nativeApp && <Dialog.Close
               aria-label="Close archived sessions"
               className="absolute right-3 top-3 z-10 inline-flex size-8 items-center justify-center rounded-md bg-background/80 text-muted-foreground backdrop-blur-sm hover:bg-interactive-hover hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
             >
               <Icon name="close" className="size-4" />
-            </Dialog.Close>
-            <div className="flex min-h-0 flex-1">
+            </Dialog.Close>}
+            {nativeApp && <header className="flex shrink-0 items-center justify-between gap-2 border-b border-border px-3 py-2">
+              <h2 className="typography-ui-label">Archived sessions</h2>
+              <Dialog.Close aria-label="Close archived sessions" render={<Button variant="ghost" size="icon" className="min-h-11 min-w-11" />}><Icon name="close" className="size-5" /></Dialog.Close>
+            </header>}
+            <div className={cn("flex min-h-0 flex-1", nativeApp && "max-[640px]:flex-col")}>
         {/* Directory filter panel */}
-        <div className="flex w-64 flex-shrink-0 flex-col border-r border-border/50 max-[640px]:w-40">
+        <div className={cn("flex w-64 flex-shrink-0 flex-col border-r border-border/50", nativeApp ? "max-[640px]:max-h-32 max-[640px]:w-full max-[640px]:border-b max-[640px]:border-r-0" : "max-[640px]:w-40")}>
           <div className="flex-1 space-y-0.5 overflow-y-auto p-2">
             {renderDirectoryItem(
               '__all__',
@@ -184,8 +191,8 @@ export function ArchiveView(): React.ReactNode {
         </div>
 
         {/* Session list */}
-        <div className="flex min-w-0 flex-1 flex-col">
-          <div className="flex items-center gap-3 px-6 pr-12 pt-3">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+          <div className={cn("flex items-center gap-3 px-6 pt-3", nativeApp ? "max-[640px]:flex-wrap max-[640px]:px-3" : "pr-12")}>
             <div className="relative min-w-0 flex-1">
               <Icon name="search" className="pointer-events-none absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <input
@@ -221,7 +228,7 @@ export function ArchiveView(): React.ReactNode {
                 return (
                   <div
                     key={session.id}
-                    className="group relative flex cursor-pointer items-center gap-3 rounded-md py-1 pl-2 pr-2 transition-[padding] hover:bg-interactive-hover/40 hover:pr-14 focus-within:pr-14"
+                    className={cn("group relative flex cursor-pointer items-center gap-3 rounded-md py-1 pl-2 pr-2 hover:bg-interactive-hover/40", !nativeApp && "transition-[padding] hover:pr-14 focus-within:pr-14")}
                     onClick={() => openSession(session)}
                     role="button"
                     tabIndex={0}
@@ -249,7 +256,7 @@ export function ArchiveView(): React.ReactNode {
                         event.stopPropagation();
                         restoreSession(session);
                       }}
-                      className="absolute right-7 top-1/2 inline-flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity pointer-events-none hover:text-foreground group-hover:opacity-100 group-hover:pointer-events-auto focus-visible:opacity-100 focus-visible:pointer-events-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+                      className={cn("inline-flex items-center justify-center rounded-md text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50", nativeApp ? "size-11 shrink-0" : "absolute right-7 top-1/2 h-6 w-6 -translate-y-1/2 opacity-0 transition-opacity pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto focus-visible:opacity-100 focus-visible:pointer-events-auto")}
                       aria-label={`Restore ${getSessionDisplayTitle(session)}`}
                     >
                       <Icon name="inbox-unarchive" className="h-3.5 w-3.5" />
@@ -260,7 +267,7 @@ export function ArchiveView(): React.ReactNode {
                         event.stopPropagation();
                         sessionEvents.requestDelete({ sessions: [session], mode: 'session' });
                       }}
-                      className="absolute right-1 top-1/2 inline-flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity pointer-events-none hover:text-destructive group-hover:opacity-100 group-hover:pointer-events-auto focus-visible:opacity-100 focus-visible:pointer-events-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+                      className={cn("inline-flex items-center justify-center rounded-md text-muted-foreground hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50", nativeApp ? "size-11 shrink-0" : "absolute right-1 top-1/2 h-6 w-6 -translate-y-1/2 opacity-0 transition-opacity pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto focus-visible:opacity-100 focus-visible:pointer-events-auto")}
                       aria-label={`Delete ${getSessionDisplayTitle(session)}`}
                     >
                       <Icon name="delete-bin" className="h-3.5 w-3.5" />
