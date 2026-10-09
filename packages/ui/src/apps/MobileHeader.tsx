@@ -1,4 +1,5 @@
 import React from 'react';
+import { useMobileAppActions } from './mobileAppContext';
 
 import { Icon } from '@/components/icon/Icon';
 import { cn } from '@/lib/utils';
@@ -12,13 +13,14 @@ import { getSessionDisplayTitle } from '@/lib/chat/sessionTitle';
 
 export const MobileHeader: React.FC<{
   onOpenSessions: () => void;
-  /** Opens the right workspace drawer (Changes / Files / Terminal / Notes / MCP). */
+  /** Opens the right workspace drawer (Changes / Files / Terminal / PRs / Issues / Context / Extensions). */
   onOpenWorkspace: () => void;
   /** Tablet: size the title trigger to its text instead of the free width, so
       a wide header doesn't turn the switcher into a full-width tap target. */
   compactTitle?: boolean;
 }> = ({ onOpenSessions, onOpenWorkspace, compactTitle = false }) => {
   
+  const mobileActions = useMobileAppActions();
   const [metadataOpen, setMetadataOpen] = React.useState(false);
   const [switcherOpen, setSwitcherOpen] = React.useState(false);
   const titleRef = React.useRef<HTMLButtonElement>(null);
@@ -116,6 +118,8 @@ export const MobileHeader: React.FC<{
               controls stay pinned to the right edge. */}
           {compactTitle ? <div className="min-w-0 flex-1" /> : null}
 
+          {mobileActions?.nativeApp && <button type="button" className="flex size-10 shrink-0 items-center justify-center rounded-full text-muted-foreground focus-visible:ring-2 focus-visible:ring-primary" aria-label="Quick navigation" onClick={() => { setMetadataOpen(false); setSwitcherOpen(false); mobileActions.openTools?.(); }}><Icon name="search" className="size-5" /></button>}
+
           <MobileSessionMetadataButton
             open={metadataOpen}
             onOpenChange={handleMetadataOpenChange}
@@ -142,6 +146,7 @@ export const MobileHeader: React.FC<{
       <MobileSessionSwitcher
         open={switcherOpen}
         onClose={() => setSwitcherOpen(false)}
+        onBrowseAll={handleOpenSessions}
         anchorRef={titleRef}
       />
     </>

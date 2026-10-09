@@ -1,4 +1,8 @@
 import React from 'react';
+import { NativeConnectionFailureHint } from './native/NativeConnectionFailureHint';
+import { isCapacitorApp } from '@/lib/platform';
+import { MobileFullscreenSurface } from './MobileFullscreenSurface';
+const NativeOfflineView = React.lazy(() => import('./native/NativeOfflineView').then((module) => ({ default: module.NativeOfflineView })));
 
 import { Icon } from '@/components/icon/Icon';
 import { Button } from '@/components/ui/button';
@@ -21,6 +25,7 @@ export const MobileConnectionWelcome: React.FC<{
   /** Why the user landed here (failed cold-launch auto-connect) — shown as a banner. */
   notice?: MobileConnectionNotice | null;
 }> = ({ onConnected, notice = null }) => {
+  const [offlineOpen, setOfflineOpen] = React.useState(false);
   const conn = useMobileConnection(onConnected);
   const { connections, isBusy, isPasswordBusy, error, pendingConnection } = conn;
   const [serverUrl, setServerUrl] = React.useState('');
@@ -227,6 +232,10 @@ export const MobileConnectionWelcome: React.FC<{
             ) : null}
 
             {error && !manualOpen ? <p className="px-1 text-center typography-small text-[var(--status-error)]">{error}</p> : null}
+
+            {error && isCapacitorApp() && <NativeConnectionFailureHint />}
+            <Button variant="ghost" onClick={() => setOfflineOpen(true)}>Offline copies</Button>
+            {offlineOpen && <MobileFullscreenSurface open onClose={() => setOfflineOpen(false)} title="Offline copies" ariaLabel="Offline copies"><React.Suspense fallback={<p className="p-4" role="status">Loading…</p>}><NativeOfflineView /></React.Suspense></MobileFullscreenSurface>}
 
             {connections.length > 0 ? (
               <section className="flex w-full flex-col gap-2.5">

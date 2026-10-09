@@ -254,11 +254,14 @@ const SessionSidebarComponent: React.FC<SessionSidebarProps> = ({
   const setArchivePageOpen = useUIStore((state) => state.setArchivePageOpen);
   const showDeletionDialog = useUIStore((state) => state.showDeletionDialog);
   const setShowDeletionDialog = useUIStore((state) => state.setShowDeletionDialog);
+  const mobileAppActions = useMobileAppActions();
+  const nativeAppVariant = mobileVariant && mobileAppActions?.nativeApp === true;
+  const [mobileViewMode, setMobileViewMode] = React.useState<'timeline' | 'folder'>('timeline');
   const storedSidebarViewMode = useUIStore((state) => state.sidebarViewMode);
   const sidebarViewMode: SidebarViewMode =
     hideDirectoryControls || showOnlyMainWorkspace || !isSidebarViewMode(storedSidebarViewMode)
       ? 'workspace'
-      : storedSidebarViewMode;
+      : nativeAppVariant ? mobileViewMode : storedSidebarViewMode;
   const weekStartPreference = useUIStore((state) => state.weekStartPreference);
   const timelineWeekStart = React.useMemo(() => resolveTimelineWeekStart(weekStartPreference), [weekStartPreference]);
   const timelineBoundaries = useTimelineBoundaries(isVisible && sidebarViewMode === 'timeline', timelineWeekStart);
@@ -530,7 +533,6 @@ const SessionSidebarComponent: React.FC<SessionSidebarProps> = ({
     });
   }, [ updateStore]);
 
-  const mobileAppActions = useMobileAppActions();
   const handleOpenSettings = React.useCallback(() => {
     if (mobileVariant) {
       setSessionSwitcherOpen(false);
@@ -569,6 +571,7 @@ const SessionSidebarComponent: React.FC<SessionSidebarProps> = ({
     confirmDeleteSession,
   } = useSessionActions({
     mobileVariant,
+    nativeApp: mobileAppActions?.nativeApp === true,
     allowReselect,
     onSessionSelected,
     isSessionSearchOpen,
@@ -1363,7 +1366,18 @@ const SessionSidebarComponent: React.FC<SessionSidebarProps> = ({
         selectionModeEnabled={selectionModeEnabled}
         onToggleSelectionMode={handleToggleSelectionMode}
         mobileVariant={mobileVariant}
+        nativeAppVariant={nativeAppVariant}
+        onClose={nativeAppVariant ? onNavigateAway : undefined}
       />
+
+      {nativeAppVariant && !hideDirectoryControls ? (
+        <div className="flex shrink-0 items-center gap-2 px-2 pb-2" role="group" aria-label="Session view">
+          <Button variant="chip" size="sm" className="min-h-[44px] flex-1" aria-pressed={mobileViewMode === 'timeline'} onClick={() => setMobileViewMode('timeline')}>Recent</Button>
+          <Button variant="chip" size="sm" className="min-h-[44px] flex-1" aria-pressed={mobileViewMode === 'folder'} onClick={() => setMobileViewMode('folder')}>Projects</Button>
+          <Button variant="ghost" size="icon" className="min-h-[44px] min-w-[44px]" onClick={handleOpenDirectoryDialog} aria-label="Add project"><Icon name="folder-add" className="size-4" /></Button>
+          <Button variant="ghost" size="icon" className="min-h-[44px] min-w-[44px]" onClick={() => setArchivePageOpen(true)} aria-label="Archive"><Icon name="archive" className="size-4" /></Button>
+        </div>
+      ) : null}
 
       {piConnection === 'error' || piConnection === 'unavailable' ? (
         <div
@@ -1430,6 +1444,7 @@ const SessionSidebarComponent: React.FC<SessionSidebarProps> = ({
         hideDirectoryControls={hideDirectoryControls}
         projectRepoStatus={projectRepoStatus}
         mobileVariant={mobileVariant}
+        nativeAppVariant={nativeAppVariant}
         alwaysShowActions={alwaysShowSidebarActions}
         toggleProject={toggleProject}
         setActiveProjectIdOnly={setActiveProjectIdOnly}
@@ -1447,12 +1462,31 @@ const SessionSidebarComponent: React.FC<SessionSidebarProps> = ({
         isInlineEditing={isInlineEditing}
       />
 
+      {/* Phone actions occupy their own layout row, so the final session
+          remains reachable without padding for an overlapping control. */}
+      {nativeAppVariant && !(selectionModeEnabled && hasSelection) ? (
+        <div className="flex shrink-0 flex-col gap-2 border-t border-border/70 bg-sidebar px-2 pt-2 pb-[calc(0.5rem+var(--oc-safe-area-bottom,0px))]">
+          <BackgroundTasksMenu variant="mobile" />
+          <Button
+            type="button"
+            variant="default"
+            size="lg"
+            className="w-full"
+            onClick={handleOpenNewSessionDraftFromHeader}
+            aria-label="New session"
+          >
+            <Icon name="chat-new" className="size-4" />
+            New session
+          </Button>
+        </div>
+      ) : null}
+
       {/* Dedicated mobile: the new-session action floats above the session
           list, docked to the sidebar bottom with a sidebar-toned fade so the
           last rows stay readable underneath. Hidden while the bulk selection
           bar owns the bottom edge. The tablet sidebar keeps the SidebarNav
           control instead (mobileVariant is false there). */}
-      {mobileVariant && !(selectionModeEnabled && hasSelection) ? (
+      {mobileVariant && !nativeAppVariant && !(selectionModeEnabled && hasSelection) ? (
         <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 flex flex-col gap-2 bg-gradient-to-t from-sidebar via-sidebar/85 to-transparent px-4 pb-[calc(0.75rem+var(--oc-safe-area-bottom,0px))] pt-10">
           <BackgroundTasksMenu variant="mobile" />
           <Button

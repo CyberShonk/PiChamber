@@ -1,4 +1,7 @@
 import React from 'react';
+import { useMobileAppActions } from '@/apps/mobileAppContext';
+import { getRuntimeKey } from '@/lib/runtime-switch';
+import { useSessionUIStore } from '@/sync/session-ui-store';
 
 import { toast } from '@/components/ui';
 import type { AttachedFile } from '@/stores/types/sessionTypes';
@@ -48,6 +51,7 @@ export function useComposerPaste({
   attachedFiles,
   addAttachedFile,
 }: UseComposerPasteOptions): (event: ClipboardEvent) => Promise<void> {
+  const nativeApp = useMobileAppActions()?.nativeApp === true;
   const pendingPastedAttachmentFilenamesRef = React.useRef<Set<string>>(new Set());
 
   return React.useCallback(
@@ -97,6 +101,20 @@ export function useComposerPaste({
 
       const imageFiles = Array.from(fileMap.values());
       const pastedText = e.clipboardData.getData('text');
+      if (nativeApp && enabled && imageFiles.length === 0 && pastedText.length >= 10000) {
+        e.preventDefault();
+        const editor = composerRef.current;
+        const runtimeKey = getRuntimeKey();
+        const sessionId = useSessionUIStore.getState().currentSessionId;
+        const current = () => editor && composerRef.current === editor && runtimeKey === getRuntimeKey() && sessionId === useSessionUIStore.getState().currentSessionId;
+        toast.info('Large paste', {
+          description: 'Attach as a text file to keep the composer responsive, or paste into the editor.',
+          duration: 12000,
+          action: { label: 'Attach text', onClick: () => { if (current()) void addAttachedFile(new File([pastedText], `paste-${Date.now()}.txt`, { type: 'text/plain' })).catch(() => toast.error('Text could not be attached.')); } },
+          cancel: { label: 'Paste text', onClick: () => { if (current()) { markFileMentionPasteSuppression(); editor?.insertText(pastedText); } } },
+        });
+        return;
+      }
       if (imageFiles.length === 0) {
         if (pastedText.includes('@')) {
           markFileMentionPasteSuppression();
@@ -148,6 +166,7 @@ export function useComposerPaste({
       );
     },
     [
+      nativeApp,
       addAttachedFile,
       attachedFiles,
       composerRef,

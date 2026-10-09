@@ -241,3 +241,17 @@ strength of type-check and unit tests.
 
 Run tests per file (`bun test <path>`): `mock.module` is process-global, so
 suites that install module mocks are order-dependent.
+
+## Native GitHub linking
+
+ComposerFooter reads the dedicated mobile provider's `nativeApp` capability
+and passes it to ComposerAttachmentControls. A native phone gets a separate
+GitHub link button beside the direct file picker, using the same attachment
+disabled gate. Hosted phone layout keeps its direct picker without this button;
+desktop keeps its existing attach menu. The shared link picker and insertion
+behavior are reused without changing the host API.
+
+Native app controls optionally provide keyboard dismissal without clearing the
+draft, light send feedback and a text attachment choice for pastes over 10,000
+characters. Delayed paste actions check host, session and editor identity before
+changing content. Hosted and desktop composer behavior remains unchanged.

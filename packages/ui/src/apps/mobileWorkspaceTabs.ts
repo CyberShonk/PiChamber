@@ -3,14 +3,13 @@ import type { IconName } from '@/components/icon/icons';
 /**
  * Capacitor mobile workspace tabs (phone drawer + tablet side panel/header).
  *
- * Intentional v1 parity differences with the desktop rail (see
+ * Mobile presentation differences with the desktop rail (see
  * `packages/ui/src/apps/DOCUMENTATION.md` and `packages/mobile/README.md`):
  * - Labels are short ("PRs", "Issues") for the narrow drawer tab strip.
- * - PR detail shows Overview and Checks: the drawer renders
- *   `PullRequestsSurface hideFilesTab`. Files/review on mobile is a follow-up.
- * - No composer link picker on mobile (no attach-menu entry point).
+ * - Context and Extensions are explicit destinations, including their empty states.
+ * - GitHub availability and the scrollable strip keep navigation compact.
  */
-export type MobileWorkspaceTab = 'changes' | 'files' | 'terminal' | 'pull-requests' | 'issues';
+export type MobileWorkspaceTab = 'changes' | 'files' | 'terminal' | 'pull-requests' | 'issues' | 'context' | 'extensions';
 
 export type MobileWorkspaceTabDef = {
   id: MobileWorkspaceTab;
@@ -28,6 +27,8 @@ export const MOBILE_WORKSPACE_TABS: readonly MobileWorkspaceTabDef[] = [
   // every switch. Stores restore filters/selection either way.
   { id: 'pull-requests', label: 'PRs', icon: 'git-pull-request' },
   { id: 'issues', label: 'Issues', icon: 'task' },
+  { id: 'context', label: 'Context', icon: 'donut-chart-fill' },
+  { id: 'extensions', label: 'Extensions', icon: 'plug-2' },
 ];
 
 const KNOWN_TABS: ReadonlySet<string> = new Set(MOBILE_WORKSPACE_TABS.map((tab) => tab.id));
@@ -40,8 +41,8 @@ export const isMobileWorkspaceTab = (value: unknown): value is MobileWorkspaceTa
  * Sanitize any persisted or external tab value (older builds stored only the
  * three core tabs; unknown values fall back to Changes, never throw).
  */
-export const sanitizeMobileWorkspaceTab = (value: unknown): MobileWorkspaceTab => {
-  return isMobileWorkspaceTab(value) ? value : 'changes';
+export const sanitizeMobileWorkspaceTab = (value: unknown, nativeApp = false): MobileWorkspaceTab => {
+  return isMobileWorkspaceTab(value) && (nativeApp || (value !== 'context' && value !== 'extensions')) ? value : 'changes';
 };
 
 export const isMobileGitHubTab = (tab: MobileWorkspaceTab): boolean => {
@@ -54,9 +55,11 @@ export const isMobileGitHubTab = (tab: MobileWorkspaceTab): boolean => {
  * `lib/surfaces/registry` and passes the boolean here so this module stays
  * free of store subscriptions (and stays unit-testable in isolation).
  */
-export const getVisibleMobileWorkspaceTabs = (githubAvailable: boolean): readonly MobileWorkspaceTabDef[] => {
-  if (githubAvailable) return MOBILE_WORKSPACE_TABS;
-  return MOBILE_WORKSPACE_TABS.filter((tab) => !isMobileGitHubTab(tab.id));
+export const getVisibleMobileWorkspaceTabs = (githubAvailable: boolean, nativeApp = false): readonly MobileWorkspaceTabDef[] => {
+  return MOBILE_WORKSPACE_TABS.filter((tab) =>
+    (githubAvailable || !isMobileGitHubTab(tab.id))
+    && (nativeApp || (tab.id !== 'context' && tab.id !== 'extensions')),
+  );
 };
 
 /**

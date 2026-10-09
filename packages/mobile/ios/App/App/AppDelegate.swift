@@ -93,6 +93,7 @@ class BridgeViewController: CAPBridgeViewController {
 
     override func capacitorDidLoad() {
         super.capacitorDidLoad()
+        bridge?.registerPluginInstance(NativeAppPlugin())
         // GCKeyboard is the only authoritative answer to "is a hardware keyboard
         // attached?". The web layer can otherwise only INFER it from a keyboard
         // that never appears, which costs the user one focus before the layout
@@ -104,6 +105,7 @@ class BridgeViewController: CAPBridgeViewController {
         // what actually settles it once the page exists.
         let attached = GCKeyboard.coalesced != nil
         let source = """
+        window.__PICHAMBER_NATIVE_KEYBOARD_FRAMES__ = true;
         window.__PICHAMBER_APNS_ENV__ = '\(apnsEnvironment)';
         window.__PICHAMBER_HARDWARE_KEYBOARD__ = \(attached ? "true" : "false");
         """
@@ -111,6 +113,8 @@ class BridgeViewController: CAPBridgeViewController {
             WKUserScript(source: source, injectionTime: .atDocumentStart, forMainFrameOnly: true)
         )
         observeHardwareKeyboard()
+        observeKeyboardFrames()
+        webView?.scrollView.keyboardDismissMode = .interactive
     }
 
     override func viewDidAppear(_ animated: Bool) {
@@ -150,6 +154,27 @@ class BridgeViewController: CAPBridgeViewController {
                 self?.publishHardwareKeyboardState(GCKeyboard.coalesced != nil)
             },
         ]
+    }
+
+    private func observeKeyboardFrames() {
+        let center = NotificationCenter.default
+        for name in [UIResponder.keyboardWillChangeFrameNotification, UIResponder.keyboardDidChangeFrameNotification] {
+            keyboardObservers.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] notification in
+                guard let webView = self?.webView, let screen = webView.window?.screen,
+                      let frame = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect else { return }
+                let local = webView.convert(frame, from: screen.coordinateSpace)
+                let overlap = webView.bounds.intersection(local)
+                // Floating/split keyboards must not shrink the whole workspace.
+                let docked = !overlap.isNull && local.maxY >= webView.bounds.maxY - 1 && local.width >= webView.bounds.width * 0.9
+                let height = docked ? max(0, overlap.height) : 0
+                let duration = (notification.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? NSNumber)?.doubleValue ?? 0
+                let curve = (notification.userInfo?[UIResponder.keyboardAnimationCurveUserInfoKey] as? NSNumber)?.intValue ?? 0
+                let settled = name == UIResponder.keyboardDidChangeFrameNotification
+                let detail: [String: Any] = ["height": height, "durationMs": duration * 1000, "curve": curve, "settled": settled, "reduceMotion": UIAccessibility.isReduceMotionEnabled]
+                guard let data = try? JSONSerialization.data(withJSONObject: detail), let json = String(data: data, encoding: .utf8) else { return }
+                webView.evaluateJavaScript("window.dispatchEvent(new CustomEvent('oc:native-keyboard-frame', {detail: \(json)}));")
+            })
+        }
     }
 
     private func publishHardwareKeyboardState(_ attached: Bool) {

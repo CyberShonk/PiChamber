@@ -1,4 +1,6 @@
 import React from 'react';
+import { normalizeKeyboardFrame } from './native/keyboardFrame';
+import { getNativePreferences } from './native/preferences';
 
 import { observeNativeKeyboardHeight, resetHardwareKeyboardDetection, startHardwareKeyboardBridge } from '@/lib/hardwareKeyboard';
 import { recordMobileDiagnostic } from '@/lib/mobile-error-log';
@@ -47,7 +49,9 @@ export const useNativeMobileChrome = (): void => {
       // letting an opaque status-bar background flash in at the top — so re-assert it
       // on mount, once shortly after (startup race), and whenever the app re-activates.
       const platform = (window as typeof window & { Capacitor?: { getPlatform?: () => string } }).Capacitor?.getPlatform?.();
+      let appliedNativeMode: string | undefined;
       const applyStatusBar = async () => {
+        if (disposed) return;
         if (platform === 'android') {
           // Inset the WebView below the bar and paint it with the resolved theme background
           // (the splash colours the theme system persists). On Android 15+ edge-to-edge is
@@ -65,11 +69,27 @@ export const useNativeMobileChrome = (): void => {
           await StatusBar.show().catch(() => undefined);
           return;
         }
-        await StatusBar.setStyle({ style: Style.Default }).catch(() => undefined);
+        const isDark = root.classList.contains('dark');
+        const mode = root.dataset.nativeThemeMode;
+        const nativeMode = mode === 'dark' || mode === 'light' ? mode : 'system';
+        if ((window as typeof window & { __PICHAMBER_NATIVE_KEYBOARD_FRAMES__?: boolean }).__PICHAMBER_NATIVE_KEYBOARD_FRAMES__ && nativeMode !== appliedNativeMode) {
+          const { NativeApp } = await import('./native/device');
+          await NativeApp.setAppearance({ mode: nativeMode }).then(() => { appliedNativeMode = nativeMode; }).catch(() => undefined);
+        }
+        await StatusBar.setStyle({ style: isDark ? Style.Dark : Style.Light }).catch(() => undefined);
         await StatusBar.setOverlaysWebView({ overlay: true }).catch(() => undefined);
         await StatusBar.show().catch(() => undefined);
       };
       await applyStatusBar();
+      let observedTheme = `${root.dataset.nativeThemeMode}:${root.classList.contains('dark')}`;
+      const observer = new MutationObserver(() => {
+        const next = `${root.dataset.nativeThemeMode}:${root.classList.contains('dark')}`;
+        if (next === observedTheme) return;
+        observedTheme = next;
+        void applyStatusBar();
+      });
+      observer.observe(root, { attributes: true, attributeFilter: ['class', 'data-native-theme-mode'] });
+      cleanup.push(() => observer.disconnect());
       const retry = window.setTimeout(() => void applyStatusBar(), 400);
       cleanup.push(() => window.clearTimeout(retry));
 
@@ -141,11 +161,12 @@ export const useNativeMobileChrome = (): void => {
       // height (--oc-kb-layout) snaps exactly once per open/close at the moment the
       // resize is invisible. visualViewport tracking was tried but doesn't shrink
       // under WKWebView's `resize: 'none'`, so these events are the reliable signal.
-      const KB_ANIM_MS = 250;
+      const nativeFrames = (window as typeof window & { __PICHAMBER_NATIVE_KEYBOARD_FRAMES__?: boolean }).__PICHAMBER_NATIVE_KEYBOARD_FRAMES__ === true;
+      let KB_ANIM_MS = 250;
       // Dismissal reads faster than the rise — run the hide leg shorter (kept in
       // sync with the .oc-kb-hide transition-duration override in mobile.css).
-      const KB_HIDE_MS = 200;
-      const KB_ANIM_EASING = 'cubic-bezier(0.38, 0.7, 0.125, 1)';
+      let KB_HIDE_MS = 200;
+      let KB_ANIM_EASING = 'cubic-bezier(0.38, 0.7, 0.125, 1)';
       let settleTimer: number | null = null;
       let caretTimer: number | null = null;
       let keyboardHeight = 0;
@@ -186,7 +207,9 @@ export const useNativeMobileChrome = (): void => {
         }
       };
 
-      const showHandle = await Keyboard.addListener('keyboardWillShow', (info) => {
+      const showKeyboard = (info: { keyboardHeight: number }) => {
+        if (disposed) return;
+        const previousHeight = layoutApplied ? keyboardHeight : 0;
         clearSettle();
         observeNativeKeyboardHeight(info.keyboardHeight);
         keyboardOpen = true;
@@ -198,7 +221,7 @@ export const useNativeMobileChrome = (): void => {
           const shell = document.querySelector('.oc-mobile-app-shell');
           safeBottomPx = shell ? parseFloat(getComputedStyle(shell).paddingBottom) || 0 : 0;
         }
-        const slide = Math.max(0, keyboardHeight - safeBottomPx);
+        const slide = layoutApplied ? keyboardHeight - previousHeight : Math.max(0, keyboardHeight - safeBottomPx);
         root.classList.remove('oc-kb-hide');
         // WKWebView renders the caret as a native layer that doesn't ride CSS
         // transforms — after the rise it visibly "flies" from the pre-keyboard
@@ -220,7 +243,7 @@ export const useNativeMobileChrome = (): void => {
         // of waiting for it to finish. `slide` (keyboard minus the safe inset
         // the shell gives up) is exactly the strip the scroller loses at
         // settle, so pin position and settle stay geometry-neutral.
-        setVar('--oc-kb-scroll-inset', slide);
+        setVar('--oc-kb-scroll-inset', Math.max(0, keyboardHeight - safeBottomPx));
         dispatchKb('oc:keyboard-settled', { open: true });
         dispatchKb('oc:keyboard-anim', { phase: 'show', slide, durationMs: KB_ANIM_MS, easing: KB_ANIM_EASING });
         settleTimer = window.setTimeout(() => {
@@ -236,9 +259,10 @@ export const useNativeMobileChrome = (): void => {
           caretTimer = window.setTimeout(() => {
             caretTimer = null;
             root.classList.remove('oc-kb-caret-hold');
-          }, 250);
-        }, KB_ANIM_MS + 20);
-      });
+          }, nativeFrames ? 0 : 250);
+        }, KB_ANIM_MS + (nativeFrames ? 0 : 20));
+      };
+      const showHandle = await Keyboard.addListener('keyboardWillShow', (info) => { if (!nativeFrames) showKeyboard(info); });
 
       // Shared hide choreography. The bridge's `keyboardWillHide` can arrive a
       // beat AFTER the native dismiss animation has already started (WKWebView +
@@ -247,6 +271,7 @@ export const useNativeMobileChrome = (): void => {
       // dismissal path (tap outside the input) is the textarea's focusout — so
       // both trigger this, and `keyboardOpen` makes the second call a no-op.
       const runHide = () => {
+        if (disposed) return;
         if (!keyboardOpen) return;
         keyboardOpen = false;
         clearSettle();
@@ -295,7 +320,18 @@ export const useNativeMobileChrome = (): void => {
         }, KB_HIDE_MS + 20);
       };
 
-      const hideHandle = await Keyboard.addListener('keyboardWillHide', runHide);
+      const hideHandle = await Keyboard.addListener('keyboardWillHide', () => { if (!nativeFrames) runHide(); });
+      const handleNativeFrame = (event: Event) => {
+        const frame = normalizeKeyboardFrame((event as CustomEvent<unknown>).detail, window.innerHeight);
+        if (!frame || disposed) return;
+        if (frame.settled) return;
+        KB_ANIM_MS = KB_HIDE_MS = getNativePreferences().reduceMotion ? 0 : frame.durationMs;
+        KB_ANIM_EASING = frame.easing;
+        if (frame.height > 0) showKeyboard({ keyboardHeight: frame.height });
+        else runHide();
+      };
+      if (nativeFrames) window.addEventListener('oc:native-keyboard-frame', handleNativeFrame);
+      cleanup.push(() => window.removeEventListener('oc:native-keyboard-frame', handleNativeFrame));
 
       // Early hide trigger: blurring the focused text field is what starts the
       // native dismiss animation, and it happens in-page — no bridge latency.
@@ -315,10 +351,11 @@ export const useNativeMobileChrome = (): void => {
           runHide();
         }, 0);
       };
-      document.addEventListener('focusout', handleFocusOut, true);
+      if (!nativeFrames) document.addEventListener('focusout', handleFocusOut, true);
 
       if (disposed) {
         clearSettle();
+        window.removeEventListener('oc:native-keyboard-frame', handleNativeFrame);
         document.removeEventListener('focusout', handleFocusOut, true);
         void showHandle.remove();
         void hideHandle.remove();
@@ -352,7 +389,9 @@ export const useNativeMobileChrome = (): void => {
 };
 
 export const useNativeMobileLifecycle = (onResume: () => void): void => {
-  const wasInactiveRef = React.useRef(false);
+  const wasBackgroundedRef = React.useRef(false);
+  const onResumeRef = React.useRef(onResume);
+  React.useEffect(() => { onResumeRef.current = onResume; }, [onResume]);
 
   React.useEffect(() => {
     if (!isCapacitorMobileApp()) return;
@@ -360,18 +399,18 @@ export const useNativeMobileLifecycle = (onResume: () => void): void => {
     let disposed = false;
     const cleanup: Array<() => void> = [];
     const resumeAfterInactive = () => {
-      if (!wasInactiveRef.current) return;
-      wasInactiveRef.current = false;
-      onResume();
+      if (!wasBackgroundedRef.current) return;
+      wasBackgroundedRef.current = false;
+      window.dispatchEvent(new Event('oc:app-resumed'));
+      onResumeRef.current();
     };
 
-    // Belt-and-suspenders resume detection. Capacitor's `appStateChange` is the
-    // primary signal, but on iOS it can be missed after a long suspend, so the
-    // webview's own `visibilitychange` is a second trigger — either one flips
-    // wasInactiveRef and fires onResume exactly once per background→foreground.
+    // iOS willResignActive also fires for overlays (Control Center, permission
+    // dialogs). Only pause (didEnterBackground) or a hidden WebView establishes
+    // a background cycle; becoming inactive alone must not replace a live stream.
     const handleVisibility = () => {
       if (document.visibilityState === 'hidden') {
-        wasInactiveRef.current = true;
+        wasBackgroundedRef.current = true;
         recordMobileDiagnostic('app-lifecycle', { code: 'hidden' });
         return;
       }
@@ -385,12 +424,15 @@ export const useNativeMobileLifecycle = (onResume: () => void): void => {
       if (disposed) return;
       const state = await App.addListener('appStateChange', ({ isActive }) => {
         document.documentElement.classList.toggle('oc-native-app-active', isActive);
-        recordMobileDiagnostic('app-lifecycle', { code: isActive ? 'resume' : 'pause' });
+        recordMobileDiagnostic('app-lifecycle', { code: isActive ? 'active' : 'inactive' });
         if (!isActive) {
-          wasInactiveRef.current = true;
           return;
         }
         resumeAfterInactive();
+      });
+      const pause = await App.addListener('pause', () => {
+        recordMobileDiagnostic('app-lifecycle', { code: 'background' });
+        wasBackgroundedRef.current = true;
       });
       const resume = await App.addListener('resume', () => {
         recordMobileDiagnostic('app-lifecycle', { code: 'resume' });
@@ -398,17 +440,18 @@ export const useNativeMobileLifecycle = (onResume: () => void): void => {
       });
       if (disposed) {
         void state.remove();
+        void pause.remove();
         void resume.remove();
         return;
       }
-      cleanup.push(() => void state.remove(), () => void resume.remove());
+      cleanup.push(() => void state.remove(), () => void pause.remove(), () => void resume.remove());
     }).catch(() => undefined);
 
     return () => {
       disposed = true;
       cleanup.forEach((remove) => remove());
     };
-  }, [onResume]);
+  }, []);
 };
 
 type NativeBackHandler = () => boolean;

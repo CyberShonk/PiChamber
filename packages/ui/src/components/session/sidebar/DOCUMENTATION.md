@@ -67,3 +67,18 @@ Working indicator: shown only while the session is streaming. `card` rows overla
 - `utils.ts`: Deduplication, search matching, path normalization, and shared row class names.
 - `highlightedText.tsx`: Search highlight markup for session and group labels.
 - `sidebarRowChrome.tsx`: Session-shaped row buttons.
+
+## Native phone presentation
+
+`SessionSidebar` derives `nativeAppVariant` from the dedicated mobile provider
+and phone variant. SidebarHeader and SidebarProjectsList receive this explicit
+opt-in. Native phone search stays visible without autofocus; its Close action
+returns to chat. Recent and Projects use local view state without changing the
+host's saved view preference. Actions occupy a footer row, so native list padding
+is 8px. Ordinary mobile callers retain their floating footer and 128px padding.
+Desktop and hosted mobile keep their existing search toggle and input behavior.
+
+Native session actions provide a six-second archive undo for IDs successfully
+archived by that action. Undo is fenced by runtime identity and restores with
+bounded concurrency; partial failure is visible. Delete remains explicit and
+has no undo. Other runtimes retain their existing archive feedback.

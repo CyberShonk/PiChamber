@@ -177,15 +177,17 @@ export const exportMobileErrorLog = async (): Promise<MobileErrorLogExportResult
 
   // Android WebView has no navigator.share; use the native share sheet.
   const capacitor = (window as typeof window & { Capacitor?: { getPlatform?: () => string } }).Capacitor;
-  if (capacitor?.getPlatform?.() === 'android') {
+  if (capacitor?.getPlatform?.() === 'android' || capacitor?.getPlatform?.() === 'ios') {
     try {
-      await saveOrShareFile({
+      const result = await saveOrShareFile({
         filename: 'pichamber-mobile-diagnostics.json',
         mimeType: 'application/json',
         data: text,
       });
-      return 'shared';
-    } catch {
+      if (result === 'cancelled') throw new Error('Diagnostics export was cancelled');
+      return result === 'downloaded' ? 'downloaded' : 'shared';
+    } catch (error) {
+      if (error instanceof Error && error.message === 'Diagnostics export was cancelled') throw error;
       // Older native build without the plugin: fall back to the clipboard.
     }
   }

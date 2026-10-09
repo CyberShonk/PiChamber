@@ -244,7 +244,7 @@ const installDom = () => {
       parentNode: null,
       childNodes: [] as unknown[],
       style: { setProperty: noop, removeProperty: noop, getPropertyValue: () => '' },
-      classList: { add: noop, remove: noop, contains: () => false },
+      classList: { add: noop, remove: noop, contains: () => false, toggle: () => false },
       setAttribute: noop,
       removeAttribute: noop,
       getAttribute: () => null,
