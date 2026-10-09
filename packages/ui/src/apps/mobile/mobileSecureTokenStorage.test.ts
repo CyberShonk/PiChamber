@@ -323,11 +323,12 @@ describe('autoConnectLastInstance secure read error discrimination', () => {
     // Secure read returns null (missing)
     secureStorageGetHandler = async () => ({ data: null });
 
+    globalThis.fetch = (async (input) => String(input).endsWith('/health') ? Response.json({ ok: true }) : Response.json({ authenticated: false }, { status: 401 })) as typeof fetch;
     const outcome = await transport.autoConnectLastInstance();
     expect(outcome).toEqual({ status: 'needs-login', label: 'My Server' });
   });
 
-  test('maps candidate without hasToken to no-candidate', async () => {
+  test('keeps a tokenless host unreachable when no authoritative auth response arrives', async () => {
     // Seed saved connection with hasToken=false
     const raw = [
       {
@@ -341,7 +342,7 @@ describe('autoConnectLastInstance secure read error discrimination', () => {
     windowHandle.store.set('pichamber.mobile.connections.v1', JSON.stringify(raw));
 
     const outcome = await transport.autoConnectLastInstance();
-    expect(outcome).toEqual({ status: 'no-candidate' });
+    expect(outcome).toEqual({ status: 'unreachable', label: 'Unauthenticated Server' });
     expect(secureStorageGetCalls).toBe(0);
   });
 
@@ -386,6 +387,7 @@ describe('reprobeActiveConnection secure read discrimination', () => {
   test('an authoritatively absent saved token enters the re-pair flow', async () => {
     await seedActive();
     secureStorageGetHandler = async () => ({ data: null });
+    globalThis.fetch = (async (input) => String(input).endsWith('/health') ? Response.json({ ok: true }) : Response.json({ authenticated: false }, { status: 401 })) as typeof fetch;
     expect(await transport.reprobeActiveConnection()).toBe('needs-login');
   });
 
@@ -397,3 +399,27 @@ describe('reprobeActiveConnection secure read discrimination', () => {
     expect(await transport.reprobeActiveConnection()).toBe('unreachable');
   });
 });
+
+for (const hasToken of [false, true]) {
+  test(`passwordless host resumes and cold-starts with saved hasToken=${hasToken}`, async () => {
+    const candidate = { id: 'passwordless', label: 'Host', candidates: [{ kind: 'direct', url: 'https://host.example' }], hasToken, lastUsedAt: 0 };
+    windowHandle.store.set('pichamber.mobile.connections.v1', JSON.stringify([candidate]));
+    runtimeKey = 'https://host.example';
+    apiBaseUrl = 'https://host.example';
+    secureStorageGetHandler = async () => ({ data: null });
+    globalThis.fetch = (async (input) => String(input).endsWith('/health') ? Response.json({ ok: true }) : Response.json({ disabled: true, authenticated: true })) as typeof fetch;
+    expect(await transport.reprobeActiveConnection()).toBe('switched');
+    expect(storage.readConnections()[0]?.hasToken).toBe(false);
+    expect(switchCalls[0]?.clientToken).toBeNull();
+    runtimeKey = ''; apiBaseUrl = '';
+    expect(await transport.autoConnectLastInstance()).toEqual({ status: 'connected' });
+  });
+}
+for (const session of [{ authenticated: true }, { authenticated: true, scope: 'client' }, { disabled: false, authenticated: false }]) {
+  test(`missing native bearer never accepts ambient authentication ${JSON.stringify(session)}`, async () => {
+    windowHandle.store.set('pichamber.mobile.connections.v1', JSON.stringify([{ id: 'protected', label: 'Host', candidates: [{ kind: 'direct', url: 'https://host.example' }], hasToken: false }]));
+    globalThis.fetch = (async (input) => String(input).endsWith('/health') ? Response.json({ ok: true }) : Response.json(session)) as typeof fetch;
+    expect(await transport.autoConnectLastInstance()).toEqual({ status: 'needs-login', label: 'Host' });
+    expect(switchCalls).toHaveLength(0);
+  });
+}

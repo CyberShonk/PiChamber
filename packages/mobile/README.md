@@ -136,3 +136,10 @@ iOS application and provisioning profile must include the push entitlement.
 The app identifies a missing entitlement when iOS reports it; device registration
 failures occur before host token registration. Re-pairing issues a new host
 credential after revocation; never restore or un-revoke an old token manually.
+
+Saved connections to authentication-disabled hosts can auto-connect and recover
+without a stored bearer. A missing Keychain item triggers a host auth check rather
+than an immediate expired-access notice. Protected hosts still require a new
+credential. Diagnostic credential-read entries distinguish missing data and read
+failure. Native archive navigation reserves iOS safe areas and keeps its Close
+control in a header. Session context menus provide impact feedback on opening.

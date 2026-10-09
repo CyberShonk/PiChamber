@@ -82,3 +82,9 @@ Native session actions provide a six-second archive undo for IDs successfully
 archived by that action. Undo is fenced by runtime identity and restores with
 bounded concurrency; partial failure is visible. Delete remains explicit and
 has no undo. Other runtimes retain their existing archive feedback.
+
+The native Archive dialog reserves top and bottom safe areas, supplies a visible
+close header, and stacks the directory filter above the list on phones. Native
+restore/delete actions stay visible with touch targets. Other runtimes retain
+the original dialog layout. Native session context-menu opening emits one impact
+haptic through the preference-aware, rate-limited native feedback bridge.
