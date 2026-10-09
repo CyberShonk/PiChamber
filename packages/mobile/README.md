@@ -91,8 +91,8 @@ action footer. The title switcher searches 50 recent sessions and can open the
 full drawer. Hosted browser presentation keeps its original defaults.
 
 Temporary iOS overlays do not trigger stream replacement. Recovery follows
-actual backgrounding or hidden WebView visibility and consumes duplicate resume
-signals once. Mobile paired-host probes require the expected server ID before
+native backgrounding on iOS, with a hidden WebView fallback on Android, and
+consumes duplicate resume signals once. Mobile paired-host probes require the expected server ID before
 sending credentials. This is a routing check, not certificate pinning. HTTP and
 HTTPS remain supported; URLs containing credentials are rejected.
 
@@ -130,3 +130,9 @@ floating keyboards and use system geometry/timing for docked keyboards. Verify
 rotation, dictation height changes, interactive dismissal and Reduce Motion on
 physical devices. The source does not add a share extension or background
 execution entitlement. Incoming content still uses the existing picker/paste flow.
+
+A notification permission grant does not prove APNs registration. The signed
+iOS application and provisioning profile must include the push entitlement.
+The app identifies a missing entitlement when iOS reports it; device registration
+failures occur before host token registration. Re-pairing issues a new host
+credential after revocation; never restore or un-revoke an old token manually.

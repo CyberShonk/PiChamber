@@ -397,6 +397,8 @@ export const useNativeMobileLifecycle = (onResume: () => void): void => {
     if (!isCapacitorMobileApp()) return;
 
     let disposed = false;
+    const platform = (window as typeof window & { Capacitor?: { getPlatform?: () => string } }).Capacitor?.getPlatform?.();
+    const isIOS = platform === 'ios' || (!platform && window.location.protocol === 'capacitor:');
     const cleanup: Array<() => void> = [];
     const resumeAfterInactive = () => {
       if (!wasBackgroundedRef.current) return;
@@ -406,11 +408,12 @@ export const useNativeMobileLifecycle = (onResume: () => void): void => {
     };
 
     // iOS willResignActive also fires for overlays (Control Center, permission
-    // dialogs). Only pause (didEnterBackground) or a hidden WebView establishes
-    // a background cycle; becoming inactive alone must not replace a live stream.
+    // dialogs). iOS WebView visibility can also change beneath an overlay.
+    // Only native pause establishes an iOS background cycle; Android retains
+    // its visibility fallback. Becoming inactive must not replace a live stream.
     const handleVisibility = () => {
       if (document.visibilityState === 'hidden') {
-        wasBackgroundedRef.current = true;
+        if (!isIOS) wasBackgroundedRef.current = true;
         recordMobileDiagnostic('app-lifecycle', { code: 'hidden' });
         return;
       }

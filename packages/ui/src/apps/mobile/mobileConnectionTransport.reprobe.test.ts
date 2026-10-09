@@ -603,3 +603,22 @@ describe('direct host identity before credential use', () => {
     }
   });
 });
+
+for (const status of [403, 408, 429, 500, 502, 503]) {
+  test(`relay session HTTP ${status} preserves credentials for recovery`, async () => {
+    try {
+      tunnelFetchHandler = async () => ({ ok: false, status, json: async () => ({}) });
+      const result = await transport.probeRelaySession({ relayUrl: 'wss://relay.example', serverId: 'test', hostEncPubJwk: { kty: 'EC', crv: 'P-256', x: 'x', y: 'y' } }, 'test-token');
+      expect(result.outcome).toBe('unreachable');
+      expect(tunnelCloseCount).toBe(1);
+      expect(switchCalls).toHaveLength(0);
+    } finally { restoreAfterEach(); }
+  });
+}
+test('relay session HTTP 401 still requires a new credential', async () => {
+  try {
+    tunnelFetchHandler = async () => ({ ok: false, status: 401, json: async () => ({}) });
+    const result = await transport.probeRelaySession({ relayUrl: 'wss://relay.example', serverId: 'test', hostEncPubJwk: { kty: 'EC', crv: 'P-256', x: 'x', y: 'y' } }, 'test-token');
+    expect(result.outcome).toBe('auth-failed');
+  } finally { restoreAfterEach(); }
+});

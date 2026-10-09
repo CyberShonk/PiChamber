@@ -73,7 +73,15 @@ export const useNativePushRegistration = ({ enabled }: { enabled: boolean }): vo
       const registration = await PushNotifications.addListener('registration', (token) => { void registerToken(token.value); });
       if (!isCurrent()) { void registration.remove(); return; }
       handles.push(registration);
-      const error = await PushNotifications.addListener('registrationError', () => fail('iOS or Android could not register for push notifications.'));
+      const error = await PushNotifications.addListener('registrationError', (event) => {
+        if (timeout) clearTimeout(timeout);
+        // Classify known platform errors without displaying native payloads,
+        // which may include identifiers or other private device data.
+        const missingEntitlement = getClientPlatform() === 'ios' && /aps-environment|push.*entitlement/i.test(event.error ?? '');
+        fail(missingEntitlement
+          ? 'This signed app lacks the push notification entitlement. Install a build signed with a push-enabled provisioning profile.'
+          : 'The device could not register for push notifications. Check connectivity and the app signing profile.');
+      });
       if (!isCurrent()) { void error.remove(); return; }
       handles.push(error);
       timeout = setTimeout(() => fail('Device registration timed out. Retry when online.'), 15000);
