@@ -1,4 +1,5 @@
 import React from 'react';
+import { NativeAppearanceSettings } from '@/apps/native/NativeAppearanceSettings';
 import { runtimeFetch } from '@/lib/runtime-fetch';
 
 import { useThemeSystem } from '@/contexts/useThemeSystem';
@@ -466,6 +467,8 @@ export const PiChamberVisualSettings: React.FC<PiChamberVisualSettingsProps> = (
                     setDockBadgeEnabled={setDockBadgeEnabled}
                 />
             )}
+
+            {hasAppearanceSettings && hasThemeSettings && <NativeAppearanceSettings />}
 
             {/* --- Navigation --- */}
             {hasNavigationSettings && (

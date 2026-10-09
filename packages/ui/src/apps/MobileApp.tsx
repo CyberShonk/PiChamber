@@ -45,6 +45,7 @@ import { reconnectAppForTransportSwitch, resetAppForRuntimeEndpointChange } from
 import { useAppFontEffects } from './useAppFontEffects';
 import { useFontsReady } from './useFontsReady';
 import { useDeepLinkSource } from './deepLinkNavigation';
+import { useNativeEnhancements } from './native/useNativeEnhancements';
 
 type MobileAppProps = {
   apis: RuntimeAPIs;
@@ -92,6 +93,7 @@ export function MobileApp({ apis }: MobileAppProps) {
   // no remount. The value itself is unused; only the re-render matters.
   const [, bumpTransportSwitch] = React.useReducer((count: number) => count + 1, 0);
   const isNativeMobileApp = React.useMemo(() => isCapacitorMobileApp(), []);
+  useNativeEnhancements(isNativeMobileApp);
   const lastNativeResumeSyncEventAtRef = React.useRef(0);
   const nativeResumeValidationSeqRef = React.useRef(0);
   const autoConnectInFlightRef = React.useRef(false);

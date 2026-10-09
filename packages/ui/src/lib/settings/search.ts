@@ -1,3 +1,4 @@
+import { isCapacitorApp, getClientPlatform } from '@/lib/platform';
 import type { SettingsPageSlug, SettingsRuntimeContext } from './metadata';
 import { getSettingsPageMeta } from './metadata';
 
@@ -620,6 +621,41 @@ const SETTINGS_SEARCH_ITEMS: readonly SettingsSearchItem[] = [
     title: "Start Tunnel",
     description: "Connect links are one-time and are revoked when tunnel stops or connect-link TTL expires.",
     keywords: ['connect link', 'qr code', 'public url', 'remote access'],
+  },
+  {
+    id: 'appearance.native-haptics',
+    page: 'appearance',
+    title: 'Haptic feedback',
+    keywords: ['vibration', 'touch', 'feedback', 'ios'],
+    isAvailable: () => isCapacitorApp() && getClientPlatform() === 'ios',
+  },
+  {
+    id: 'appearance.offline-copies',
+    page: 'appearance',
+    title: 'Allow offline copies',
+    keywords: ['cache', 'offline', 'snapshot', 'privacy', 'storage'],
+    isAvailable: () => isCapacitorApp(),
+  },
+  {
+    id: 'appearance.clear-offline-copies',
+    page: 'appearance',
+    title: 'Clear offline copies',
+    keywords: ['delete', 'cache', 'offline', 'storage', 'privacy'],
+    isAvailable: () => isCapacitorApp(),
+  },
+  {
+    id: 'appearance.native-reduce-motion',
+    page: 'appearance',
+    title: 'Reduce motion',
+    keywords: ['animation', 'accessibility', 'device'],
+    isAvailable: () => isCapacitorApp(),
+  },
+  {
+    id: 'appearance.native',
+    page: 'appearance',
+    title: 'Device appearance and feedback',
+    keywords: ['red carbon', 'theme', 'haptics', 'reduce motion', 'device'],
+    isAvailable: () => isCapacitorApp(),
   },
   {
     id: 'notifications.delivery',

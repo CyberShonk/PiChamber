@@ -1,3 +1,5 @@
+import { isCapacitorApp } from '@/lib/platform';
+
 /**
  * Shared gesture math for drawer and edge swipes.
  * Extracted so behavioral tests can run without a browser and both hooks share one truth.
@@ -107,6 +109,7 @@ export const isSwipeExcludedTarget = (
   options?: { excludeInteractive?: boolean },
 ): boolean => {
   if (!(target instanceof Element)) return false;
+  if (isCapacitorApp() && window.getSelection()?.isCollapsed === false) return true;
   const excludeInteractive = options?.excludeInteractive ?? true;
   if (excludeInteractive) {
     const interactive = (target as Element).closest(SWIPE_EXCLUDED_SELECTOR);

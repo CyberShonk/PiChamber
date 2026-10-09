@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 
-type ListenerCallback = (data: { canGoBack?: boolean }) => void;
+type ListenerCallback = (data: { canGoBack?: boolean; isActive?: boolean }) => void;
 
 const listeners: Map<string, Set<ListenerCallback>> = new Map();
 let minimizeAppCalls = 0;
@@ -41,6 +41,7 @@ import {
   installNativeAndroidBackButtonListener,
   uninstallNativeAndroidBackButtonListenerForTests,
   useNativeAndroidBackButton,
+  useNativeMobileLifecycle,
 } from './mobileNativeChrome';
 
 const noop = () => undefined;
@@ -52,12 +53,14 @@ const installDom = () => {
     Object.defineProperty(globalThis, name, { configurable: true, writable: true, value });
   };
   class ElementStub {}
+  const documentEvents = new EventTarget();
   const documentStub: Record<string, unknown> = {
     nodeType: 9,
     defaultView: globalThis,
     activeElement: null,
-    addEventListener: noop,
-    removeEventListener: noop,
+    addEventListener: documentEvents.addEventListener.bind(documentEvents),
+    removeEventListener: documentEvents.removeEventListener.bind(documentEvents),
+    visibilityState: 'visible',
   };
   const makeNode = (tagName = 'div') => {
     const node: Record<string, unknown> = {
@@ -134,6 +137,10 @@ const installDom = () => {
   setGlobal('Capacitor', { isNativePlatform: () => true, getPlatform: () => 'android' });
   return {
     container: container as unknown as Element,
+    setVisibility: (state: 'hidden' | 'visible') => {
+      documentStub.visibilityState = state;
+      documentEvents.dispatchEvent(new Event('visibilitychange'));
+    },
     restore: () => {
       for (const [name, descriptor] of descriptors) {
         if (descriptor) Object.defineProperty(globalThis, name, descriptor);
@@ -162,7 +169,7 @@ const triggerNativeBackButton = () => {
   }
 };
 
-describe('Android hardware back button handling', () => {
+describe('Native lifecycle and Android hardware back button handling', () => {
   beforeEach(async () => {
     listeners.clear();
     minimizeAppCalls = 0;
@@ -182,6 +189,64 @@ describe('Android hardware back button handling', () => {
       restores.pop()?.();
     }
     await uninstallNativeAndroidBackButtonListenerForTests();
+  });
+
+  test('overlays leave recovery idle; real background wakes once using the latest callback', async () => {
+    const dom = installDom();
+    restores.push(dom.restore);
+    let firstCalls = 0;
+    const first = () => { firstCalls += 1; };
+    let latestCalls = 0;
+    const latest = () => { latestCalls += 1; };
+    const Component = ({ onResume }: { onResume: () => void }) => {
+      useNativeMobileLifecycle(onResume);
+      return null;
+    };
+    const root = createRoot(dom.container);
+    roots.push(root);
+    await act(async () => { root.render(<Component onResume={first} />); });
+    await flush();
+    const emit = (name: string, data = {}) => listeners.get(name)?.forEach((callback) => callback(data));
+
+    // iOS overlays emit resign-active / become-active, but never pause.
+    for (let i = 0; i < 3; i += 1) {
+      emit('appStateChange', { isActive: false });
+      emit('appStateChange', { isActive: true });
+    }
+    expect(firstCalls).toBe(0);
+    emit('appStateChange', { isActive: false });
+    emit('pause');
+    await act(async () => { root.render(<Component onResume={latest} />); });
+    await flush();
+    expect(addListenerCalls).toBe(3);
+    expect(removeCalls).toBe(0);
+    emit('resume');
+    emit('appStateChange', { isActive: true });
+    dom.setVisibility('visible');
+    expect(firstCalls).toBe(0);
+    expect(latestCalls).toBe(1);
+
+    // WebView visibility remains a fallback when native pause is missed.
+    dom.setVisibility('hidden');
+    dom.setVisibility('visible');
+    emit('appStateChange', { isActive: true });
+    emit('resume');
+    expect(latestCalls).toBe(2);
+
+    // Some native deliveries become active before their resume event.
+    emit('pause');
+    emit('appStateChange', { isActive: true });
+    emit('resume');
+    expect(latestCalls).toBe(3);
+
+    await act(async () => { root.unmount(); });
+    roots.pop();
+    emit('pause');
+    emit('resume');
+    dom.setVisibility('hidden');
+    dom.setVisibility('visible');
+    expect(latestCalls).toBe(3);
+    expect(removeCalls).toBe(3);
   });
 
   test('registers exactly one native listener across multiple hook mounts and callback changes', async () => {

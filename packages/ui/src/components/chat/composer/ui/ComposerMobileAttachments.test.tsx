@@ -8,6 +8,7 @@ import { ComposerAttachmentPickerInput } from "./ComposerAttachmentPickerInput";
 import { ComposerDragOverlay } from "./ComposerDragOverlay";
 import { ComposerFooter } from "./ComposerFooter";
 import { ATTACHMENT_PICKER_INPUT_PROPS } from "./attachmentInputProps";
+import { DedicatedMobileAppProvider } from "@/apps/mobileAppContext";
 import { ATTACHMENT_ACCEPT } from "@/sync/attachment-files";
 
 const FOOTER_BUTTON_CLASS = "foot";
@@ -25,6 +26,7 @@ const renderFooterWithWritableState = (options: {
   newSessionDraftOpen?: boolean;
   isSending?: boolean;
   isAttachmentDisabled?: boolean;
+  nativeApp?: boolean;
 }) => {
   const {
     isMobile,
@@ -32,9 +34,9 @@ const renderFooterWithWritableState = (options: {
     newSessionDraftOpen = false,
     isSending = false,
     isAttachmentDisabled = false,
+    nativeApp = false,
   } = options;
-  return renderToStaticMarkup(
-    React.createElement(ComposerFooter, {
+  const footer = React.createElement(ComposerFooter, {
       isMobile,
       isInline: false,
       alignToolsEnd: false,
@@ -55,11 +57,15 @@ const renderFooterWithWritableState = (options: {
       isSending,
       isAttachmentDisabled,
       onPickLocalFiles: () => {},
+      onLinkGitHub: () => {},
       onPrimaryAction: () => {},
       onQueueMessage: () => {},
       onAbort: () => {},
-    }),
-  );
+    });
+  return renderToStaticMarkup(React.createElement(DedicatedMobileAppProvider, {
+    actions: { nativeApp, openChanges: () => {}, openFiles: () => {}, openSettings: () => {} },
+    children: footer,
+  }));
 };
 
 /** Extract the attach `<button>` tag so disabled checks ignore attribute order. */
@@ -184,10 +190,10 @@ const getProps = (node: FakeNode): Record<string, unknown> | null => {
   return (node as unknown as Record<string, Record<string, unknown>>)[key] ?? null;
 };
 
-const findAttachButton = (root: FakeNode): FakeNode | null => {
+const findButton = (root: FakeNode, label = "Add attachment"): FakeNode | null => {
   const visit = (node: FakeNode): FakeNode | null => {
     const props = getProps(node);
-    if (node.nodeType === 1 && props?.["aria-label"] === "Add attachment") return node;
+    if (node.nodeType === 1 && props?.["aria-label"] === label) return node;
     for (const child of node.childNodes) {
       if (child.nodeType !== 1) continue;
       const found = visit(child);
@@ -199,6 +205,82 @@ const findAttachButton = (root: FakeNode): FakeNode | null => {
 };
 
 describe("composer mobile attachments", () => {
+  test("only the native app provider enables the phone GitHub link button", () => {
+    expect(renderFooterWithWritableState({ isMobile: true, nativeApp: true })).toContain('aria-label="Link issue / pull request"');
+    expect(renderFooterWithWritableState({ isMobile: true, nativeApp: false })).not.toContain('aria-label="Link issue / pull request"');
+    expect(renderFooterWithWritableState({ isMobile: false, nativeApp: false })).not.toContain('aria-label="Link issue / pull request"');
+  });
+
+  test("hosted phone keeps its direct picker without the native GitHub button", () => {
+    const markup = renderAttachmentControls({
+      footerIconButtonClass: FOOTER_BUTTON_CLASS,
+      iconSizeClass: ICON_CLASS,
+      handlePickLocalFiles: () => {},
+      onOpenMobileSheet: () => {},
+      onLinkGitHub: () => {},
+      isAttachmentDisabled: false,
+    });
+    expect(markup).toContain('aria-label="Add attachment"');
+    expect(markup).not.toContain('aria-label="Link issue / pull request"');
+  });
+
+  test("mobile linking keeps the direct file picker and respects the input lock", () => {
+    for (const disabled of [false, true]) {
+      const markup = renderAttachmentControls({
+        footerIconButtonClass: FOOTER_BUTTON_CLASS,
+        iconSizeClass: ICON_CLASS,
+        handlePickLocalFiles: () => {},
+        onOpenMobileSheet: () => {},
+        nativeApp: true,
+        onLinkGitHub: () => {},
+        isAttachmentDisabled: disabled,
+      });
+      expect(markup).toContain('aria-label="Add attachment"');
+      const linkButton = markup.match(/<button[^>]*aria-label="Link issue \/ pull request"[^>]*>/)?.[0];
+      expect(linkButton).toBeDefined();
+      expect(linkButton?.includes('disabled=""')).toBe(disabled);
+    }
+  });
+
+  test("mobile link button invokes the current callback without opening the file picker", async () => {
+    const dom = installFakeDom();
+    const root: Root = createRoot(dom.container);
+    try {
+      let files = 0;
+      let firstLinks = 0;
+      let currentLinks = 0;
+      const props = {
+        nativeApp: true,
+        footerIconButtonClass: FOOTER_BUTTON_CLASS,
+        iconSizeClass: ICON_CLASS,
+        handlePickLocalFiles: () => {},
+        onOpenMobileSheet: () => { files += 1; },
+        isAttachmentDisabled: false,
+      };
+      await act(async () => {
+        root.render(React.createElement(ComposerAttachmentControls, {
+          ...props, onLinkGitHub: () => { firstLinks += 1; },
+        }));
+      });
+      await act(async () => {
+        root.render(React.createElement(ComposerAttachmentControls, {
+          ...props, onLinkGitHub: () => { currentLinks += 1; },
+        }));
+      });
+      const button = findButton(dom.container as unknown as FakeNode, "Link issue / pull request");
+      if (!button) throw new Error("mobile link button not found");
+      const onClick = getProps(button)?.["onClick"] as (() => void) | undefined;
+      if (!onClick) throw new Error("mobile link action not wired");
+      act(() => onClick());
+      expect(currentLinks).toBe(1);
+      expect(firstLinks).toBe(0);
+      expect(files).toBe(0);
+    } finally {
+      await act(async () => root.unmount());
+      dom.restore();
+    }
+  });
+
   test("mobile and desktop expose the same attach button chrome", () => {
     const mobile = renderAttachmentControls({
       footerIconButtonClass: FOOTER_BUTTON_CLASS,
@@ -264,7 +346,7 @@ describe("composer mobile attachments", () => {
         );
       });
 
-      const button = findAttachButton(dom.container as unknown as FakeNode);
+      const button = findButton(dom.container as unknown as FakeNode);
       if (!button) throw new Error("mobile attach button not found");
       const onClick = getProps(button)?.["onClick"] as ((event: unknown) => void) | undefined;
       if (typeof onClick !== "function") throw new Error("mobile attach button has no onClick");

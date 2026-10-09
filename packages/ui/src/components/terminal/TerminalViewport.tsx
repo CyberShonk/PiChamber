@@ -1,4 +1,7 @@
 import React from 'react';
+import { getClientPlatform } from '@/lib/platform';
+import { getRuntimeKey } from '@/lib/runtime-switch';
+import { toast } from '@/components/ui';
 import type { Terminal as XtermTerminal } from '@xterm/xterm';
 import type { FitAddon as XtermFitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
@@ -250,14 +253,42 @@ const TerminalViewport = React.forwardRef<TerminalController, Props>(
       void copyTerminalSelection(selection);
     }, []);
 
+    const pasteText = React.useCallback(async (text: string) => {
+      const terminal = terminalRef.current;
+      const runtimeKey = getRuntimeKey();
+      const epoch = writeEpochRef.current;
+      if (!text || !terminal) return;
+      if (getClientPlatform() === 'ios' && /[\r\n]/.test(text)) {
+        try {
+          const { confirmNativeTerminalPaste } = await import('@/apps/native/device');
+          if (!await confirmNativeTerminalPaste(text)) return;
+        } catch { toast.error('Paste could not be confirmed.'); return; }
+      }
+      if (terminalRef.current === terminal && runtimeKey === getRuntimeKey() && epoch === writeEpochRef.current && visibleRef.current) terminal.paste(text);
+    }, []);
+
     const handlePaste = React.useCallback((event: React.MouseEvent) => {
       event.stopPropagation();
       const terminal = terminalRef.current;
       terminal?.focus();
       void readClipboardText().then((text) => {
-        if (text && terminalRef.current === terminal && terminal) terminal.paste(text);
+        if (text && terminalRef.current === terminal && terminal) void pasteText(text);
       });
-    }, []);
+    }, [pasteText]);
+
+    React.useEffect(() => {
+      if (getClientPlatform() !== 'ios') return;
+      const container = containerRef.current;
+      const onPaste = (event: ClipboardEvent) => {
+        const text = event.clipboardData?.getData('text/plain') ?? '';
+        if (!/[\r\n]/.test(text)) return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        void pasteText(text);
+      };
+      container?.addEventListener('paste', onPaste, true);
+      return () => container?.removeEventListener('paste', onPaste, true);
+    }, [pasteText]);
 
     const handleSelectAll = React.useCallback((event: React.MouseEvent) => {
       event.stopPropagation();

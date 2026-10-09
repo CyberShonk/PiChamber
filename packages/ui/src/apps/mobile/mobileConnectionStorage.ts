@@ -20,8 +20,14 @@ import {
 export const normalizeConnectionUrl = (value: string): string => {
   const trimmed = value.trim();
   if (!trimmed) return '';
-  const withScheme = /^https?:\/\//i.test(trimmed) ? trimmed : `http://${trimmed}`;
+  const withScheme = /^[a-z][a-z\d+.-]*:\/\//i.test(trimmed) ? trimmed : `http://${trimmed}`;
   const url = new URL(withScheme);
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    throw new TypeError('Use an HTTP or HTTPS server URL.');
+  }
+  if (url.username || url.password) {
+    throw new TypeError('Enter credentials in the password or token field.');
+  }
   url.hash = '';
   url.search = '';
   url.pathname = url.pathname.replace(/\/+$/, '');

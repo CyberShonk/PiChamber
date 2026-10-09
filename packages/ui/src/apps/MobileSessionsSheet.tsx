@@ -1,4 +1,5 @@
 import React from 'react';
+import { useMobileAppActions } from './mobileAppContext';
 import { createPortal } from 'react-dom';
 
 import { SessionSidebar } from '@/components/session/SessionSidebar';
@@ -8,7 +9,7 @@ import { MOBILE_DRAWER_DURATION_MS, MOBILE_DRAWER_EASING, useDrawerSwipe } from 
 type MobileSessionsSheetProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  /** 'drawer' renders a 72%-width overlay; 'sidebar' is the tablet persistent pane. */
+  /** Native drawer uses 92%, hosted drawer 72%; sidebar is the tablet pane. */
   variant?: 'drawer' | 'sidebar';
   /** External refs so the shell can drive the drawer without querySelector per-frame */
   drawerRefExternal?: React.RefObject<HTMLDivElement | null>;
@@ -26,6 +27,7 @@ export const MobileSessionsSheet = React.memo(function MobileSessionsSheet({
   scrimRefExternal,
   rootRefExternal,
 }: MobileSessionsSheetProps) {
+  const nativeApp = useMobileAppActions()?.nativeApp === true;
   const rootRefElement = React.useRef<HTMLDivElement>(null);
   const close = React.useCallback(() => {
     const activeElement = typeof document !== 'undefined' ? document.activeElement : null;
@@ -99,7 +101,7 @@ export const MobileSessionsSheet = React.memo(function MobileSessionsSheet({
     drawerRef,
     scrimRef,
     onClose: close,
-    widthRatio: 0.72,
+    widthRatio: nativeApp ? 0.92 : 0.72,
     prefersReducedMotion,
   });
 
@@ -140,7 +142,7 @@ export const MobileSessionsSheet = React.memo(function MobileSessionsSheet({
       />
       <div
         ref={drawerRef as React.RefObject<HTMLDivElement>}
-        className={cn('relative z-10 flex h-full w-[72%] max-w-[72%] flex-col bg-sidebar')}
+        className={cn('relative z-10 flex h-full flex-col bg-sidebar', nativeApp ? 'w-[92%] max-w-[92%]' : 'w-[72%] max-w-[72%]')}
         style={{
           paddingTop: 'var(--oc-safe-area-top, 0px)',
           transform: entered ? 'none' : 'translateX(-100%)',

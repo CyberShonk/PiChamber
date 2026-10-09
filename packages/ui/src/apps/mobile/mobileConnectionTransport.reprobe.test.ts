@@ -547,3 +547,59 @@ describe('reprobe relay validation', () => {
     }
   });
 });
+
+
+describe('direct host identity before credential use', () => {
+  const relay = {
+    relayUrl: 'wss://relay.example/tunnel',
+    serverId: 'srv_expected',
+    hostEncPubJwk: { kty: 'EC', crv: 'P-256', x: 'x', y: 'y' },
+  };
+  const candidates = [
+    { kind: 'direct' as const, url: 'https://host.example' },
+    { kind: 'relay' as const, relay },
+  ];
+
+  for (const [label, health] of [
+    ['missing', { ok: true }],
+    ['null', { serverId: null }],
+    ['non-string', { serverId: 1 }],
+    ['empty', { serverId: '' }],
+    ['mismatched', { serverId: 'srv_other' }],
+  ] as const) {
+    test(`${label} identity cannot receive a saved token`, async () => {
+      try {
+        fetchHandler = async () => Response.json(health);
+        expect(await transport.probeConnectionCandidates(candidates, 'saved-token')).toEqual({ status: 'unreachable' });
+        expect(fetchCalls.map((call) => call.url)).toEqual(['https://host.example/health']);
+        expect(fetchCalls[0]?.headers.authorization).toBeUndefined();
+      } finally {
+        restoreAfterEach();
+      }
+    });
+  }
+
+  test('matching identity permits authenticated probing', async () => {
+    try {
+      fetchHandler = async (url) => url.endsWith('/health') ? okHealth(relay.serverId) : okSession();
+      expect(await transport.probeConnectionCandidates(candidates, 'saved-token')).toEqual({
+        status: 'ok', transport: { kind: 'direct', url: 'https://host.example' },
+      });
+      expect(fetchCalls[0]?.headers.authorization).toBeUndefined();
+      expect(fetchCalls[1]?.headers.authorization).toBe('Bearer saved-token');
+    } finally {
+      restoreAfterEach();
+    }
+  });
+
+  test('password and pairing transport establishment requires the expected identity', async () => {
+    try {
+      fetchHandler = async () => okHealth();
+      expect(await transport.establishLiveTransport(candidates)).toBeNull();
+      fetchHandler = async () => okHealth(relay.serverId);
+      expect(await transport.establishLiveTransport(candidates)).toEqual({ kind: 'direct', url: 'https://host.example' });
+    } finally {
+      restoreAfterEach();
+    }
+  });
+});

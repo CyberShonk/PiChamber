@@ -1,4 +1,5 @@
 import React from 'react';
+import { useMobileAppActions } from './mobileAppContext';
 import { createPortal } from 'react-dom';
 import { motion } from 'motion/react';
 
@@ -25,10 +26,17 @@ const LazyIssuesSurface = React.lazy(() =>
   import('@/components/views/github/IssuesSurface').then((module) => ({ default: module.IssuesSurface })),
 );
 
+const LazyContextPanelContent = React.lazy(() =>
+  import('@/components/layout/ContextSidebarTab').then((module) => ({ default: module.ContextPanelContent })),
+);
+const LazyExtensionsSurface = React.lazy(() =>
+  import('@/components/chat/extension/ExtensionsSurface').then((module) => ({ default: module.ExtensionsSurface })),
+);
+
 const DRAWER_ROOT_ID = 'mobile-surface-root';
 const ENTER_DELAY_MS = 16;
 
-/** The workspace surfaces as tabs (Changes / Files / Terminal / PRs / Issues).
+/** The workspace surfaces as tabs (Changes / Files / Terminal / PRs / Issues / Context / Extensions).
 
     Two hosts, same content and same state:
      - `drawer` (default) covers 80% from the right with a dark scrim — matching
@@ -76,6 +84,7 @@ export const MobileWorkspaceDrawer = React.memo(function MobileWorkspaceDrawer({
   const rootElementRefInternal = React.useRef<HTMLDivElement>(null);
   const drawerRef = (drawerRefExternal ?? drawerRefInternal) as React.RefObject<HTMLElement | null>;
   const scrimRef = (scrimRefExternal ?? scrimRefInternal) as React.RefObject<HTMLButtonElement | null>;
+  const nativeApp = useMobileAppActions()?.nativeApp === true;
   const rootElementRef = (rootRefExternal ?? rootElementRefInternal) as React.RefObject<HTMLDivElement | null>;
   const setRootElementRef = React.useCallback((node: HTMLDivElement | null) => {
     (rootElementRefInternal as React.MutableRefObject<HTMLDivElement | null>).current = node;
@@ -179,7 +188,7 @@ export const MobileWorkspaceDrawer = React.memo(function MobileWorkspaceDrawer({
 
   // GitHub tabs follow the same `github-repo` availability as the desktop
   // rail; the caller resolves it so this component stays presentation-only.
-  const visibleTabs = getVisibleMobileWorkspaceTabs(githubTabsAvailable);
+  const visibleTabs = getVisibleMobileWorkspaceTabs(githubTabsAvailable, nativeApp);
   const tabTransition = prefersReducedMotion
     ? { duration: 0 }
     : { type: 'spring' as const, stiffness: 520, damping: 40, mass: 0.8 };
@@ -256,6 +265,23 @@ export const MobileWorkspaceDrawer = React.memo(function MobileWorkspaceDrawer({
       </div>
       )}
       <div className="min-h-0 flex-1 overflow-hidden">
+        {/* These read live session state. Unmount while hidden rather than
+            keeping transcript aggregation or widget subscriptions active. */}
+        {nativeApp && open && (tab === 'context' || tab === 'extensions') ? (
+          <div className="flex h-full min-h-0 flex-col bg-background">
+            <MobileSurfaceHeader
+              icon={tab === 'context' ? 'donut-chart-fill' : 'plug-2'}
+              title={tab === 'context' ? 'Context' : 'Extensions'}
+            />
+            <div className="min-h-0 flex-1 overflow-hidden">
+              <ErrorBoundary>
+                <React.Suspense fallback={<div className="p-4 typography-ui-label text-muted-foreground" role="status">Loading…</div>}>
+                  {tab === 'context' ? <LazyContextPanelContent /> : <LazyExtensionsSurface />}
+                </React.Suspense>
+              </ErrorBoundary>
+            </div>
+          </div>
+        ) : null}
         {visitedTabs.has('changes') ? (
           <div
             key={pendingChangesDiff ? `changes:${pendingChangesDiff.path}:${pendingChangesDiff.staged}` : 'changes'}
@@ -313,7 +339,7 @@ export const MobileWorkspaceDrawer = React.memo(function MobileWorkspaceDrawer({
               <div className="min-h-0 flex-1">
                 <ErrorBoundary>
                   <React.Suspense fallback={null}>
-                    <LazyPullRequestsSurface hideFilesTab headerActionsSlot={open && tab === 'pull-requests' ? prHeaderSlot : null} headerActionsPresentation="drawer" />
+                    <LazyPullRequestsSurface hideFilesTab={!nativeApp} headerActionsSlot={open && tab === 'pull-requests' ? prHeaderSlot : null} headerActionsPresentation="drawer" />
                   </React.Suspense>
                 </ErrorBoundary>
               </div>

@@ -93,6 +93,7 @@ describe('nativeHttpRequest connectTimeout and readTimeout', () => {
     };
     expect(req.url).toBe('https://example.com/api/test');
     expect(req.method).toBe('POST');
+    expect((req as typeof req & { disableRedirects: boolean }).disableRedirects).toBe(true);
     expect(req.connectTimeout).toBe(MOBILE_CONNECT_TIMEOUT_MS);
     expect(req.readTimeout).toBe(MOBILE_CONNECT_TIMEOUT_MS);
   });
@@ -113,6 +114,7 @@ describe('nativeHttpRequest connectTimeout and readTimeout', () => {
       connectTimeout?: number;
       readTimeout?: number;
     };
+    expect((req as typeof req & { disableRedirects: boolean }).disableRedirects).toBe(true);
     expect(req.connectTimeout).toBe(customTimeout);
     expect(req.readTimeout).toBe(customTimeout);
   });
@@ -127,6 +129,7 @@ describe('nativeHttpRequest connectTimeout and readTimeout', () => {
       connectTimeout?: number;
       readTimeout?: number;
     };
+    expect((req as typeof req & { disableRedirects: boolean }).disableRedirects).toBe(true);
     expect(req.connectTimeout).toBe(MOBILE_NATIVE_HTTP_TIMEOUT_MS);
     expect(req.readTimeout).toBe(MOBILE_NATIVE_HTTP_TIMEOUT_MS);
   });

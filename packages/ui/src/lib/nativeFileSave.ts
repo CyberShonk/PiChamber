@@ -119,7 +119,18 @@ export async function saveOrShareFile({
     }
   }
 
-  // Web / Desktop / Hosted Browser / iOS fallback: standard anchor download
+  // iOS builds with NativeApp use UIActivityViewController when Web Share cannot share files.
+  if (platform === 'ios') {
+    const { Capacitor } = await import('@capacitor/core');
+    if (Capacitor?.isPluginAvailable('NativeApp')) {
+      const { NativeApp } = await import('@/apps/native/device');
+      const base64 = await dataToBase64(data, mimeType);
+      const result = await NativeApp.shareFile({ filename, base64 });
+      return result.completed ? 'shared' : 'cancelled';
+    }
+  }
+
+  // Web / Desktop / Hosted Browser fallback: standard anchor download
   triggerAnchorDownload(filename, data, mimeType);
   return 'downloaded';
 }

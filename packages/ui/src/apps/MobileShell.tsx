@@ -1,4 +1,11 @@
 import React from 'react';
+import { getRuntimeKey } from '@/lib/runtime-switch';
+import { nativeHaptic } from './native/device';
+const NativeQuickNavigation = React.lazy(() => import('./native/NativeQuickNavigation').then((module) => ({ default: module.NativeQuickNavigation })));
+const NativeOfflineView = React.lazy(() => import('./native/NativeOfflineView').then((module) => ({ default: module.NativeOfflineView })));
+const readNativeWorkspaceTab = (): MobileWorkspaceTab => {
+  try { return sanitizeMobileWorkspaceTab(localStorage.getItem(`pichamber.native.workspace.${getRuntimeKey()}`), true); } catch { return 'changes'; }
+};
 
 import { AboutSettings } from '@/components/sections/pichamber/AboutSettings';
 import { ChatView } from '@/components/views/ChatView';
@@ -52,7 +59,7 @@ import {
   useIpadSidebarResize,
 } from './ipadSidebarResize';
 
-export type MobileSurface = 'instances' | 'settings' | 'update';
+export type MobileSurface = 'instances' | 'settings' | 'update' | 'tools' | 'offline';
 
 // Sidebar state changes must not rerender the transcript/composer tree. ChatView
 // subscribes to its own session state, so parent layout changes can safely be
@@ -64,17 +71,22 @@ export type MobileShellProps = {
 };
 
 export const MobileShell: React.FC<MobileShellProps> = ({ onActiveConnectionDeleted }) => {
+  const showCapacitorOnlyFeatures = React.useMemo(() => isCapacitorMobileApp(), []);
   const [sessionsSheetOpen, setSessionsSheetOpen] = React.useState(false);
   const [activeSurface, setActiveSurface] = React.useState<MobileSurface | null>(null);
   // Phone right drawer with the workspace tabs; the tab persists across
   // open/close so the right-edge swipe reopens where the user left off.
   const [workspaceOpen, setWorkspaceOpen] = React.useState(false);
-  const [workspaceTabRaw, setWorkspaceTabRaw] = React.useState<MobileWorkspaceTab>('changes');
+  const [workspaceTabRaw, setWorkspaceTabRaw] = React.useState<MobileWorkspaceTab>(() => showCapacitorOnlyFeatures ? readNativeWorkspaceTab() : 'changes');
   // Every tab selection flows through the sanitizer so persisted values
   // from older builds (three core tabs) and unknown values stay valid.
   const setWorkspaceTab = React.useCallback((next: MobileWorkspaceTab) => {
-    setWorkspaceTabRaw(sanitizeMobileWorkspaceTab(next));
-  }, []);
+    const tab = sanitizeMobileWorkspaceTab(next, showCapacitorOnlyFeatures);
+    setWorkspaceTabRaw(tab);
+    if (showCapacitorOnlyFeatures) {
+      try { localStorage.setItem(`pichamber.native.workspace.${getRuntimeKey()}`, tab); } catch { /* Best-effort navigation preference. */ }
+    }
+  }, [showCapacitorOnlyFeatures]);
   const workspaceTab = workspaceTabRaw;
 
   const [settingsInitialMobileStage, setSettingsInitialMobileStage] = React.useState<'nav' | 'page-content'>('nav');
@@ -109,12 +121,17 @@ export const MobileShell: React.FC<MobileShellProps> = ({ onActiveConnectionDele
     clearDragTimeouts();
     setWorkspaceOpen(open);
   }, [clearDragTimeouts]);
+  const drawerStateRef = React.useRef({ sessionsSheetOpen, workspaceOpen });
+  React.useEffect(() => {
+    const previous = drawerStateRef.current;
+    drawerStateRef.current = { sessionsSheetOpen, workspaceOpen };
+    if (showCapacitorOnlyFeatures && (previous.sessionsSheetOpen !== sessionsSheetOpen || previous.workspaceOpen !== workspaceOpen)) nativeHaptic();
+  }, [sessionsSheetOpen, workspaceOpen, showCapacitorOnlyFeatures]);
   const setSettingsPage = useUIStore((state) => state.setSettingsPage);
   const isArchivePageOpen = useUIStore((state) => state.isArchivePageOpen);
   const setArchivePageOpen = useUIStore((state) => state.setArchivePageOpen);
   const updateAvailable = useUpdateStore((state) => state.available);
   const updateRuntimeType = useUpdateStore((state) => state.runtimeType);
-  const showCapacitorOnlyFeatures = React.useMemo(() => isCapacitorMobileApp(), []);
   const showUpdateItem = !showCapacitorOnlyFeatures
     && updateAvailable
     && (updateRuntimeType === 'desktop' || updateRuntimeType === 'web');
@@ -224,14 +241,14 @@ export const MobileShell: React.FC<MobileShellProps> = ({ onActiveConnectionDele
   const sidebarWidth = isTabletLayout && sidebarOpen ? leftResize.width : 0;
 
   const handleTabletWorkspaceTabSelect = React.useCallback((nextTab: MobileWorkspaceTab) => {
-    const sanitized = sanitizeMobileWorkspaceTab(nextTab);
+    const sanitized = sanitizeMobileWorkspaceTab(nextTab, showCapacitorOnlyFeatures);
     if (workspaceOpen && workspaceTab === sanitized) {
       setWorkspaceOpenSafely(false);
     } else {
       setWorkspaceTab(sanitized);
       setWorkspaceOpenSafely(true);
     }
-  }, [workspaceOpen, workspaceTab, setWorkspaceTab, setWorkspaceOpenSafely]);
+  }, [workspaceOpen, workspaceTab, setWorkspaceTab, setWorkspaceOpenSafely, showCapacitorOnlyFeatures]);
 
   const handleToggleWorkspace = React.useCallback(() => {
     setWorkspaceOpenSafely(!workspaceOpen);
@@ -277,6 +294,7 @@ export const MobileShell: React.FC<MobileShellProps> = ({ onActiveConnectionDele
 
   const mobileActions = React.useMemo<MobileAppActions>(
     () => ({
+      nativeApp: showCapacitorOnlyFeatures,
       openChanges: ({ diffPath, staged } = {}) => {
         openChangesSurface(diffPath ? { path: diffPath, staged: staged === true } : null);
       },
@@ -285,6 +303,7 @@ export const MobileShell: React.FC<MobileShellProps> = ({ onActiveConnectionDele
         if (section) setSettingsPage(section as Parameters<typeof setSettingsPage>[0]);
         openSettingsSurface(section ? 'page-content' : 'nav');
       },
+      openTools: showCapacitorOnlyFeatures ? () => openSurface('tools') : undefined,
       openInstances: showCapacitorOnlyFeatures ? () => openSurface('instances') : undefined,
       instanceLabel: showCapacitorOnlyFeatures ? getAutoConnectTargetLabel() : null,
       openUpdate: showUpdateItem ? () => openSurface('update') : undefined,
@@ -292,6 +311,18 @@ export const MobileShell: React.FC<MobileShellProps> = ({ onActiveConnectionDele
     }),
     [closeAllDrawers, openChangesSurface, openFilesSurface, openSettingsSurface, openSurface, setSettingsPage, showCapacitorOnlyFeatures, showUpdateItem],
   );
+
+  React.useEffect(() => {
+    if (!showCapacitorOnlyFeatures) return;
+    const onKey = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && !event.altKey && event.key.toLowerCase() === 'k') {
+        event.preventDefault();
+        openSurface('tools');
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [openSurface, showCapacitorOnlyFeatures]);
 
   // Expose the shell's panel-opening actions to the deep-link layer so pichamber:// URLs
   // (and notification taps / widgets) can navigate to these surfaces. Session and
@@ -331,7 +362,7 @@ export const MobileShell: React.FC<MobileShellProps> = ({ onActiveConnectionDele
     rightOpen: workspaceOpen,
     leftWidth: () => {
       if (isTabletLayout) return leftResize.width;
-      return phoneLeftDrawerRef.current?.offsetWidth || window.innerWidth * 0.72;
+      return phoneLeftDrawerRef.current?.offsetWidth || window.innerWidth * (showCapacitorOnlyFeatures ? 0.92 : 0.72);
     },
     rightWidth: () => {
       if (isTabletLayout) return rightResize.width;
@@ -692,6 +723,14 @@ export const MobileShell: React.FC<MobileShellProps> = ({ onActiveConnectionDele
               onConnect={closeSurface}
               onActiveConnectionDeleted={onActiveConnectionDeleted}
             />
+          </MobileFullscreenSurface>
+        ) : null}
+
+        {(activeSurface === 'tools' || activeSurface === 'offline') && showCapacitorOnlyFeatures ? (
+          <MobileFullscreenSurface open variant={surfaceVariant} dialogAlign="app" onClose={closeSurface} ariaLabel={activeSurface === 'tools' ? 'Quick navigation' : 'Offline copies'} title={activeSurface === 'tools' ? 'Quick navigation' : 'Offline copies'}>
+            <React.Suspense fallback={<p className="p-4" role="status">Loading…</p>}>
+              {activeSurface === 'offline' ? <NativeOfflineView /> : <NativeQuickNavigation onClose={closeSurface} onOffline={() => openSurface('offline')} onWorkspace={(tab) => { setWorkspaceTab(tab); setWorkspaceOpenSafely(true); }} />}
+            </React.Suspense>
           </MobileFullscreenSurface>
         ) : null}
 

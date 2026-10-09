@@ -1,6 +1,6 @@
 import { describe, expect, mock, test } from 'bun:test';
 
-import { createMobilePasswordOperationTracker, loadMobileConnections, migrateLegacyInlineTokenRecords, upsertMobileConnection, validateMobileConnectionSession, type MobileRelayConfig } from './mobileConnections';
+import { createMobilePasswordOperationTracker, normalizeConnectionUrl, loadMobileConnections, migrateLegacyInlineTokenRecords, upsertMobileConnection, validateMobileConnectionSession, type MobileRelayConfig } from './mobileConnections';
 import { getMobileDeviceId, MOBILE_DEVICE_ID_STORAGE_KEY } from './mobile/mobileConnectionTypes';
 
 const originalFetch = globalThis.fetch;
@@ -41,6 +41,14 @@ const testRelay: MobileRelayConfig = {
 };
 
 describe('mobile connection storage', () => {
+  test('server URLs retain HTTPS and reject embedded credentials and other schemes', () => {
+    expect(normalizeConnectionUrl('https://host.example:8443/base/?ignored=1#fragment')).toBe('https://host.example:8443/base');
+    expect(normalizeConnectionUrl('192.168.1.10:2606')).toBe('http://192.168.1.10:2606');
+    for (const value of ['ftp://host.example', 'file:///tmp/server', 'wss://host.example', 'https://user:secret@host.example', 'http://user@host.example']) {
+      expect(() => normalizeConnectionUrl(value)).toThrow();
+    }
+  });
+
   test('cancellation invalidates an in-flight password completion', async () => {
     const tracker = createMobilePasswordOperationTracker();
     const operation = tracker.begin();

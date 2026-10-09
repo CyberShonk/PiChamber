@@ -1,4 +1,5 @@
 import React from 'react';
+import { useMobileAppActions } from './mobileAppContext';
 import type { Session } from '@/lib/chat/types';
 
 import { SessionActivityDuration } from '@/components/session/SessionActivityDuration';
@@ -16,6 +17,10 @@ import { SessionUnreadDot } from '@/components/session/sidebar/SessionUnreadDot'
 import { SessionNeedsInputIndicator } from '@/components/session/sidebar/SessionNeedsInputIndicator';
 import { formatNeedsInputLabel, resolveSessionAttention } from '@/components/session/sidebar/sessionAttention';
 import { MOBILE_HEADER_POPOVER_WIDTH, useMobileHeaderOverlay } from './useMobileHeaderOverlay';
+
+const NativeMobileSessionSwitcher = React.lazy(() =>
+  import('./NativeMobileSessionSwitcher').then((module) => ({ default: module.NativeMobileSessionSwitcher })),
+);
 
 const RECENT_SESSIONS_LIMIT = 10;
 
@@ -91,7 +96,7 @@ const SwitcherRow: React.FC<{
 
 /** Recent-sessions popover under the mobile header, opened by tapping the
     session title. Same visual family as the metadata/usage overlay. */
-export const MobileSessionSwitcher: React.FC<{
+const HostedMobileSessionSwitcher: React.FC<{
   open: boolean;
   onClose: () => void;
   anchorRef: React.RefObject<HTMLElement | null>;
@@ -177,4 +182,10 @@ export const MobileSessionSwitcher: React.FC<{
       `}</style>
     </div>
   );
+};
+
+/** Browser behavior stays on the host implementation; native shell opts in. */
+export const MobileSessionSwitcher: React.FC<React.ComponentProps<typeof NativeMobileSessionSwitcher>> = (props) => {
+  const nativeApp = useMobileAppActions()?.nativeApp === true;
+  return nativeApp ? <React.Suspense fallback={null}><NativeMobileSessionSwitcher {...props} /></React.Suspense> : <HostedMobileSessionSwitcher {...props} />;
 };

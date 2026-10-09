@@ -1,5 +1,7 @@
 /* eslint-disable */
 import React from 'react';
+import { getRuntimeKey } from '@/lib/runtime-switch';
+import { showNativeArchiveUndo } from '@/apps/native/archiveUndo';
 import type { Session } from '@/lib/chat/types';
 import { toast } from '@/components/ui';
 import { copyTextToClipboard } from '@/lib/clipboard';
@@ -29,6 +31,7 @@ type DeleteSessionSource = {
 
 type Args = {
   mobileVariant: boolean;
+  nativeApp?: boolean;
   allowReselect: boolean;
   onSessionSelected?: (sessionId: string) => void;
   isSessionSearchOpen: boolean;
@@ -210,6 +213,7 @@ export const useSessionActions = (args: Args) => {
       source?: DeleteSessionSource,
       precomputed?: { descendantIds: string[] },
     ) => {
+      const archiveRuntimeKey = getRuntimeKey();
       const shouldHardDelete = source?.archivedBucket === true || source?.hardDelete === true;
       // Use the snapshot taken when the dialog opened (if any) so the
       // executed list matches what the user was told. Fall back to a fresh
@@ -221,9 +225,8 @@ export const useSessionActions = (args: Args) => {
           ? await args.deleteSession(session.id)
           : await args.archiveSession(session.id);
         if (success) {
-          toast.success(shouldHardDelete
-            ? "Session deleted"
-            : "Session archived");
+          if (!shouldHardDelete && args.nativeApp) showNativeArchiveUndo([session.id], archiveRuntimeKey, args.unarchiveSession);
+          else toast.success(shouldHardDelete ? "Session deleted" : "Session archived");
         } else {
           toast.error(shouldHardDelete
             ? "Failed to delete session"
@@ -251,9 +254,8 @@ export const useSessionActions = (args: Args) => {
 
       const { archivedIds, failedIds } = await args.archiveSessions(ids);
       if (archivedIds.length > 0) {
-        toast.success(archivedIds.length === 1
-          ? `Archived ${archivedIds.length} session`
-          : `Archived ${archivedIds.length} sessions`);
+        if (args.nativeApp) showNativeArchiveUndo(archivedIds, archiveRuntimeKey, args.unarchiveSession);
+        else toast.success(archivedIds.length === 1 ? `Archived ${archivedIds.length} session` : `Archived ${archivedIds.length} sessions`);
       }
       if (failedIds.length > 0) {
         toast.error(failedIds.length === 1

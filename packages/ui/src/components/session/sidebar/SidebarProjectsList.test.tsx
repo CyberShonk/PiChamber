@@ -20,7 +20,7 @@ const renderWithProviders = (element: React.ReactElement): string =>
 /** The sprite reference an `Icon` renders, closed by its quote so `folder` does not match `folder-add`. */
 const iconHref = (name: string): string => `#oc-${name}"`;
 
-const renderList = (isAllFoldersView: boolean): string =>
+const renderList = (isAllFoldersView: boolean, mobileVariant = false, nativeAppVariant = false): string =>
   renderWithProviders(
     React.createElement(SidebarProjectsList, {
       sectionsForRender: [section],
@@ -39,7 +39,8 @@ const renderList = (isAllFoldersView: boolean): string =>
       collapsedProjects: new Set<string>(),
       hideDirectoryControls: false,
       projectRepoStatus: new Map(),
-      mobileVariant: false,
+      mobileVariant,
+      nativeAppVariant,
       alwaysShowActions: false,
       toggleProject: noop,
       setActiveProjectIdOnly: noop,
@@ -129,6 +130,13 @@ const renderGlobalSection = (isAllFoldersView: boolean): string =>
   );
 
 describe('SidebarProjectsList folder identity placement', () => {
+  test('native footer padding is opt-in; hosted mobile retains its floating-footer space', () => {
+    expect(renderList(true, true, false)).toContain('pb-32');
+    expect(renderList(true, true, true)).not.toContain('pb-32');
+    expect(renderList(true, true, true)).toContain('pb-2');
+    expect(renderList(true, false, false)).not.toContain('pb-32');
+  });
+
   test('does not show a project identity over the mixed All sessions list', () => {
     expect(renderList(true)).not.toContain('oc-sticky-fade-overlay');
   });

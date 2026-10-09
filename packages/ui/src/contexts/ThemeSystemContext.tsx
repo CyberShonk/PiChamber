@@ -58,18 +58,19 @@ const suppressTransitionsForThemeSwitch = () => {
   };
 };
 
-const buildInitialPreferences = (defaultThemeId?: string): ThemePreferences => {
+const buildInitialPreferences = (defaultThemeId?: string, additionalThemes: readonly Theme[] = [], localPreferencesOnly = false): ThemePreferences => {
+  const key = (name: string) => localPreferencesOnly ? `pichamber.native.${name}` : name;
   let lightThemeId: string = DEFAULT_LIGHT_ID;
   let darkThemeId: string = DEFAULT_DARK_ID;
   let themeMode: ThemeMode = 'system';
 
   if (typeof window !== 'undefined') {
-    const storedMode = localStorage.getItem('themeMode');
-    const storedLightId = localStorage.getItem('lightThemeId');
-    const storedDarkId = localStorage.getItem('darkThemeId');
-    const legacyUseSystem = localStorage.getItem('useSystemTheme');
-    const legacyThemeId = localStorage.getItem('selectedThemeId');
-    const legacyVariant = localStorage.getItem('selectedThemeVariant');
+    const storedMode = localStorage.getItem(key('themeMode'));
+    const storedLightId = localStorage.getItem(key('lightThemeId'));
+    const storedDarkId = localStorage.getItem(key('darkThemeId'));
+    const legacyUseSystem = localStorage.getItem(key('useSystemTheme'));
+    const legacyThemeId = localStorage.getItem(key('selectedThemeId'));
+    const legacyVariant = localStorage.getItem(key('selectedThemeVariant'));
 
     if (storedMode === 'light' || storedMode === 'dark' || storedMode === 'system') {
       themeMode = storedMode;
@@ -101,13 +102,14 @@ const buildInitialPreferences = (defaultThemeId?: string): ThemePreferences => {
     }
   }
 
-  if (defaultThemeId) {
-    const defaultTheme = getThemeById(defaultThemeId);
+  if (defaultThemeId && (!localPreferencesOnly || typeof window === 'undefined' || !localStorage.getItem(key('darkThemeId')))) {
+    const defaultTheme = additionalThemes.find((theme) => theme.metadata.id === defaultThemeId) ?? getThemeById(defaultThemeId);
     if (defaultTheme) {
       if (defaultTheme.metadata.variant === 'light') {
         lightThemeId = defaultTheme.metadata.id;
       } else {
         darkThemeId = defaultTheme.metadata.id;
+        if (localPreferencesOnly && (typeof window === 'undefined' || !localStorage.getItem(key('themeMode')))) themeMode = 'dark';
       }
     }
   }
@@ -122,11 +124,17 @@ const buildInitialPreferences = (defaultThemeId?: string): ThemePreferences => {
 interface ThemeSystemProviderProps {
   children: React.ReactNode;
   defaultThemeId?: string;
+  additionalThemes?: readonly Theme[];
+  /** Native device preferences must never overwrite host appearance settings. */
+  localPreferencesOnly?: boolean;
 }
 
-export function ThemeSystemProvider({ children, defaultThemeId }: ThemeSystemProviderProps) {
+const NO_ADDITIONAL_THEMES: readonly Theme[] = [];
+
+export function ThemeSystemProvider({ children, defaultThemeId, additionalThemes = NO_ADDITIONAL_THEMES, localPreferencesOnly = false }: ThemeSystemProviderProps) {
+  const key = useCallback((name: string) => localPreferencesOnly ? `pichamber.native.${name}` : name, [localPreferencesOnly]);
   const cssGenerator = useMemo(() => new CSSVariableGenerator(), []);
-  const [preferences, setPreferences] = useState<ThemePreferences>(() => buildInitialPreferences(defaultThemeId));
+  const [preferences, setPreferences] = useState<ThemePreferences>(() => buildInitialPreferences(defaultThemeId, additionalThemes, localPreferencesOnly));
   const [systemPrefersDark, setSystemPrefersDark] = useState<boolean>(() => (
     typeof window === 'undefined' ? true : window.matchMedia('(prefers-color-scheme: dark)').matches
   ));
@@ -151,10 +159,11 @@ export function ThemeSystemProvider({ children, defaultThemeId }: ThemeSystemPro
     // Vite publishes valid built-in JSON edits through this development-only
     // runtime channel, avoiding a full page reload for theme work.
     developmentThemes.forEach(add);
+    additionalThemes.forEach(add);
     themes.forEach(add);
 
     return merged;
-  }, [customThemes, developmentThemes]);
+  }, [customThemes, developmentThemes, additionalThemes]);
 
   useEffect(() => {
     const handleThemeHmr = (event: Event) => {
@@ -304,11 +313,13 @@ export function ThemeSystemProvider({ children, defaultThemeId }: ThemeSystemPro
     updateBrowserChrome(currentTheme);
 
     const root = document.documentElement;
+    root.dataset.themeId = currentTheme.metadata.id;
+    if (localPreferencesOnly) root.dataset.nativeThemeMode = preferences.themeMode;
     root.classList.remove('light', 'dark');
     root.classList.add(currentTheme.metadata.variant);
 
     return restoreTransitions;
-  }, [cssGenerator, currentTheme, updateBrowserChrome]);
+  }, [cssGenerator, currentTheme, updateBrowserChrome, localPreferencesOnly, preferences.themeMode]);
 
   useEffect(() => {
     if (preferences.themeMode !== 'system' || typeof window === 'undefined') {
@@ -330,13 +341,13 @@ export function ThemeSystemProvider({ children, defaultThemeId }: ThemeSystemPro
       return;
     }
 
-    localStorage.setItem('themeMode', preferences.themeMode);
-    localStorage.setItem('lightThemeId', preferences.lightThemeId);
-    localStorage.setItem('darkThemeId', preferences.darkThemeId);
-    localStorage.setItem('useSystemTheme', String(preferences.themeMode === 'system'));
-    localStorage.setItem('selectedThemeId', currentTheme.metadata.id);
+    localStorage.setItem(key('themeMode'), preferences.themeMode);
+    localStorage.setItem(key('lightThemeId'), preferences.lightThemeId);
+    localStorage.setItem(key('darkThemeId'), preferences.darkThemeId);
+    localStorage.setItem(key('useSystemTheme'), String(preferences.themeMode === 'system'));
+    localStorage.setItem(key('selectedThemeId'), currentTheme.metadata.id);
     localStorage.setItem(
-      'selectedThemeVariant',
+      key('selectedThemeVariant'),
       currentTheme.metadata.variant === 'light' ? 'light' : 'dark',
     );
 
@@ -349,7 +360,7 @@ export function ThemeSystemProvider({ children, defaultThemeId }: ThemeSystemPro
     localStorage.setItem('splashFgLight', lightTheme.colors.surface.foreground);
     localStorage.setItem('splashBgDark', darkTheme.colors.surface.background);
     localStorage.setItem('splashFgDark', darkTheme.colors.surface.foreground);
-  }, [preferences, currentTheme, ensureThemeById]);
+  }, [preferences, currentTheme, ensureThemeById, key]);
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -361,23 +372,23 @@ export function ThemeSystemProvider({ children, defaultThemeId }: ThemeSystemPro
         return;
       }
 
-      if (event.key !== 'themeMode' && event.key !== 'lightThemeId' && event.key !== 'darkThemeId') {
+      if (event.key !== key('themeMode') && event.key !== key('lightThemeId') && event.key !== key('darkThemeId')) {
         return;
       }
 
       setPreferences((prev) => {
-        const nextModeRaw = localStorage.getItem('themeMode');
+        const nextModeRaw = localStorage.getItem(key('themeMode'));
         const nextMode: ThemeMode =
           nextModeRaw === 'light' || nextModeRaw === 'dark' || nextModeRaw === 'system'
             ? nextModeRaw
             : prev.themeMode;
 
-        const nextLightRaw = localStorage.getItem('lightThemeId');
+        const nextLightRaw = localStorage.getItem(key('lightThemeId'));
         const nextLight = typeof nextLightRaw === 'string' && nextLightRaw.trim().length > 0
           ? nextLightRaw.trim()
           : prev.lightThemeId;
 
-        const nextDarkRaw = localStorage.getItem('darkThemeId');
+        const nextDarkRaw = localStorage.getItem(key('darkThemeId'));
         const nextDark = typeof nextDarkRaw === 'string' && nextDarkRaw.trim().length > 0
           ? nextDarkRaw.trim()
           : prev.darkThemeId;
@@ -396,9 +407,10 @@ export function ThemeSystemProvider({ children, defaultThemeId }: ThemeSystemPro
 
     window.addEventListener('storage', handleStorage);
     return () => window.removeEventListener('storage', handleStorage);
-  }, []);
+  }, [key]);
 
   useEffect(() => {
+    if (localPreferencesOnly) return;
     const lightTheme = ensureThemeById(preferences.lightThemeId, 'light');
     const darkTheme = ensureThemeById(preferences.darkThemeId, 'dark');
 
@@ -413,7 +425,7 @@ export function ThemeSystemProvider({ children, defaultThemeId }: ThemeSystemPro
       splashBgDark: darkTheme.colors.surface.background,
       splashFgDark: darkTheme.colors.surface.foreground,
     });
-  }, [currentTheme.metadata.id, currentTheme.metadata.variant, ensureThemeById, preferences.themeMode, preferences.lightThemeId, preferences.darkThemeId]);
+  }, [currentTheme.metadata.id, currentTheme.metadata.variant, ensureThemeById, preferences.themeMode, preferences.lightThemeId, preferences.darkThemeId, localPreferencesOnly]);
 
   useEffect(() => {
     if (!isDesktopShell) {
@@ -429,6 +441,7 @@ export function ThemeSystemProvider({ children, defaultThemeId }: ThemeSystemPro
     if (typeof window === 'undefined') {
       return;
     }
+    if (localPreferencesOnly) return;
     const handleSettingsSynced = (event: Event) => {
       const detail = (event as CustomEvent<DesktopSettings>).detail;
       if (!detail) {
@@ -474,7 +487,7 @@ export function ThemeSystemProvider({ children, defaultThemeId }: ThemeSystemPro
 
     window.addEventListener('pichamber:settings-synced', handleSettingsSynced);
     return () => window.removeEventListener('pichamber:settings-synced', handleSettingsSynced);
-  }, []);
+  }, [localPreferencesOnly]);
 
   const setTheme = useCallback(
     (themeId: string) => {

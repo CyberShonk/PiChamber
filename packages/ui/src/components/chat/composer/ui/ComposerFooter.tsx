@@ -11,6 +11,9 @@
  */
 
 import React from 'react';
+import { Icon } from '@/components/icon/Icon';
+import { nativeHaptic } from '@/apps/native/device';
+import { useMobileAppActions } from '@/apps/mobileAppContext';
 
 import { cn } from '@/lib/utils';
 import { ComposerActionButtons } from './ComposerActionButtons';
@@ -53,7 +56,7 @@ export interface ComposerFooterProps {
     onOpenSettings?: () => void;
     /** Direct local-file picker action, shared by the desktop menu item and the mobile attach button. */
     onPickLocalFiles: () => void;
-    /** Open the GitHub link picker (desktop attach menu entry). */
+    /** Open the GitHub link picker (desktop menu or mobile link button). */
     onLinkGitHub?: () => void;
     onPrimaryAction: () => void;
     onQueueMessage: () => void;
@@ -91,8 +94,10 @@ export function ComposerFooter(props: ComposerFooterProps) {
         onAbort,
     } = props;
 
+    const nativeApp = useMobileAppActions()?.nativeApp === true;
     const attachments = (
         <ComposerAttachmentControls
+            nativeApp={nativeApp}
             footerIconButtonClass={footerIconButtonClass}
             iconSizeClass={iconSizeClass}
             handlePickLocalFiles={onPickLocalFiles}
@@ -117,7 +122,7 @@ export function ComposerFooter(props: ComposerFooterProps) {
             isSending={isSending}
             currentSessionId={currentSessionId}
             newSessionDraftOpen={newSessionDraftOpen}
-            onPrimaryAction={onPrimaryAction}
+            onPrimaryAction={() => { if (nativeApp) nativeHaptic('impact'); onPrimaryAction(); }}
             onQueueMessage={onQueueMessage}
             onAbort={onAbort}
         />
@@ -144,6 +149,7 @@ export function ComposerFooter(props: ComposerFooterProps) {
                             ) : null}
                         </div>
                         <div className="flex min-w-0 shrink-0 items-center justify-end gap-x-1">
+                            {nativeApp && <button type="button" className="oc-native-dismiss-keyboard flex size-10 items-center justify-center text-muted-foreground" aria-label="Dismiss keyboard" onPointerDown={(event) => event.preventDefault()} onClick={() => { if (document.activeElement instanceof HTMLElement) document.activeElement.blur(); void import('@capacitor/keyboard').then(({ Keyboard }) => Keyboard.hide()).catch(() => undefined); }}><Icon name="arrow-down-s" className="size-4" /></button>}
                             {trailingExtra}
                             {actions}
                         </div>

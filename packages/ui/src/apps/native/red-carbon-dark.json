@@ -1,0 +1,175 @@
+{
+  "metadata": {
+    "id": "red-carbon-dark",
+    "name": "Red Carbon",
+    "description": "Matte graphite, silver hardware and structural red trim. Based on the Red Carbon mainline design system.",
+    "author": "CyberShonk",
+    "version": "1.0.0",
+    "variant": "dark",
+    "tags": [
+      "dark",
+      "matte",
+      "red-carbon"
+    ]
+  },
+  "colors": {
+    "primary": {
+      "base": "#B3121B",
+      "hover": "#D61A24",
+      "active": "#931019",
+      "foreground": "#E7E7E5",
+      "muted": "#B3121B80",
+      "emphasis": "#FF8087"
+    },
+    "surface": {
+      "background": "#070809",
+      "foreground": "#E7E7E5",
+      "muted": "#0C0D0E",
+      "mutedForeground": "#969A9D",
+      "elevated": "#101214",
+      "elevatedForeground": "#E7E7E5",
+      "overlay": "#000000B3",
+      "subtle": "#16181B"
+    },
+    "interactive": {
+      "border": "#2C3034",
+      "borderHover": "#6A6E72",
+      "borderFocus": "#D61A24",
+      "selection": "#760B11",
+      "selectionForeground": "#E7E7E5",
+      "focus": "#D61A24",
+      "focusRing": "#B3121B60",
+      "cursor": "#C4C6C7",
+      "hover": "#202326",
+      "active": "#2C3034"
+    },
+    "status": {
+      "error": "#FF8087",
+      "errorForeground": "#070809",
+      "errorBackground": "#FF808720",
+      "errorBorder": "#FF808745",
+      "warning": "#C58B3B",
+      "warningForeground": "#070809",
+      "warningBackground": "#C58B3B20",
+      "warningBorder": "#C58B3B45",
+      "success": "#89AF8D",
+      "successForeground": "#070809",
+      "successBackground": "#89AF8D20",
+      "successBorder": "#89AF8D45",
+      "info": "#C4C6C7",
+      "infoForeground": "#070809",
+      "infoBackground": "#C4C6C720",
+      "infoBorder": "#C4C6C745"
+    },
+    "pr": {
+      "open": "#89AF8D",
+      "draft": "#969A9D",
+      "blocked": "#C58B3B",
+      "merged": "#C4C6C7",
+      "closed": "#FF8087"
+    },
+    "syntax": {
+      "base": {
+        "background": "#070809",
+        "foreground": "#E7E7E5",
+        "comment": "#969A9D",
+        "keyword": "#C4C6C7",
+        "string": "#89AF8D",
+        "number": "#C58B3B",
+        "function": "#C4C6C7",
+        "variable": "#E7E7E5",
+        "type": "#C58B3B",
+        "operator": "#E7E7E5"
+      },
+      "tokens": {
+        "commentDoc": "#969A9D",
+        "stringEscape": "#C4C6C7",
+        "keywordImport": "#C4C6C7",
+        "storageModifier": "#C4C6C7",
+        "functionCall": "#C4C6C7",
+        "method": "#C4C6C7",
+        "variableProperty": "#C58B3B",
+        "variableOther": "#E7E7E5",
+        "variableGlobal": "#89AF8D",
+        "variableLocal": "#E7E7E5",
+        "parameter": "#E7E7E5",
+        "constant": "#89AF8D",
+        "class": "#C58B3B",
+        "className": "#C58B3B",
+        "interface": "#C58B3B",
+        "struct": "#C58B3B",
+        "enum": "#C58B3B",
+        "typeParameter": "#C58B3B",
+        "namespace": "#C58B3B",
+        "module": "#C4C6C7",
+        "tag": "#C4C6C7",
+        "jsxTag": "#C4C6C7",
+        "tagAttribute": "#C58B3B",
+        "tagAttributeValue": "#89AF8D",
+        "boolean": "#C58B3B",
+        "decorator": "#C4C6C7",
+        "label": "#C58B3B",
+        "punctuation": "#969A9D",
+        "macro": "#C4C6C7",
+        "preprocessor": "#C4C6C7",
+        "regex": "#89AF8D",
+        "url": "#C4C6C7",
+        "key": "#C58B3B",
+        "exception": "#FF8087"
+      },
+      "highlights": {
+        "diffAdded": "#89AF8D",
+        "diffAddedBackground": "#89AF8D1c",
+        "diffRemoved": "#FF8087",
+        "diffRemovedBackground": "#FF80871c",
+        "diffModified": "#C4C6C7",
+        "diffModifiedBackground": "#C4C6C71c",
+        "lineNumber": "#6A6E72",
+        "lineNumberActive": "#E7E7E5"
+      }
+    },
+    "markdown": {
+      "heading1": "#E7E7E5",
+      "heading2": "#E7E7E5",
+      "heading3": "#E7E7E5",
+      "heading4": "#E7E7E5",
+      "link": "#C4C6C7",
+      "linkHover": "#E7E7E5",
+      "inlineCode": "#E7E7E5",
+      "inlineCodeBackground": "#C4C6C71f",
+      "blockquote": "#969A9D",
+      "blockquoteBorder": "#2C3034",
+      "listMarker": "#C4C6C780"
+    },
+    "chat": {
+      "userMessage": "#E7E7E5",
+      "userMessageBackground": "#101214",
+      "assistantMessage": "#E7E7E5",
+      "assistantMessageBackground": "#070809",
+      "timestamp": "#969A9D",
+      "divider": "#2C3034"
+    },
+    "tools": {
+      "background": "#10121480",
+      "border": "#2C3034",
+      "headerHover": "#C4C6C70d",
+      "icon": "#969A9D",
+      "title": "#E7E7E5",
+      "description": "#969A9D",
+      "edit": {
+        "added": "#89AF8D",
+        "addedBackground": "#89AF8D20",
+        "removed": "#FF8087",
+        "removedBackground": "#FF808720",
+        "lineNumber": "#6A6E72"
+      }
+    }
+  },
+  "config": {
+    "transitions": {
+      "fast": "100ms ease",
+      "normal": "160ms ease",
+      "slow": "220ms ease"
+    }
+  }
+}

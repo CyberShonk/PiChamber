@@ -4,6 +4,7 @@ import '@/styles/fonts';
 import '@/index.css';
 import '@/lib/debug';
 import { DiffWorkerProvider } from '@/contexts/DiffWorkerProvider';
+import { NATIVE_THEMES } from './native/themes';
 import { ThemeSystemProvider } from '@/contexts/ThemeSystemContext';
 import { getRegisteredRuntimeAPIs } from '@/contexts/runtimeAPIRegistry';
 import type { RuntimeAPIs } from '@/lib/api/types';
@@ -88,7 +89,7 @@ export function renderMobileApp(apis?: RuntimeAPIs) {
 
   createRoot(rootElement).render(
     <StrictMode>
-        <ThemeSystemProvider>
+        <ThemeSystemProvider additionalThemes={isNativeShell ? NATIVE_THEMES : undefined} defaultThemeId={isNativeShell ? 'red-carbon-dark' : undefined} localPreferencesOnly={isNativeShell}>
               <DiffWorkerProvider>
               {isNativeShell ? app : <SessionAuthGate>{app}</SessionAuthGate>}
             </DiffWorkerProvider>

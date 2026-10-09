@@ -133,3 +133,71 @@ leave the dirty editor intact.
 - A failed gesture leaves the drawer in its starting state (open or closed) with transitions cleared. No partial opacity/transform remains.
 - A failed `readTabletLayout` (e.g., `window` undefined during SSR) returns the default layout without throwing.
 - `GitView` mount failure does not affect chat; the drawer can be retried. No optimistic state is stranded.
+
+## Native mobile presentation
+
+`MobileShell` sets `MobileAppActions.nativeApp` only for the Capacitor shell.
+The hosted browser mobile app leaves it false. Shared presentation components
+use this explicit capability rather than screen width to enable native features.
+
+Native workspace navigation adds Context and Extensions. Both load on demand
+and mount only while open and selected. Native pull requests include Code and
+inline review; hosted mobile retains its summary-only view. The tablet native
+workspace strip scrolls to accommodate the extra destinations. Hosted tab lists
+and tab sanitization retain the original five destinations.
+
+The native phone sessions drawer uses 92% width, including its swipe geometry.
+Hosted mobile retains 72%. The native sidebar starts in a local Recent view,
+offers Projects, keeps search visible, and puts actions in a separate footer.
+`nativeAppVariant` is an opt-in shared presentation prop; ordinary mobileVariant
+callers retain their previous header, view preference, padding, and floating
+actions. Tablet sidebar view preferences remain unchanged.
+
+`NativeMobileSessionSwitcher` owns the native search and 50-session list. The
+existing hosted switcher stays at 10 sessions without search. The native module
+is lazy-loaded only through the app-capability branch. Both consume the existing
+shared catalog and selection actions. Native search matches title, project,
+branch, and directory without issuing additional requests.
+
+Native lifecycle recovery arms on Capacitor pause or WebView hidden visibility.
+On iOS, appStateChange(false) also occurs for system overlays, so it changes
+active chrome without arming recovery. Resume, active, and visible signals
+consume a real background cycle once. The hook retains listeners across
+callback updates, uses the latest committed callback, and removes them on
+unmount. Existing heartbeat and online recovery still handle broken connections.
+
+Mobile connection candidate probing rejects missing or mismatched server IDs
+when pairing metadata provides an expected ID. Credential dispatch follows
+that identity check. Server URLs permit HTTP and HTTPS and reject embedded
+credentials. These are client connection changes; the host API is unchanged.
+
+### Device conveniences
+
+`apps/native` owns device-local appearance, feedback, quick navigation, explicit
+read-only offline copies and status. `ThemeSystemProvider.additionalThemes` and
+`localPreferencesOnly` are optional native seams; other roots retain their
+existing preset and persistence behavior. Native preferences use a separate
+storage namespace and do not write host appearance settings.
+
+Quick navigation mounts on demand, searches the existing 50-parent catalog and
+frozen loaded transcript records, and renders at most 100 transcript results.
+Its search index rebuilds when those records change, not on each keystroke.
+Attention includes newly observed completion/error events scoped to the runtime;
+it never treats persisted history as live activity. Offline copies are explicit,
+opt-in, limited to three UTF-8 payloads of 600 KB including metadata, and displayed
+in a separate read-only surface. They never hydrate sync stores or queue sends.
+
+Native push registration subscribes to runtime identity and re-registers with
+each connected host. Listener cleanup, bounded retries and generation checks
+reject late results. Device permission and host registration are separate
+statuses. Disabling unregisters the device and removes the current host token
+where possible; it never routes an old-host removal to a new host.
+
+`NativeAppPlugin.swift` supplies iOS haptics, Settings, notification testing,
+terminal paste confirmation and native file sharing without new dependencies.
+The shell publishes docked keyboard frame geometry, duration, curve and Reduce
+Motion state. New shells use those frames, including height changes and
+interactive dismissal; older shells retain the Capacitor event fallback.
+Pairing HTTP requests reject redirects and retain system TLS trust. Diagnostic
+categories are sanitized before display or logging; raw request exceptions and
+URLs are not copied into the native error hint.

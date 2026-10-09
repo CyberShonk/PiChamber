@@ -743,3 +743,36 @@
 .oc-composer-morph-content-fade > * {
   animation: oc-composer-morph-fade 0.18s ease-out 0.26s both;
 }
+
+/* Red Carbon uses the supplied palette. Red trim belongs to active hardware edges. */
+:root.oc-capacitor-app[data-theme-id="red-carbon-dark"] .oc-mobile-header {
+  background: var(--surface-background);
+  border-bottom: 1px solid var(--primary-base);
+  backdrop-filter: none;
+}
+:root.oc-capacitor-app[data-theme-id="red-carbon-dark"] .oc-mobile-composer {
+  border-top: 1px solid var(--interactive-border);
+}
+:root.oc-capacitor-app.oc-native-reduce-motion *,
+:root.oc-capacitor-app.oc-native-reduce-motion *::before,
+:root.oc-capacitor-app.oc-native-reduce-motion *::after {
+  animation-duration: 1ms !important;
+  transition-duration: 1ms !important;
+  scroll-behavior: auto !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  :root.oc-capacitor-app *, :root.oc-capacitor-app *::before, :root.oc-capacitor-app *::after {
+    animation-duration: 1ms !important;
+    transition-duration: 1ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+:root.oc-capacitor-app:not(.oc-keyboard-open) .oc-native-dismiss-keyboard {
+  display: none;
+}
+
+/* Keep small accent labels legible; the deeper supplied red remains structural trim. */
+:root.oc-capacitor-app[data-theme-id="red-carbon-dark"] .text-primary {
+  color: var(--primary-emphasis);
+}

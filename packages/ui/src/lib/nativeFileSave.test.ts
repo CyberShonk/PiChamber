@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 
 let mockPlatform: 'android' | 'ios' | 'web' | 'desktop' = 'web';
+let nativeAvailable = false;
+let nativeCompleted = true;
+const nativeShareCalls: Array<{ filename: string; base64: string }> = [];
 const shareCalls: Array<{ filename: string; mimeType?: string; base64: string }> = [];
 const setWebViewBackgroundCalls: Array<{ color: string }> = [];
 
@@ -10,7 +13,9 @@ mock.module('@/lib/platform', () => ({
 }));
 
 mock.module('@capacitor/core', () => ({
+  Capacitor: { isPluginAvailable: () => nativeAvailable },
   registerPlugin: () => ({
+    shareFile: async (options: { filename: string; base64: string }) => { nativeShareCalls.push(options); return { completed: nativeCompleted }; },
     share: async (options: { filename: string; mimeType?: string; base64: string }) => {
       shareCalls.push(options);
       return { status: 'shared' };
@@ -36,6 +41,7 @@ describe('nativeFileSave', () => {
 
   beforeEach(() => {
     mockPlatform = 'web';
+    nativeAvailable = false; nativeCompleted = true; nativeShareCalls.length = 0;
     shareCalls.length = 0;
     setWebViewBackgroundCalls.length = 0;
     createdAnchors = [];
@@ -249,6 +255,24 @@ describe('nativeFileSave', () => {
     expect(result).toBe('downloaded');
     expect(createdAnchors.length).toBe(1);
     expect(createdAnchors[0].download).toBe('fallback.md');
+  });
+
+  test('modern iOS shells use native sharing when Web Share cannot share files', async () => {
+    mockPlatform = 'ios'; nativeAvailable = true;
+    (globalThis as Record<string, unknown>).navigator = { canShare: () => false };
+    const { saveOrShareFile } = await import('./nativeFileSave');
+    expect(await saveOrShareFile({ filename: 'native.md', data: '# Native' })).toBe('shared');
+    expect(nativeShareCalls).toHaveLength(1);
+    expect(nativeShareCalls[0].filename).toBe('native.md');
+    expect(createdAnchors).toHaveLength(0);
+  });
+
+  test('cancelled native sharing never falls through to a download', async () => {
+    mockPlatform = 'ios'; nativeAvailable = true; nativeCompleted = false;
+    (globalThis as Record<string, unknown>).navigator = {};
+    const { saveOrShareFile } = await import('./nativeFileSave');
+    expect(await saveOrShareFile({ filename: 'cancel.md', data: 'text' })).toBe('cancelled');
+    expect(createdAnchors).toHaveLength(0);
   });
 
   test('setNativeWebViewBackground calls plugin on android', async () => {

@@ -276,7 +276,7 @@ type FakeNode = {
   parentNode: FakeNode | null;
   childNodes: FakeNode[];
   style: Record<string, unknown>;
-  classList: { add(...c: string[]): void; remove(...c: string[]): void; contains(c: string): boolean };
+  classList: { add(...c: string[]): void; remove(...c: string[]): void; contains(c: string): boolean; toggle(c: string, force?: boolean): boolean };
   [key: string]: unknown;
 };
 
@@ -315,7 +315,7 @@ function makeNode(tag: string, owner: FakeDocument): FakeNode {
     parentNode: null,
     childNodes: [] as FakeNode[],
     style: { setProperty() {}, getPropertyValue() { return ''; }, removeProperty() {} },
-    classList: { add() {}, remove() {}, contains() { return false; } },
+    classList: { add() {}, remove() {}, contains() { return false; }, toggle() { return false; } },
     setAttribute() {},
     removeAttribute() {},
     hasAttribute() { return false; },
@@ -371,7 +371,7 @@ function installMobileDom() {
     parentNode: null,
     childNodes: [] as FakeNode[],
     style: {},
-    classList: { add() {}, remove() {}, contains() { return false; } },
+    classList: { add() {}, remove() {}, contains() { return false; }, toggle() { return false; } },
     setAttribute() {},
     getAttribute() { return null; },
     activeElement: null,
