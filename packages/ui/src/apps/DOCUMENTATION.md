@@ -134,28 +134,46 @@ leave the dirty editor intact.
 - A failed `readTabletLayout` (e.g., `window` undefined during SSR) returns the default layout without throwing.
 - `GitView` mount failure does not affect chat; the drawer can be retried. No optimistic state is stranded.
 
-## Android companion and device bridge
+## Android device bridge
 
-AndroidCompanionController is mounted only in the native MobileShell. Its enabled
-child subscribes to the current directory's Git leaves and runtime identity; off
-means no Git subscription, publication timer or second-display listener. It makes
-no host requests and never reads transcripts. NativeAppPlugin.java implements
-Android haptics, notification settings/test and multiline terminal confirmation;
-iOS keeps its Swift implementation. Browser and desktop do not invoke these
-mobile bridges; file export on Android remains PiChamberFiles.
+NativeAppPlugin.java implements Android haptics, notification settings/test and
+multiline terminal confirmation. iOS keeps its Swift implementation. Browser and
+desktop do not invoke these mobile bridges; Android file export uses PiChamberFiles.
+The optional Android companion is a local Presentation WebView. It shares the
+primary app's state and host connection. CompanionSurface renders shared Button,
+Icon, theme variables and ExtensionWidgetsContent in a hidden client DOM subtree.
+After React commits, the controller serializes that subtree for the companion.
+Production code must not import react-dom/server: the mobile vendor chunk graph
+can initialize React before its exports exist and prevent the primary UI booting.
+The initial committed frame is published on bridge start; subsequent frames keep
+the existing scoped action routing and coalescing.
+The workspace tab strip exposes Changes, changed-file previews and Extensions;
+Sessions and Attention add loaded-session switching and actual pending dialogs.
+Terminal, editing, form inputs and large dialog responses stay on the top screen.
 
-androidCompanion.ts serializes native enable/publish/disable across remounts and
-coalesces latest snapshots with a 250 ms minimum gap and one in flight. The bridge
-receives at most 50 labels of 240 characters, theme colors and opaque numeric
-workspace/render scopes, with no paths, host identifiers or credentials. Exact
-paths stay in the renderer for primary-screen navigation. Both renderer and native
-plugin reject stale render-scope taps. AndroidCompanionPlugin owns eligibility,
-display choice, pause/keyboard gating and cleanup. The Presentation uses both
-FLAG_NOT_FOCUSABLE and FLAG_ALT_FOCUSABLE_IM so it stays below a cross-display
-IME even if the primary window receives no keyboard event; CompanionPresentation owns the
-touch-only native view and same-workspace scroll continuity. No bottom-screen
-input controls or extra WebView/transport exist. Preference dualScreen defaults
-false in the existing device-only namespace; old preferences retain their values.
+companionNavigation routes Changes, Files and Extensions workspace buttons only
+while the native companion reports active and the keyboard is closed. Other tabs
+and explicit diff links retain the main drawer.
+
+AndroidCompanionController owns host API calls and opaque index actions. Runtime,
+session, frame scope, foreground state and keyboard visibility gate actions.
+Confirm/select responses require the original pending request and full displayed
+choices. Late previews are discarded by owner; disconnected content is inactive.
+File previews are explicit reads capped at 1.4 MB; text is capped at 120,000
+characters and 2,000 lines. Widget projections are capped at 30 widgets, 16,000
+characters and 200 lines each. No transcript or thinking content is projected.
+
+AndroidCompanion serializes native mutations across remounts and coalesces
+publication to one in flight with a 250 ms delay. The native presentation loads
+only bundled CSS/fonts through the local server. Its fixed script delegates
+bounded actions and preserves scroll positions. CSP blocks network, frames and
+forms; only validated raster data URLs are accepted. The WebView never receives
+a host token or Capacitor bridge. Keyboard and background transitions dismiss
+and recreate the presentation; disabling removes listeners and pending work.
+
+Native changed-files geometry clamps the popup between the measured app header
+and its trigger using visual viewport offsets. ChangedFilesList uses a flexible
+scroll region when viewport bounded. Hosted geometry stays unchanged.
 
 ## Native mobile presentation
 
@@ -171,7 +189,7 @@ and tab sanitization retain the original five destinations.
 
 The native phone sessions drawer uses 92% width, including its swipe geometry.
 Hosted mobile retains 72%. The native sidebar starts in a local Recent view,
-offers Projects, keeps search visible, and puts actions in a separate footer.
+offers Projects, collapses search behind a header button, and puts actions in a separate footer.
 `nativeAppVariant` is an opt-in shared presentation prop; ordinary mobileVariant
 callers retain their previous header, view preference, padding, and floating
 actions. Tablet sidebar view preferences remain unchanged.
@@ -237,3 +255,13 @@ a bearer; cookies cannot stand in for a missing credential. Secure read failures
 remain retryable. Successful tokenless connections clear stale hasToken metadata.
 NativeOnDemand resolves Quick navigation and the native composer GitHub picker
 through committed state, with failure and retry UI and late-unmount cancellation.
+
+### Android handheld spacing
+
+Native Android landscape geometry is scoped in mobile.css. Collapsed composers
+use one editor line as their floor; expanded editors retain their sizing contract.
+Session search is a header toggle; closing clears the filter and blurs its input.
+Changes places the commit pane beside the scrollable list on wide, short screens.
+Directory/group row padding no longer stacks on top of mobile touch targets.
+Portrait, iOS, hosted browser and desktop geometry is unchanged. Drawer swipes use
+the measured width. No second-display content is supplied in this revision.

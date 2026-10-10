@@ -21,7 +21,7 @@ The mobile package reuses the web build, then rewrites `mobile.html` to `index.h
 - Android hardware back button and back gestures use a persistent root listener installed once for the native app lifetime. Open surfaces, sheets, dialogs, manual connection forms, and overlays (such as the QR scanner) register into a LIFO handler stack via `useNativeAndroidBackButton`. Back presses close the topmost active UI layer first; if nothing in the stack consumes the event (or at root screens), it falls through to minimize the app.
 - Native file saving and exports (session markdown, message images, table CSV/TSV, diagram SVG, and diagnostics) use the local `PiChamberFiles` plugin on Android to write files to the cache directory and open the Android system share chooser (`Intent.ACTION_SEND`) via `FileProvider`. On iOS, the Web Share API (`navigator.share`) with `File` objects is used. The `PiChamberFiles` plugin also provides `setWebViewBackground` to restore the theme background color after camera QR code scanning stops on Android.
 
-## Android device parity and second-screen companion
+## Android device parity
 
 The shared native app already includes Red Carbon, improved session navigation,
 archive safe-area layout, first-open loaders, secure connection recovery, offline
@@ -32,39 +32,42 @@ local notification test, and explicit confirmation before multiline terminal pas
 Haptics respect both the device-local preference and Android's feedback setting.
 The local notification test does not prove FCM or host/relay delivery.
 
-In Appearance, enable **Second-screen companion** (default off). Launch the app
-on the Thor's top screen with the bottom display enabled. The companion uses
-Android's presentation-display discovery, excluding the Activity's current screen;
-it never assumes display ID 1. With multiple eligible displays, choose the target
-from **Choose display**. The target ID is not persisted because Android display IDs
-are temporary. Single-screen devices retain the normal UI and report no eligible
-display. Display removal/power-off dismisses the companion; returning an eligible
-display restores it while the app is active. Unsupported firmware reports its
-state instead of requiring overlay permissions, root or Shizuku.
+The companion serializes shared components from a hidden, committed client DOM
+subtree. It does not load React server rendering into the production app; doing
+so creates a mobile vendor initialization cycle and a blank launch screen.
 
-The companion is a native, non-focusable, touch-only Presentation: workspace,
-branch, last loaded Git status, up to 50 changed-file shortcuts, Changes, Files and
-App settings. It has no chat, terminal, text field, WebView or second host client.
-File taps open their exact working/staged diff on the primary screen. If Git status
-has not loaded, use Changes on the main screen; the companion adds no HTTP reads
-or polling. Appearance uses the current resolved theme, including supplied Red
-Carbon colors. Only bounded labels and opaque scope numbers cross this bridge;
-no conversation, full paths, credentials or host URLs are sent or persisted.
+The optional Android second screen hosts a workspace companion using the app's
+bundled styles, icons, controls and resolved theme. Its tab strip follows the
+workspace drawer: Changes, Files and Extensions, with Sessions and Attention.
+Changes previews actual loaded Git files and unified diffs. Files previews those
+changed images and text files; it is not a full directory explorer. Extensions
+uses the same widget content component as the main drawer. Sessions switches
+among loaded sessions and can filter to the current workspace. Attention shows
+actual pending extension questions and supports complete confirm/select choices.
+Free text, large dialogs, editing and Terminal stay on the primary screen.
 
-The companion hides when the primary app reports the software keyboard open,
-returns after keyboard dismissal and hides on app pause. Its non-focusable window
-also uses FLAG_ALT_FOCUSABLE_IM to stay below the IME. If Thor firmware routes the
-keyboard to the bottom display without reporting a primary-window keyboard event,
-the companion remains underneath it instead of covering it or stealing input. Snapshot delivery is latest-only, capped at four publications per
-second with one in flight. Disabling drops pending updates, dismisses the
-Presentation and clears its snapshot. Runtime/project/file-list scope checks on
-both sides reject delayed taps; same-workspace updates preserve scroll position.
+Supported workspace buttons route to the bottom display while it is active.
+Terminal, Context and GitHub panels use the main drawer. Explicit per-file
+diff links also keep the main drawer for full staged/working controls. The normal
+drawer is the fallback whenever the companion is unavailable or hidden.
 
-Validation needs an Android SDK 35/JDK 21 APK build and a Thor hardware pass:
-enable/disable, top-screen chat with bottom-screen IME, keyboard close, screen
-power-off/removal/return, background/foreground, display chooser, project/host
-switches, scrolling and staged/working diff taps. Web tests and TypeScript cannot
-verify Presentation/IME behavior on Thor firmware.
+Enable Second-screen companion in Device appearance and feedback. It is off by
+default. The companion hides while the keyboard is open and while the app is in
+the background, preserving scroll positions within the current session. It uses
+the primary app's host connection, not a second authenticated client. Runtime or
+session changes invalidate old actions and previews. It never renders thinking
+or chat transcripts. Local WebView assets are limited to bundled CSS and fonts;
+external navigation and network requests are blocked. Snapshot publication is
+bounded and file reads happen only on selection or Refresh.
+
+The changed-files popup measures the header, trigger and visible viewport. Its
+list scrolls inside that space instead of extending behind the header.
+
+Native Android landscape handhelds use bounded session panels, search collapsed
+behind the session header button, a compact composer and Changes list, and a
+commit pane beside the list. Portrait, hosted browser and desktop layouts retain
+their current geometry. Verify touch targets, long drafts, expanded composer,
+keyboard resize and rotation on a physical Thor after rebuilding.
 
 ## Commands
 
@@ -73,6 +76,7 @@ Run these from `packages/mobile`, or use the root `mobile:*` aliases.
 - `bun run build`: builds `packages/web` and prepares mobile web assets.
 - `bun run build:assets`: prepares mobile assets from an existing `packages/web/dist` build; the root workspace build uses this to avoid rebuilding web.
 - `bun run sync`: prepares assets and runs `cap sync`.
+- `node scripts/check-web-startup.mjs`: checks production React/boot vendor initialization after building; this does not replace a device launch test.
 - `bun run add:ios`: creates the native iOS project.
 - `bun run add:android`: creates the native Android project.
 - `bun run build:android:debug`: builds a debug Android APK without launching an emulator.
