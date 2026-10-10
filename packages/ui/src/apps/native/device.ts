@@ -14,7 +14,7 @@ export const NativeApp = registerPlugin<NativeAppBridge>('NativeApp');
 let lastHapticAt = 0;
 /** A single, rate-limited feedback per user action; never tied to streamed tokens. */
 export const nativeHaptic = (kind: 'selection' | 'impact' | 'success' | 'error' = 'selection'): void => {
-  if (getClientPlatform() !== 'ios' || !getNativePreferences().haptics) return;
+  if (!['ios', 'android'].includes(getClientPlatform()) || !getNativePreferences().haptics) return;
   const now = Date.now();
   if (now - lastHapticAt < 80) return;
   lastHapticAt = now;
@@ -22,7 +22,7 @@ export const nativeHaptic = (kind: 'selection' | 'impact' | 'success' | 'error' 
 };
 
 export const confirmNativeTerminalPaste = async (text: string): Promise<boolean> => {
-  if (getClientPlatform() !== 'ios' || !/[\r\n]/.test(text)) return true;
+  if (!['ios', 'android'].includes(getClientPlatform()) || !/[\r\n]/.test(text)) return true;
   const result = await NativeApp.confirmTerminalPaste({ text });
   return result.confirmed;
 };

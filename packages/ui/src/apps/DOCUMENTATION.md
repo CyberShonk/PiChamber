@@ -134,6 +134,29 @@ leave the dirty editor intact.
 - A failed `readTabletLayout` (e.g., `window` undefined during SSR) returns the default layout without throwing.
 - `GitView` mount failure does not affect chat; the drawer can be retried. No optimistic state is stranded.
 
+## Android companion and device bridge
+
+AndroidCompanionController is mounted only in the native MobileShell. Its enabled
+child subscribes to the current directory's Git leaves and runtime identity; off
+means no Git subscription, publication timer or second-display listener. It makes
+no host requests and never reads transcripts. NativeAppPlugin.java implements
+Android haptics, notification settings/test and multiline terminal confirmation;
+iOS keeps its Swift implementation. Browser and desktop do not invoke these
+mobile bridges; file export on Android remains PiChamberFiles.
+
+androidCompanion.ts serializes native enable/publish/disable across remounts and
+coalesces latest snapshots with a 250 ms minimum gap and one in flight. The bridge
+receives at most 50 labels of 240 characters, theme colors and opaque numeric
+workspace/render scopes, with no paths, host identifiers or credentials. Exact
+paths stay in the renderer for primary-screen navigation. Both renderer and native
+plugin reject stale render-scope taps. AndroidCompanionPlugin owns eligibility,
+display choice, pause/keyboard gating and cleanup. The Presentation uses both
+FLAG_NOT_FOCUSABLE and FLAG_ALT_FOCUSABLE_IM so it stays below a cross-display
+IME even if the primary window receives no keyboard event; CompanionPresentation owns the
+touch-only native view and same-workspace scroll continuity. No bottom-screen
+input controls or extra WebView/transport exist. Preference dualScreen defaults
+false in the existing device-only namespace; old preferences retain their values.
+
 ## Native mobile presentation
 
 `MobileShell` sets `MobileAppActions.nativeApp` only for the Capacitor shell.

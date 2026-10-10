@@ -17,9 +17,54 @@ The mobile package reuses the web build, then rewrites `mobile.html` to `index.h
 - A temporarily unreachable saved server retains its endpoint, saved row, stale chats, drafts, and local session while the app retries in the foreground (including across cold launches with a persisted endpoint, where the boot splash holds until classification resolves rather than dropping the endpoint on a waking radio). Retries are paced and bounded (8 attempts: 1s, 2s, 4s, 8s, 15s, 30s, 30s, 30s); offline or hidden uses a 60s cap and wakes on online, visible, resume, or manual retry instead of probing a known-dead network. An exhausted cycle keeps polling slowly (60s) while foreground+online and restarts as a fresh bounded cycle on a genuine online/foreground/manual wake so a long outage wakes promptly; offline/hidden wakes never restart and duplicate wakes collapse into the single in-flight probe. Probes reuse the verified candidate failover (server identity, direct/relay preference) and close unused relay tunnels. A probe that times out or fails is never counted as healthy, for direct and relay alike; fast relay probes get their own 8s budget (fresh relay socket, E2EE handshake, and one tunneled round trip) instead of the 2.5s direct LAN budget. The transport core owns that single in-flight probe for every caller (recovery controller, resume/startup classification, and the background candidate-refresh follow-up): it captures the endpoint selection generation plus runtime identity before every secure read, network send, storage upsert, and transport switch, so a late probe after an explicit disconnect, host switch, or same-instance disconnect/reconnect flap commits nothing — no late upsert, no late switch, no old credential sent to the new host — and stale relay winners are closed instead of adopted. Auth-invalid enters the existing login/repair flow (never the retry loop); no saved candidate, explicit disconnect, and host switch leave recovery with nothing retained to retry. While recovering the composer blocks sends (drafts stay local, queued auto-send stays paused until a verified healthy probe) and the native EventSource resume path is left untouched.
 - The Terminal workspace surface runs its PTY on the active PiChamber server over the shared authenticated runtime transport; it never opens a local shell on the phone or tablet. Closing the surface detaches the renderer while the server session remains available for reattachment. On touch devices, dragging scrolls the buffer while long-pressing and dragging selects terminal text.
 - Composer dictation captures microphone audio in the WebView and streams binary PCM through the active authenticated runtime transport. Local speech models run on the connected PiChamber server, not on the phone. iOS and Android declare microphone usage and runtime permissions in their native projects.
-- Native completion and error notifications use APNs on iOS and FCM on Android through the connected server's PiChamber push relay. The app registers its device token only when notifications are enabled. The native shell suppresses banners while the app is foregrounded; local notifications are not used.
+- Native completion and error notifications use APNs on iOS and FCM on Android through the connected server's PiChamber push relay. The app registers its device token only when notifications are enabled. The native shell suppresses banners while the app is foregrounded; local notifications are used only for the explicit device delivery test, never as a substitute for remote completion/error push.
 - Android hardware back button and back gestures use a persistent root listener installed once for the native app lifetime. Open surfaces, sheets, dialogs, manual connection forms, and overlays (such as the QR scanner) register into a LIFO handler stack via `useNativeAndroidBackButton`. Back presses close the topmost active UI layer first; if nothing in the stack consumes the event (or at root screens), it falls through to minimize the app.
 - Native file saving and exports (session markdown, message images, table CSV/TSV, diagram SVG, and diagnostics) use the local `PiChamberFiles` plugin on Android to write files to the cache directory and open the Android system share chooser (`Intent.ACTION_SEND`) via `FileProvider`. On iOS, the Web Share API (`navigator.share`) with `File` objects is used. The `PiChamberFiles` plugin also provides `setWebViewBackground` to restore the theme background color after camera QR code scanning stops on Android.
+
+## Android device parity and second-screen companion
+
+The shared native app already includes Red Carbon, improved session navigation,
+archive safe-area layout, first-open loaders, secure connection recovery, offline
+copies and quick navigation on Android. Android keeps its existing resize-driven
+keyboard layout, system back handling, and PiChamberFiles sharing implementation.
+NativeAppPlugin adds Android system haptics, notification Settings, a five-second
+local notification test, and explicit confirmation before multiline terminal paste.
+Haptics respect both the device-local preference and Android's feedback setting.
+The local notification test does not prove FCM or host/relay delivery.
+
+In Appearance, enable **Second-screen companion** (default off). Launch the app
+on the Thor's top screen with the bottom display enabled. The companion uses
+Android's presentation-display discovery, excluding the Activity's current screen;
+it never assumes display ID 1. With multiple eligible displays, choose the target
+from **Choose display**. The target ID is not persisted because Android display IDs
+are temporary. Single-screen devices retain the normal UI and report no eligible
+display. Display removal/power-off dismisses the companion; returning an eligible
+display restores it while the app is active. Unsupported firmware reports its
+state instead of requiring overlay permissions, root or Shizuku.
+
+The companion is a native, non-focusable, touch-only Presentation: workspace,
+branch, last loaded Git status, up to 50 changed-file shortcuts, Changes, Files and
+App settings. It has no chat, terminal, text field, WebView or second host client.
+File taps open their exact working/staged diff on the primary screen. If Git status
+has not loaded, use Changes on the main screen; the companion adds no HTTP reads
+or polling. Appearance uses the current resolved theme, including supplied Red
+Carbon colors. Only bounded labels and opaque scope numbers cross this bridge;
+no conversation, full paths, credentials or host URLs are sent or persisted.
+
+The companion hides when the primary app reports the software keyboard open,
+returns after keyboard dismissal and hides on app pause. Its non-focusable window
+also uses FLAG_ALT_FOCUSABLE_IM to stay below the IME. If Thor firmware routes the
+keyboard to the bottom display without reporting a primary-window keyboard event,
+the companion remains underneath it instead of covering it or stealing input. Snapshot delivery is latest-only, capped at four publications per
+second with one in flight. Disabling drops pending updates, dismisses the
+Presentation and clears its snapshot. Runtime/project/file-list scope checks on
+both sides reject delayed taps; same-workspace updates preserve scroll position.
+
+Validation needs an Android SDK 35/JDK 21 APK build and a Thor hardware pass:
+enable/disable, top-screen chat with bottom-screen IME, keyboard close, screen
+power-off/removal/return, background/foreground, display chooser, project/host
+switches, scrolling and staged/working diff taps. Web tests and TypeScript cannot
+verify Presentation/IME behavior on Thor firmware.
 
 ## Commands
 
@@ -116,10 +161,10 @@ read-only snapshots, limited to three copies of 600 KB each and up to 200 loaded
 messages per explicit save. Older unloaded history is not included.
 
 Notification settings show OS permission and host registration independently,
-with retry, iOS Settings and a replaceable device test scheduled five seconds
+with retry, iOS/Android Settings and a replaceable device test scheduled five seconds
 later. Background the app to see the test. Remote notifications use the existing
 APNs/FCM host/relay configuration; a device test does not verify remote delivery.
-Foreground push presentation remains suppressed. Multiline iOS terminal pastes
+Foreground push presentation remains suppressed. Multiline native terminal pastes
 require confirmation. Composer large pastes can be attached as text instead.
 Native archive undo is limited to successful IDs and the original host.
 

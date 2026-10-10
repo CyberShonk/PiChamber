@@ -569,8 +569,15 @@ const SETTINGS_SEARCH_ITEMS: readonly SettingsSearchItem[] = [
     id: 'appearance.native-haptics',
     page: 'appearance',
     title: 'Haptic feedback',
-    keywords: ['vibration', 'touch', 'feedback', 'ios'],
-    isAvailable: () => isCapacitorApp() && getClientPlatform() === 'ios',
+    keywords: ['vibration', 'touch', 'feedback', 'ios', 'android'],
+    isAvailable: () => isCapacitorApp(),
+  },
+  {
+    id: 'appearance.android-dual-screen',
+    page: 'appearance',
+    title: 'Second-screen companion',
+    keywords: ['android', 'ayn', 'thor', 'dual screen', 'display', 'keyboard'],
+    isAvailable: () => isCapacitorApp() && getClientPlatform() === 'android',
   },
   {
     id: 'appearance.offline-copies',
@@ -604,7 +611,7 @@ const SETTINGS_SEARCH_ITEMS: readonly SettingsSearchItem[] = [
     id: 'notifications.native',
     page: 'notifications',
     title: 'Device notification status',
-    keywords: ['ios', 'apns', 'permission', 'test', 'registration'],
+    keywords: ['ios', 'android', 'apns', 'fcm', 'permission', 'test', 'registration'],
     isAvailable: () => isCapacitorApp(),
   },
   {
