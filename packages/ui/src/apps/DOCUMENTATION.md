@@ -147,11 +147,11 @@ Production code must not import react-dom/server: the mobile vendor chunk graph
 can initialize React before its exports exist and prevent the primary UI booting.
 The initial committed frame is published on bridge start; subsequent frames keep
 the existing scoped action routing and coalescing.
-The workspace tab strip exposes Changes, changed-file previews and Extensions;
+The workspace tab strip exposes Changes, changed-file previews, Context and Extensions;
 Sessions and Attention add loaded-session switching and actual pending dialogs.
 Terminal, editing, form inputs and large dialog responses stay on the top screen.
 
-companionNavigation routes Changes, Files and Extensions workspace buttons only
+companionNavigation routes Changes, Files, Context and Extensions workspace buttons only
 while the native companion reports active and the keyboard is closed. Other tabs
 and explicit diff links retain the main drawer.
 
@@ -265,3 +265,16 @@ Changes places the commit pane beside the scrollable list on wide, short screens
 Directory/group row padding no longer stacks on top of mobile touch targets.
 Portrait, iOS, hosted browser and desktop geometry is unchanged. Drawer swipes use
 the measured width. No second-display content is supplied in this revision.
+
+### Thor companion readability
+
+Unified diffs use independent block rows, old/new line gutters and horizontal
+scrolling for long code lines. Blank additions and no-newline markers are preserved.
+Context is an input-free summary of the selected session, using the same token
+contract as ContextPanelContent (latest reported input plus cache, not output).
+The controller subscribes to message records only in Context, with the existing
+live-tail suspension; other companion tabs do not project transcripts. Unknown
+limits and unreported usage remain unavailable instead of showing fabricated
+zero-percent capacity. Session scope controls stay fixed above the scrollable
+board; titles preserve case and can occupy two lines. Idle labels no longer
+consume title space; running, retrying, error, offline and unread states remain.

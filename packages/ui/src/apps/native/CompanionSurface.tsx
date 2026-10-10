@@ -2,12 +2,14 @@ import { ExtensionWidgetsContent } from '@/components/chat/extension/ExtensionWi
 import { Button } from '@/components/ui/button';
 import { Icon } from '@/components/icon/Icon';
 import type { IconName } from '@/components/icon/icons';
+import { companionDiffLines } from './companionDiff';
 import type { CompanionTab, CompanionView } from './companionModel';
 
 const destinations: Array<{ tab: CompanionTab; label: string; icon: IconName }> = [
   { tab: 'sessions', label: 'Sessions', icon: 'list-unordered' },
   { tab: 'review', label: 'Changes', icon: 'git-branch' },
   { tab: 'artifacts', label: 'Files', icon: 'file-text' },
+  { tab: 'context', label: 'Context', icon: 'donut-chart' },
   { tab: 'extensions', label: 'Extensions', icon: 'plug-2' },
   { tab: 'attention', label: 'Attention', icon: 'notification-3' },
 ];
@@ -37,31 +39,62 @@ const WorkspaceTabs = ({ view }: { view: CompanionView }) => (
 );
 
 const SessionBoard = ({ view }: { view: CompanionView }) => (
-  <main className="companion-scroll companion-sessions" data-scroll="sessions">
+  <main className="companion-session-board">
     <div className="companion-board-filter">
-      <Button variant="chip" size="sm" aria-pressed={view.projectOnly === true} data-caction="scope">
-        {view.projectOnly ? 'This workspace' : 'All loaded projects'}
-      </Button>
+      <div role="group" aria-label="Session scope" className="companion-scope-switch">
+        <Button variant="ghost" size="sm" aria-pressed={!view.projectOnly} data-caction={view.projectOnly ? 'scope' : undefined}>All projects</Button>
+        <Button variant="ghost" size="sm" aria-pressed={view.projectOnly === true} data-caction={!view.projectOnly ? 'scope' : undefined}>This workspace</Button>
+      </div>
+      <span className="typography-micro text-muted-foreground">{view.sessions.length} sessions</span>
     </div>
-    {view.sessions.length === 0 ? <Empty text="No loaded sessions. Open the sessions list on the top screen." /> : (
-      view.sessions.map((session, index) => (
-        <Button key={index} variant="ghost" size="default" className="companion-session"
-          aria-pressed={session.selected} data-caction="session" data-index={index} disabled={!view.connected}>
-          <span className="companion-session-copy">
-            <span className="truncate text-foreground">{session.title}</span>
-            <span className="truncate typography-meta text-muted-foreground">
-              {session.project}{session.unseen ? ` · ${session.unseen} unread` : ''}
+    <div className="companion-scroll companion-sessions" data-scroll="sessions">
+      {view.sessions.length === 0 ? <Empty text="No loaded sessions. Open the sessions list on the top screen." /> : (
+        view.sessions.map((session, index) => (
+          <Button key={index} variant="ghost" size="default" className="companion-session"
+            aria-pressed={session.selected} data-caction="session" data-index={index} disabled={!view.connected}>
+            <span className="companion-session-copy">
+              <span className="companion-session-title">{session.title}</span>
+              <span className="companion-session-meta typography-meta text-muted-foreground">
+                <span className="truncate">{session.project}</span>
+                {session.unseen ? <span className="companion-unread">{session.unseen} unread</span> : null}
+                {session.state !== 'idle' && <span className="companion-status" data-state={session.state}>
+                  {session.state === 'busy' ? 'Running' : session.state === 'retry' ? 'Retrying' :
+                    session.state === 'error' ? 'Error' : session.state === 'offline' ? 'Offline' : null}
+                </span>}
+              </span>
             </span>
-          </span>
-          <span className="companion-status typography-meta" data-state={session.state}>
-            {session.state === 'busy' ? 'Running' : session.state === 'retry' ? 'Retrying' :
-              session.state === 'error' ? 'Error' : session.state === 'offline' ? 'Offline' : 'Idle'}
-          </span>
-        </Button>
-      ))
-    )}
+          </Button>
+        ))
+      )}
+    </div>
   </main>
 );
+
+const ContextSummary = ({ view }: { view: CompanionView }) => {
+  const summary = view.context;
+  if (!summary) return <Empty text="Open a session to inspect context." />;
+  const number = (value: number) => value.toLocaleString('en-US');
+  const metrics = [
+    ['Messages', number(summary.messagesCount)], ['User', number(summary.userMessagesCount)],
+    ['Assistant', number(summary.assistantMessagesCount)], ['Cost', summary.totalAssistantCost.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: summary.totalAssistantCost > 0 && summary.totalAssistantCost < 0.01 ? 4 : 2 })],
+    ['Cache read', number(summary.tokenBreakdown.cacheRead)], ['Cache write', number(summary.tokenBreakdown.cacheWrite)],
+  ];
+  return <main className="companion-scroll companion-context-summary" data-scroll="context">
+    <p className="typography-meta text-muted-foreground companion-model-name">{summary.providerModel.providerName} / {summary.providerModel.modelName}</p>
+    <section className="companion-context-usage">
+      <div className="typography-ui-label"><span>Context</span><span>{summary.hasUsage ? number(summary.contextWindowTokens) : 'Awaiting usage'}{summary.contextLimit ? ` / ${number(summary.contextLimit)}` : ''}</span></div>
+      {summary.hasUsage && summary.contextLimit ? <>
+        <div className="companion-context-meter" role="progressbar" aria-label="Context used" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.min(100, summary.usagePercent)}>
+          <span style={{ width: `${Math.min(100, summary.usagePercent)}%` }} />
+        </div>
+        <p className="typography-meta">{summary.usagePercent.toFixed(1)}% used</p>
+      </> : <p className="typography-meta text-muted-foreground">{summary.hasUsage ? 'Context limit unavailable' : 'Usage appears after an assistant turn reports tokens.'}</p>}
+    </section>
+    <dl className="companion-context-metrics">
+      {metrics.map(([label, value]) => <div key={label}><dt className="typography-meta text-muted-foreground">{label}</dt><dd className="typography-ui-label">{value}</dd></div>)}
+    </dl>
+  </main>;
+};
 
 const FileRail = ({ view }: { view: CompanionView }) => (
   <aside className="companion-scroll companion-files" data-scroll="files">
@@ -103,15 +136,15 @@ const FilePreview = ({ view }: { view: CompanionView }) => {
         {preview.kind === 'image' ? (
           <img src={preview.content} alt={preview.title} className="companion-image" />
         ) : preview.kind === 'diff' ? (
-          <pre className="companion-code">
-            {preview.content.split('\n').map((line, index) => (
-              <span key={index} className={line.startsWith('+') && !line.startsWith('+++') ? 'companion-diff-add' :
-                line.startsWith('-') && !line.startsWith('---') ? 'companion-diff-remove' :
-                line.startsWith('@@') ? 'companion-diff-hunk' : undefined}>
-                {line || ' '}<br />
-              </span>
+          <div className="companion-code companion-diff" aria-label="Unified diff">
+            {companionDiffLines(preview.content).map((line, index) => (
+              <div key={index} className={`companion-diff-row companion-diff-${line.kind}`}>
+                <span className="companion-line-number" aria-hidden="true">{line.oldLine ?? ''}</span>
+                <span className="companion-line-number" aria-hidden="true">{line.newLine ?? ''}</span>
+                <code>{line.text || ' '}</code>
+              </div>
             ))}
-          </pre>
+          </div>
         ) : preview.kind === 'text' ? (
           <pre className="companion-code">{preview.content}</pre>
         ) : <Empty text={preview.content} />}
@@ -164,6 +197,7 @@ export const CompanionSurface = ({ view }: { view: CompanionView }) => (
         <ExtensionWidgetsContent widgets={view.widgets ?? []} collapsedWidgets={view.collapsedWidgets ?? {}} companion />
       </main>
     )}
+    {view.tab === 'context' && <ContextSummary view={view} />}
     {view.tab === 'attention' && <AttentionTray view={view} />}
   </div>
 );

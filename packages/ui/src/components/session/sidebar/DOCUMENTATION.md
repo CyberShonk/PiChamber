@@ -92,3 +92,9 @@ haptic through the preference-aware, rate-limited native feedback bridge.
 Native session search starts collapsed in the header. Opening uses the existing
 focus effect; closing clears its filter and blurs the field. Android handheld
 landscape mode caps the drawer width and uses compact view chips and footer.
+
+Native Android landscape session rows allow two title lines on six-inch
+handhelds. The scope is the dedicated mobile drawer at landscape widths of
+600px or more and heights of 600px or less; desktop, browser and portrait row
+spacing stay as before. Search still opens from the header button and starts
+collapsed.

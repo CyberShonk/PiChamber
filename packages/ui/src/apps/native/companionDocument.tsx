@@ -1,7 +1,7 @@
 import type { Theme } from '@/types/theme';
 import { CSSVariableGenerator } from '@/lib/theme/cssGenerator';
 import { iconSpriteData } from '@/components/icon/sprite';
-const icons = ['list-unordered', 'git-branch', 'file-text', 'notification-3', 'refresh', 'plug-2', 'arrow-right-s', 'arrow-down-s'] as const;
+const icons = ['list-unordered', 'git-branch', 'file-text', 'notification-3', 'refresh', 'plug-2', 'donut-chart', 'arrow-right-s', 'arrow-down-s'] as const;
 export type CompanionFrame = { scope: number; workspaceScope: number; document: string; html: string; background: string };
 const themeGenerator = new CSSVariableGenerator();
 const escapeStyle = (text: string) => text.replace(/<\/style/gi, '<\\/style');

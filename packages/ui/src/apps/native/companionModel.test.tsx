@@ -5,6 +5,7 @@ import { CompanionSurface } from './CompanionSurface';
 import { allowedCompanionAction, attentionItems, boundedCompanionText, companionWidgets, safeCompanionImage, sessionBoard, type CompanionView } from './companionModel';
 import { createCompanionRoutes } from './companionRoutes';
 import { companionWorkspaceTab } from './companionNavigation';
+import { summarizeSessionContext } from '@/components/layout/sessionContextSummary';
 import { companionFrame } from './companionDocument';
 import theme from './red-carbon-dark.json';
 import type { Theme } from '@/types/theme';
@@ -77,7 +78,7 @@ test('workspace routing only moves input-free supported destinations', () => {
   expect(companionWorkspaceTab('extensions')).toBe('extensions');
   expect(companionWorkspaceTab('terminal')).toBeNull();
   expect(companionWorkspaceTab('pull-requests')).toBeNull();
-  expect(companionWorkspaceTab('context')).toBeNull();
+  expect(companionWorkspaceTab('context')).toBe('context');
 });
 
 test('visible-frame indices survive queued updates but cannot cross a workspace owner', () => {
@@ -91,4 +92,28 @@ test('visible-frame indices survive queued updates but cannot cross a workspace 
   expect(routes.resolve(1, 11)).toBeUndefined();
   for (let scope = 4; scope < 40; scope++) routes.remember(scope, { owner: { id: 11 }, files: [] });
   expect(routes.resolve(3, 11)).toBeUndefined();
+});
+
+
+test('diff renders separate rows with preserved casing and escaped code', () => {
+  const html = renderToStaticMarkup(<CompanionSurface view={{ ...view, tab: 'review', preview: { kind: 'diff', title: 'MainActivity.kt', content: 'diff --git a/MainActivity.kt b/MainActivity.kt\n@@ -2,2 +2,2 @@\n-old()\n+New(<script>)\n unchanged' } }} />);
+  expect(html.match(/class="companion-diff-row /g)?.length).toBe(5);
+  expect(html).toContain('New(&lt;script&gt;)');
+  expect(html).not.toContain('<br');
+  expect(html).toContain('companion-line-number');
+});
+
+test('idle session cards reserve title space for content and expose workspace scope', () => {
+  const html = renderToStaticMarkup(<CompanionSurface view={{ ...view, sessions: [{ title: 'MainActivity Review', project: 'DroidModLoader', state: 'idle', selected: true }] }} />);
+  expect(html).toContain('MainActivity Review'); expect(html).toContain('DroidModLoader');
+  expect(html).not.toContain('>Idle<'); expect(html).toContain('aria-label="Session scope"');
+  expect(html).toContain('companion-session-title');
+});
+
+test('companion Context is input-free and distinguishes missing usage from a full window', () => {
+  const summary = summarizeSessionContext([], []);
+  const html = renderToStaticMarkup(<CompanionSurface view={{ ...view, tab: 'context', context: summary }} />);
+  expect(html).toContain('Awaiting usage'); expect(html).toContain('Cache read');
+  expect(html).toContain('href="#oc-donut-chart"');
+  expect(html).not.toContain('<input'); expect(html).not.toContain('role="progressbar"');
 });

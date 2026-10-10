@@ -5,6 +5,9 @@ import { useThemeSystem } from '@/contexts/useThemeSystem';
 import { useRuntimeAPIs } from '@/hooks/useRuntimeAPIs';
 import { getRuntimeKey, subscribeRuntimeEndpointChanged } from '@/lib/runtime-switch';
 import { useNotificationStore } from '@/sync/notification-store';
+import { useSessionMessageRecords } from '@/sync/sync-context';
+import { useConfigStore } from '@/stores/useConfigStore';
+import { summarizeSessionContext } from '@/components/layout/sessionContextSummary';
 import { useGitStore } from '@/stores/useGitStore';
 import { useSessionUIStore } from '@/sync/session-ui-store';
 import { usePiSessionSnapshot, usePiSessionStore } from '@/sync/pi-session-context';
@@ -46,7 +49,10 @@ const EnabledCompanion = () => {
     }), [gitStatus]);
     const owner = useMemo(() => ({ id: ++nextScope, runtimeKey, directory, sessionId }), [runtimeKey, directory, sessionId]);
     const [tab, setTab] = useState<CompanionTab>('review');
-    const widgetMap = usePiSessionSnapshot((state) => tab === 'extensions' && sessionId ? state.reducer.bySession.get(sessionId)?.extensionWidgets : undefined, Object.is, sessionId ? `session:${sessionId}` : 'chrome');
+    const contextMessages = useSessionMessageRecords(tab === 'context' ? sessionId ?? '' : '');
+    const providers = useConfigStore((state) => state.providers);
+    const context = useMemo(() => tab === 'context' && sessionId ? summarizeSessionContext(contextMessages, providers) : null, [tab, sessionId, contextMessages, providers]);
+    const widgetMap = usePiSessionSnapshot((state) => tab === 'extensions' && sessionId ? state.reducer.bySession.get(sessionId)?.extensionWidgets : undefined, Object.is, sessionId ? `session:${sessionId}` : 'chrome', tab);
     const widgets = useMemo(() => companionWidgets(widgetMap), [widgetMap]);
     const [collapsedWidgets, setCollapsedWidgets] = useState<Record<string, boolean>>({});
     const [selectedPath, setSelectedPath] = useState<string | null>(null);
@@ -120,7 +126,7 @@ const EnabledCompanion = () => {
         // File-content reads are explicit: selection or Refresh, never Git/token polling.
     }, [apis, owner, previewKey, refresh, connected, selectedRead, tab]);
     const currentPreview = connected && previewState?.owner === owner.id && previewState.key === previewKey ? previewState : null;
-    const view = useMemo<CompanionView>(() => ({ tab, widgets, collapsedWidgets, projectOnly, workspace: directory.split(/[\\/]/).filter(Boolean).at(-1) ?? '', connected, selectedSession: catalog.get(sessionId ?? '')?.title.slice(0, 160) ?? '', sessions, files, selectedFile: selectedFile >= 0 ? selectedFile : null, preview: currentPreview?.preview ?? null, loading: currentPreview?.loading || answerBusy, error: currentPreview?.error || answerError, questions }), [tab, widgets, collapsedWidgets, projectOnly, directory, connected, catalog, sessionId, sessions, files, selectedFile, currentPreview, answerBusy, answerError, questions]);
+    const view = useMemo<CompanionView>(() => ({ tab, context, widgets, collapsedWidgets, projectOnly, workspace: directory.split(/[\\/]/).filter(Boolean).at(-1) ?? '', connected, selectedSession: catalog.get(sessionId ?? '')?.title.slice(0, 160) ?? '', sessions, files, selectedFile: selectedFile >= 0 ? selectedFile : null, preview: currentPreview?.preview ?? null, loading: currentPreview?.loading || answerBusy, error: currentPreview?.error || answerError, questions }), [tab, context, widgets, collapsedWidgets, projectOnly, directory, connected, catalog, sessionId, sessions, files, selectedFile, currentPreview, answerBusy, answerError, questions]);
     const surface = useRef<HTMLDivElement>(null);
     const frame = useRef<CompanionFrame | null>(null);
     const session = useRef<ReturnType<typeof startCompanion> | null>(null);
@@ -225,7 +231,7 @@ const EnabledCompanion = () => {
             const tab = (event as CustomEvent<{
                 tab?: CompanionTab;
             }>).detail?.tab;
-            if (!disposed && latest.current.owner.runtimeKey === getRuntimeKey() && (tab === 'review' || tab === 'artifacts' || tab === 'extensions')) {
+            if (!disposed && latest.current.owner.runtimeKey === getRuntimeKey() && (tab === 'review' || tab === 'artifacts' || tab === 'extensions' || tab === 'context')) {
                 setTab(tab);
                 setAnswerError(null);
             }

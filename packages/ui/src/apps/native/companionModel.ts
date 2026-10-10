@@ -1,8 +1,9 @@
 import type { ExtensionWidgetEntry } from '@/components/chat/extension/ExtensionWidgetsContent';
+import type { summarizeSessionContext } from '@/components/layout/sessionContextSummary';
 import { stripAnsi } from '@/lib/pi/ansi';
 import type { LiveSessionRecord } from '@/sync/pi-session-catalog';
 import type { PiReducerSessionState } from '@/lib/pi/reducers/reducerTypes';
-export type CompanionTab = 'sessions' | 'review' | 'artifacts' | 'extensions' | 'attention';
+export type CompanionTab = 'sessions' | 'review' | 'artifacts' | 'extensions' | 'attention' | 'context';
 export type CompanionAction = {
     scope: number;
     type: 'tab' | 'session' | 'file' | 'preview' | 'refresh' | 'scope' | 'answer' | 'question' | 'widget';
@@ -13,6 +14,7 @@ export type CompanionAction = {
 export type CompanionView = {
     tab: CompanionTab;
     projectOnly?: boolean;
+    context?: ReturnType<typeof summarizeSessionContext> | null;
     workspace: string;
     connected: boolean;
     selectedSession: string;
@@ -48,7 +50,7 @@ export type CompanionView = {
         options: string[];
     }>;
 };
-const tabs: CompanionTab[] = ['sessions', 'review', 'artifacts', 'extensions', 'attention'];
+const tabs: CompanionTab[] = ['sessions', 'review', 'artifacts', 'extensions', 'attention', 'context'];
 export const allowedCompanionAction = (action: CompanionAction) => {
     if (!Number.isSafeInteger(action.scope))
         return false;

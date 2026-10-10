@@ -192,3 +192,13 @@ than an immediate expired-access notice. Protected hosts still require a new
 credential. Diagnostic credential-read entries distinguish missing data and read
 failure. Native archive navigation reserves iOS safe areas and keeps its Close
 control in a header. Session context menus provide impact feedback on opening.
+
+### Thor companion review and context
+
+Changes renders a unified diff with old/new line numbers and independent line
+rows. Long lines scroll horizontally inside the preview. Context can be opened
+on the companion from its tab strip or the main workspace Context button; it
+shows the selected session's reported usage, model, message counts, cost and
+cache totals without text inputs. Session titles retain their case and wrap to
+two lines, with All projects / This workspace filters above the list.
+The keyboard/companion arrangement is unchanged.

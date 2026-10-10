@@ -527,6 +527,7 @@ function SessionNodeItemComponent(props: SessionNodeItemProps): React.ReactNode 
                 >
                   <div className="flex w-full items-center min-w-0 flex-1 gap-1.5 overflow-hidden">
                     <div
+                      data-session-title
                       className={cn(
                         'block min-w-0 flex-1 truncate font-normal typography-ui-label',
                         needsAttention
