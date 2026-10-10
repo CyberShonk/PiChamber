@@ -10,6 +10,7 @@ export const NativeNotificationControls = () => {
   const status = useNativePushStatus();
   const [busy, setBusy] = useState(false);
   const ios = getClientPlatform() === 'ios';
+  const native = ios || getClientPlatform() === 'android';
   useEffect(() => {
     let disposed = false;
     const refresh = () => {
@@ -30,11 +31,11 @@ export const NativeNotificationControls = () => {
     <p role="status" className="typography-meta text-muted-foreground">Permission: {status.permission}. {status.error ?? registrationLabels[status.registration]}</p>
     <div className="flex flex-wrap gap-2">
       <Button size="sm" variant="outline" onClick={retryNativePushRegistration} disabled={busy || (status.registration === 'registering' || status.registration === 'disabled')}>Retry registration</Button>
-      {ios && <>
-        <Button size="sm" variant="outline" disabled={busy} onClick={() => void action(() => NativeApp.openSettings())}>Open iOS Settings</Button>
+      {native && <>
+        <Button size="sm" variant="outline" disabled={busy} onClick={() => void action(() => NativeApp.openSettings())}>{ios ? 'Open iOS Settings' : 'Open Android Settings'}</Button>
         <Button size="sm" variant="outline" disabled={busy || status.permission !== 'granted'} onClick={() => void action(async () => { await NativeApp.testNotification(); toast.info('Test scheduled. Background the app within five seconds to see it.'); })}>Test device notification</Button>
       </>}
     </div>
-    <p className="typography-meta text-muted-foreground">The device test checks iOS delivery. Remote delivery also requires push configured on the connected host.</p>
+    <p className="typography-meta text-muted-foreground">The device test checks local notification delivery. Remote delivery also requires push configured on the connected host.</p>
   </div>;
 };

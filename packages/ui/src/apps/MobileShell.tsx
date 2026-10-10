@@ -1,3 +1,4 @@
+import { AndroidCompanionController } from './native/AndroidCompanionController';
 import React from 'react';
 import { getRuntimeKey } from '@/lib/runtime-switch';
 import { nativeHaptic } from './native/device';
@@ -531,6 +532,7 @@ export const MobileShell: React.FC<MobileShellProps> = ({ onActiveConnectionDele
 
   return (
     <DedicatedMobileAppProvider actions={mobileActions}>
+      {showCapacitorOnlyFeatures && <AndroidCompanionController />}
       <div
         className="oc-mobile-app-shell main-content-safe-area relative flex h-[100dvh] flex-row bg-background text-foreground"
         data-page-scroll-lock="true"

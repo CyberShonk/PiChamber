@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from 'react';
 
-type NativePreferences = { haptics: boolean; reduceMotion: boolean; offlineCache: boolean };
-const defaults: NativePreferences = { haptics: true, reduceMotion: false, offlineCache: false };
+type NativePreferences = { haptics: boolean; reduceMotion: boolean; offlineCache: boolean; dualScreen: boolean };
+const defaults: NativePreferences = { haptics: true, reduceMotion: false, offlineCache: false, dualScreen: false };
 const key = 'pichamber.native.preferences.v1';
 let current: NativePreferences | undefined;
 const listeners = new Set<() => void>();
