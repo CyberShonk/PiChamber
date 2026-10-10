@@ -15,7 +15,7 @@ describe('native Red Carbon theme', () => {
     expect(theme.colors.primary.base).toBe('#B3121B');
   });
   test('primary, secondary, selected and button text meet small-text contrast', () => {
-    for (const [foreground, background] of [[theme.colors.primary.emphasis, theme.colors.surface.background], [theme.colors.surface.foreground, theme.colors.surface.background], [theme.colors.surface.mutedForeground, theme.colors.surface.elevated], [theme.colors.primary.foreground, theme.colors.primary.base], [theme.colors.interactive.selectionForeground, theme.colors.interactive.selection]]) expect(contrast(foreground, background)).toBeGreaterThanOrEqual(4.5);
+    for (const [foreground, background] of [[theme.colors.primary.emphasis, theme.colors.surface.background], [theme.colors.surface.foreground, theme.colors.surface.background], [theme.colors.surface.mutedForeground, theme.colors.surface.elevated], [theme.colors.primary.foreground, theme.colors.primary.base], [theme.colors.primary.foreground, theme.colors.primary.active], [theme.colors.surface.mutedForeground, theme.colors.interactive.selection], [theme.colors.interactive.selectionForeground, theme.colors.interactive.selection]]) expect(contrast(foreground, background)).toBeGreaterThanOrEqual(4.5);
   });
   test('semantic text remains legible on graphite', () => {
     for (const color of [theme.colors.status.error, theme.colors.status.success, theme.colors.status.warning, theme.colors.status.info]) expect(contrast(color, theme.colors.surface.background)).toBeGreaterThanOrEqual(4.5);

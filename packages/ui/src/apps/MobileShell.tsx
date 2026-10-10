@@ -1,9 +1,11 @@
-import { AndroidCompanionController } from './native/AndroidCompanionController';
 import React from 'react';
 import { getRuntimeKey } from '@/lib/runtime-switch';
+import { openCompanionWorkspace } from './native/companionNavigation';
+import { useNativePreferences } from './native/preferences';
 import { nativeHaptic } from './native/device';
 import { NativeOnDemand } from './native/NativeOnDemand';
 const loadNativeQuickNavigation = () => import('./native/NativeQuickNavigation').then((module) => module.NativeQuickNavigation);
+const AndroidCompanionController = React.lazy(() => import('./native/AndroidCompanionController').then((module) => ({ default: module.AndroidCompanionController })));
 const NativeOfflineView = React.lazy(() => import('./native/NativeOfflineView').then((module) => ({ default: module.NativeOfflineView })));
 const readNativeWorkspaceTab = (): MobileWorkspaceTab => {
   try { return sanitizeMobileWorkspaceTab(localStorage.getItem(`pichamber.native.workspace.${getRuntimeKey()}`), true); } catch { return 'changes'; }
@@ -214,12 +216,14 @@ export const MobileShell: React.FC<MobileShellProps> = ({ onActiveConnectionDele
   }, [isTabletLayout, setSidebarOpen]);
 
   const openFilesSurface = React.useCallback(() => {
+    if (openCompanionWorkspace('files')) { setWorkspaceOpenSafely(false); return; }
     setPendingChangesDiff(null);
     setWorkspaceTab('files');
     setWorkspaceOpenSafely(true);
   }, [setWorkspaceTab, setWorkspaceOpenSafely]);
 
   const openChangesSurface = React.useCallback((diff: { path: string; staged: boolean } | null = null) => {
+    if (!diff && openCompanionWorkspace('changes')) { setWorkspaceOpenSafely(false); return; }
     setPendingChangesDiff(diff);
     setWorkspaceTab('changes');
     setWorkspaceOpenSafely(true);
@@ -244,6 +248,7 @@ export const MobileShell: React.FC<MobileShellProps> = ({ onActiveConnectionDele
 
   const handleTabletWorkspaceTabSelect = React.useCallback((nextTab: MobileWorkspaceTab) => {
     const sanitized = sanitizeMobileWorkspaceTab(nextTab, showCapacitorOnlyFeatures);
+    if (openCompanionWorkspace(sanitized)) { setWorkspaceOpenSafely(false); return; }
     if (workspaceOpen && workspaceTab === sanitized) {
       setWorkspaceOpenSafely(false);
     } else {
@@ -253,8 +258,9 @@ export const MobileShell: React.FC<MobileShellProps> = ({ onActiveConnectionDele
   }, [workspaceOpen, workspaceTab, setWorkspaceTab, setWorkspaceOpenSafely, showCapacitorOnlyFeatures]);
 
   const handleToggleWorkspace = React.useCallback(() => {
+    if (openCompanionWorkspace(workspaceTab)) { setWorkspaceOpenSafely(false); return; }
     setWorkspaceOpenSafely(!workspaceOpen);
-  }, [workspaceOpen, setWorkspaceOpenSafely]);
+  }, [workspaceOpen, workspaceTab, setWorkspaceOpenSafely]);
 
   const handleTabletSessionsOpenChange = React.useCallback((nextOpen: boolean) => {
     if (!nextOpen && !roomyForPanels) setSidebarOpen(false);
@@ -294,6 +300,7 @@ export const MobileShell: React.FC<MobileShellProps> = ({ onActiveConnectionDele
     setWorkspaceOpenSafely(false);
   }, [setSessionsSheetOpenSafely, setWorkspaceOpenSafely]);
 
+  const { dualScreen } = useNativePreferences();
   const mobileActions = React.useMemo<MobileAppActions>(
     () => ({
       nativeApp: showCapacitorOnlyFeatures,
@@ -532,7 +539,7 @@ export const MobileShell: React.FC<MobileShellProps> = ({ onActiveConnectionDele
 
   return (
     <DedicatedMobileAppProvider actions={mobileActions}>
-      {showCapacitorOnlyFeatures && <AndroidCompanionController />}
+      {showCapacitorOnlyFeatures && dualScreen && <React.Suspense fallback={null}><AndroidCompanionController /></React.Suspense>}
       <div
         className="oc-mobile-app-shell main-content-safe-area relative flex h-[100dvh] flex-row bg-background text-foreground"
         data-page-scroll-lock="true"

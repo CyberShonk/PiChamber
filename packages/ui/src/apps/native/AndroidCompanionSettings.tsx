@@ -37,7 +37,7 @@ export const AndroidCompanionSettings = () => {
     finally { setBusy(false); }
   };
   return <>
-    <SettingsCheckboxRow settingsItem="appearance.android-dual-screen" checked={dualScreen} onChange={(checked) => { setFailed(false); setNativePreference('dualScreen', checked); }} label="Second-screen companion" ariaLabel="Second-screen companion" info="Android only. Workspace status, changed files and touch shortcuts on the other display. Chat, terminal and text input stay on the main screen. The companion hides while the keyboard is open and when the app is backgrounded. No extra host connection." />
+    <SettingsCheckboxRow settingsItem="appearance.android-dual-screen" checked={dualScreen} onChange={(checked) => { setFailed(false); setNativePreference('dualScreen', checked); }} label="Second-screen companion" ariaLabel="Second-screen companion" info="Android only. Workspace Changes, file previews, extension widgets, sessions and pending questions on the other display. Uses PiChamber's shared appearance. Text input stays on the top screen; the companion hides under the keyboard and while the app is backgrounded. It uses the existing host connection." />
     <p role="status" className="typography-meta text-muted-foreground">{failed ? 'The companion bridge is unavailable. Install an Android build containing this feature.' : state ? labels[state.status] + (state.displayName ? ` ${state.displayName}` : '') : 'Checking second-display support…'}</p>
     {dualScreen && <Button size="sm" variant="outline" disabled={busy} onClick={() => void retry()}>{state && state.displayCount > 1 ? 'Choose display' : 'Retry display'}</Button>}
   </>;

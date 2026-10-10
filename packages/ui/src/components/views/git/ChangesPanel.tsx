@@ -311,7 +311,7 @@ export const ChangesPanel: React.FC<ChangesPanelProps> = ({
       return (
         <div
           className={cn(
-            'sticky top-0 z-10 flex items-center gap-2 py-2',
+            'oc-changes-group-row sticky top-0 z-10 flex items-center gap-2 py-2',
             headerBackgroundClassName,
             ROW_PADDING_CLASSNAME,
             !isFirst && 'mt-1 border-t border-border/40'
@@ -356,7 +356,7 @@ export const ChangesPanel: React.FC<ChangesPanelProps> = ({
       const isDirectoryReverting = isRevertingAll || directoryPaths.some((path) => revertingPaths.has(path));
       return (
         <div
-          className={cn('group flex items-center gap-2 py-1.5', ROW_PADDING_CLASSNAME)}
+          className={cn('oc-changes-directory-row group flex items-center gap-2 py-1.5', ROW_PADDING_CLASSNAME)}
           style={{ paddingLeft: `${depth * TREE_INDENT_PX}px` }}
         >
           <button

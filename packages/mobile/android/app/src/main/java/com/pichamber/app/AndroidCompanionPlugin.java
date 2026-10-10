@@ -16,12 +16,13 @@ import com.getcapacitor.annotation.CapacitorPlugin;
 import java.util.ArrayList;
 import java.util.List;
 
-/** One non-focusable Presentation, no WebView, host client or stored credentials. */
+/** Owns display lifetime. The companion has no host client or credentials. */
 @CapacitorPlugin(name = "AndroidCompanion")
 public class AndroidCompanionPlugin extends Plugin implements DisplayManager.DisplayListener {
     private DisplayManager displays;
     private CompanionPresentation presentation;
     private JSObject snapshot;
+    private org.json.JSONObject positions = new org.json.JSONObject();
     private boolean enabled;
     private boolean resumed;
     private boolean keyboardVisible;
@@ -87,7 +88,7 @@ public class AndroidCompanionPlugin extends Plugin implements DisplayManager.Dis
         } else {
             if (presentation != null && presentation.getDisplay().getDisplayId() != selected.getDisplayId()) closePresentation();
             if (presentation == null) {
-                CompanionPresentation next = new CompanionPresentation(getActivity(), selected, (action) -> {
+                CompanionPresentation next = new CompanionPresentation(getActivity(), selected, getBridge(), positions, (action) -> {
                     // Enforce ownership here too, before sending an action to JavaScript.
                     if (!enabled || !resumed || keyboardVisible || snapshot == null
                         || action.optLong("scope", -1) != snapshot.optLong("scope", -2)) return;
@@ -132,6 +133,7 @@ public class AndroidCompanionPlugin extends Plugin implements DisplayManager.Dis
                 if (listening) displays.unregisterDisplayListener(this);
                 listening = false;
                 snapshot = null;
+                positions = new org.json.JSONObject();
                 keyboardVisible = false;
                 if (displayPicker != null) displayPicker.cancel();
             }
@@ -152,9 +154,8 @@ public class AndroidCompanionPlugin extends Plugin implements DisplayManager.Dis
     @PluginMethod
     public void publish(PluginCall call) {
         JSObject next = call.getObject("snapshot");
-        if (next == null || next.toString().length() > 100000 || next.optLong("scope", -1) < 0 || next.optLong("workspaceScope", -1) < 0
-            || next.optJSONObject("colors") == null || next.optJSONArray("files") == null
-            || next.optJSONArray("files").length() > 50) {
+        if (next == null || next.toString().length() > 3000000 || next.optLong("scope", -1) < 0 || next.optLong("workspaceScope", -1) < 0
+            || next.optString("html").length() > 2200000 || next.optString("document").length() > 50000) {
             call.reject("Invalid companion snapshot");
             return;
         }
@@ -162,8 +163,9 @@ public class AndroidCompanionPlugin extends Plugin implements DisplayManager.Dis
             if (!enabled) { call.reject("Companion is disabled"); return; }
             // Older queued snapshots cannot replace a newer workspace owner.
             if (snapshot != null && next.optLong("scope") < snapshot.optLong("scope")) { call.resolve(); return; }
+            if (snapshot == null || snapshot.optLong("workspaceScope", -1) != next.optLong("workspaceScope", -2)) { closePresentation(); positions = new org.json.JSONObject(); }
             snapshot = next;
-            if (presentation != null) presentation.render(next);
+            reconcile();
             call.resolve();
         });
     }

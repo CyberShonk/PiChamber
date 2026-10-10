@@ -256,6 +256,14 @@ const SessionSidebarComponent: React.FC<SessionSidebarProps> = ({
   const setShowDeletionDialog = useUIStore((state) => state.setShowDeletionDialog);
   const mobileAppActions = useMobileAppActions();
   const nativeAppVariant = mobileVariant && mobileAppActions?.nativeApp === true;
+  React.useEffect(() => {
+    if (!nativeAppVariant) return;
+    if (!isVisible) setIsSessionSearchOpen(false);
+    if (!isVisible || !isSessionSearchOpen) {
+      setSessionSearchQuery('');
+      sessionSearchInputRef.current?.blur();
+    }
+  }, [nativeAppVariant, isVisible, isSessionSearchOpen]);
   const [mobileViewMode, setMobileViewMode] = React.useState<'timeline' | 'folder'>('timeline');
   const storedSidebarViewMode = useUIStore((state) => state.sidebarViewMode);
   const sidebarViewMode: SidebarViewMode =
@@ -1371,7 +1379,7 @@ const SessionSidebarComponent: React.FC<SessionSidebarProps> = ({
       />
 
       {nativeAppVariant && !hideDirectoryControls ? (
-        <div className="flex shrink-0 items-center gap-2 px-2 pb-2" role="group" aria-label="Session view">
+        <div className="oc-native-session-modes flex shrink-0 items-center gap-2 px-2 pb-2" role="group" aria-label="Session view">
           <Button variant="chip" size="sm" className="min-h-[44px] flex-1" aria-pressed={mobileViewMode === 'timeline'} onClick={() => setMobileViewMode('timeline')}>Recent</Button>
           <Button variant="chip" size="sm" className="min-h-[44px] flex-1" aria-pressed={mobileViewMode === 'folder'} onClick={() => setMobileViewMode('folder')}>Projects</Button>
           <Button variant="ghost" size="icon" className="min-h-[44px] min-w-[44px]" onClick={handleOpenDirectoryDialog} aria-label="Add project"><Icon name="folder-add" className="size-4" /></Button>
@@ -1465,7 +1473,7 @@ const SessionSidebarComponent: React.FC<SessionSidebarProps> = ({
       {/* Phone actions occupy their own layout row, so the final session
           remains reachable without padding for an overlapping control. */}
       {nativeAppVariant && !(selectionModeEnabled && hasSelection) ? (
-        <div className="flex shrink-0 flex-col gap-2 border-t border-border/70 bg-sidebar px-2 pt-2 pb-[calc(0.5rem+var(--oc-safe-area-bottom,0px))]">
+        <div className="oc-native-session-footer flex shrink-0 flex-col gap-2 border-t border-border/70 bg-sidebar px-2 pt-2 pb-[calc(0.5rem+var(--oc-safe-area-bottom,0px))]">
           <BackgroundTasksMenu variant="mobile" />
           <Button
             type="button"

@@ -161,11 +161,17 @@ export function SidebarHeader(props: Props): React.ReactNode {
           </div>
 
           <div className={cn('flex shrink-0 items-center', mobileVariant ? 'gap-1' : 'gap-1.5')}>
-            {!nativeAppVariant ? <Tooltip>
+            <Tooltip>
               <TooltipTrigger asChild>
                 <button
                   type="button"
-                  onClick={() => setIsSessionSearchOpen((prev) => !prev)}
+                  onClick={() => {
+                    if (isSessionSearchOpen) {
+                      setSessionSearchQuery('');
+                      sessionSearchInputRef.current?.blur();
+                    }
+                    setIsSessionSearchOpen((prev) => !prev);
+                  }}
                   className={actionClassName}
                   aria-label={"Search sessions"}
                   aria-expanded={isSessionSearchOpen}
@@ -174,7 +180,7 @@ export function SidebarHeader(props: Props): React.ReactNode {
                 </button>
               </TooltipTrigger>
               <TooltipContent side="bottom" sideOffset={4}><p>{"Search sessions"}</p></TooltipContent>
-            </Tooltip> : null}
+            </Tooltip>
 
             <Tooltip>
               <TooltipTrigger asChild>
@@ -205,7 +211,7 @@ export function SidebarHeader(props: Props): React.ReactNode {
           </div>
         </div>
 
-        {nativeAppVariant || isSessionSearchOpen ? (
+        {isSessionSearchOpen ? (
           <div className={cn(mobileVariant ? 'pb-2' : 'pb-1')}>
             <div className={cn("mb-1 flex items-center justify-between px-0.5 typography-micro text-muted-foreground/80", nativeAppVariant && !hasSessionSearchQuery && "hidden")}>
               {hasSessionSearchQuery ? (

@@ -41,13 +41,16 @@ describe('session sidebar header', () => {
     expect(open.match(/<input[^>]*>/)?.[0]).not.toContain('aria-label="Search sessions"');
     expect(open).not.toContain('pr-10');
   });
-  test('phone search is always discoverable without forcing keyboard focus', () => {
-    const markup = render(true);
-    expect(markup).toContain('<input');
-    expect(markup).toContain('aria-label="Search sessions"');
-    expect(markup).toContain('aria-label="Close sessions"');
-    expect(markup).not.toContain('autofocus');
-    expect(markup).not.toContain('aria-expanded="false"');
+  test('native search starts collapsed and exposes a header toggle', () => {
+    const closed = render(true);
+    expect(closed).not.toContain('<input');
+    expect(closed).toContain('aria-expanded="false"');
+    expect(closed).toContain('aria-label="Search sessions"');
+    expect(closed).toContain('aria-label="Close sessions"');
+    const open = render(true, true);
+    expect(open).toContain('<input');
+    expect(open).toContain('aria-expanded="true"');
+    expect(open).not.toContain('autofocus');
   });
   test('desktop retains the search toggle and only mounts its field while open', () => {
     expect(render(false)).not.toContain('<input');
@@ -56,7 +59,7 @@ describe('session sidebar header', () => {
     expect(render(false, true)).not.toContain('aria-label="Close sessions"');
   });
   test('phone queries retain the clear action and explicit match count', () => {
-    const markup = render(true, false, 'certificate');
+    const markup = render(true, true, 'certificate');
     expect(markup).toContain('value="certificate"');
     expect(markup).toContain('aria-label="Clear search"');
     expect(markup).toContain('2 matches');

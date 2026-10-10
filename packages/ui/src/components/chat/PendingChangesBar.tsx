@@ -1,4 +1,6 @@
 import React from 'react';
+import { createPortal } from 'react-dom';
+import { nativeChangedFilesGeometry } from './nativeChangedFilesGeometry';
 import { useGitStore, useIsGitRepo } from '@/stores/useGitStore';
 import { useUIStore } from '@/stores/useUIStore';
 import { RuntimeAPIContext } from '@/contexts/runtimeAPIContext';
@@ -20,6 +22,8 @@ export const PendingChangesBar: React.FC<{ align?: 'start' | 'end' }> = React.me
     
     const [isExpanded, setIsExpanded] = React.useState(false);
     const popoverRef = React.useRef<HTMLDivElement>(null);
+    const popupRef = React.useRef<HTMLDivElement>(null);
+    const [nativeGeometry, setNativeGeometry] = React.useState<ReturnType<typeof nativeChangedFilesGeometry> | null>(null);
     const currentDirectory = useEffectiveDirectory() ?? null;
     const runtime = React.useContext(RuntimeAPIContext);
     const isGitRepo = useIsGitRepo(currentDirectory);
@@ -30,13 +34,37 @@ export const PendingChangesBar: React.FC<{ align?: 'start' | 'end' }> = React.me
     const isMobileRaw = useUIStore((state) => state.isMobile);
     const { enabled: isTabletLayout } = useTabletLayout();
     const isMobile = isMobileRaw && !isTabletLayout;
+    const native = mobileActions?.nativeApp === true;
+    React.useLayoutEffect(() => {
+        if (!isExpanded || !native) return;
+        const measure = () => {
+            const rect = popoverRef.current?.getBoundingClientRect();
+            if (!rect) return;
+            const viewport = window.visualViewport;
+            const top = viewport?.offsetTop ?? 0;
+            const header = document.querySelector('.oc-mobile-header')?.getBoundingClientRect().bottom ?? top;
+            setNativeGeometry(nativeChangedFilesGeometry(rect, { left: viewport?.offsetLeft ?? 0, top, width: viewport?.width ?? window.innerWidth, bottom: top + (viewport?.height ?? window.innerHeight) }, header, align));
+        };
+        measure();
+        const observer = new ResizeObserver(measure);
+        if (popoverRef.current) observer.observe(popoverRef.current);
+        window.addEventListener('resize', measure);
+        window.visualViewport?.addEventListener('resize', measure);
+        window.visualViewport?.addEventListener('scroll', measure);
+        return () => {
+            observer.disconnect();
+            window.removeEventListener('resize', measure);
+            window.visualViewport?.removeEventListener('resize', measure);
+            window.visualViewport?.removeEventListener('scroll', measure);
+        };
+    }, [isExpanded, native, align]);
 
     // Close popover when clicking outside
     React.useEffect(() => {
         if (!isExpanded) return;
 
         const handleClickOutside = (event: MouseEvent) => {
-            if (popoverRef.current && !popoverRef.current.contains(event.target as Node)) {
+            if (popoverRef.current && !popoverRef.current.contains(event.target as Node) && !popupRef.current?.contains(event.target as Node)) {
                 setIsExpanded(false);
             }
         };
@@ -142,27 +170,15 @@ export const PendingChangesBar: React.FC<{ align?: 'start' | 'end' }> = React.me
             >
                 {changesTriggerContent}
             </button>
-            {isExpanded && (
-                <div
-                    style={{
-                        ...changedFilesPopoverStyle,
-                        maxWidth: 'min(28rem, calc(100cqw - 4ch))',
-                    }}
-                    className={cn(
-                        changedFilesPopoverClassName,
-                        "absolute bottom-full mb-1 z-50",
-                        align === 'end' ? 'right-0' : 'left-0',
-                        "animate-in fade-in-0 zoom-in-95 slide-in-from-bottom-2",
-                        "duration-150"
-                    )}
-                >
-                    <ChangedFilesList
-                        files={gitChangedFiles}
-                        currentDirectory={currentDirectory}
-                        onOpenFile={handleOpenFile}
-                    />
+            {isExpanded && (native ? nativeGeometry && nativeGeometry.maxHeight > 44 && createPortal(
+                <div ref={popupRef} className={cn(changedFilesPopoverClassName, "fixed z-50 flex min-h-0 flex-col overflow-hidden")} style={{ ...changedFilesPopoverStyle, minWidth: 0, maxWidth: nativeGeometry.width, width: nativeGeometry.width, left: nativeGeometry.left, bottom: window.innerHeight - nativeGeometry.bottom, maxHeight: nativeGeometry.maxHeight }}>
+                    <ChangedFilesList files={gitChangedFiles} currentDirectory={currentDirectory} onOpenFile={handleOpenFile} viewportBounded />
+                </div>, document.body,
+            ) : (
+                <div ref={popupRef} style={{ ...changedFilesPopoverStyle, maxWidth: 'min(28rem, calc(100cqw - 4ch))' }} className={cn(changedFilesPopoverClassName, "absolute bottom-full mb-1 z-50", align === 'end' ? 'right-0' : 'left-0', "animate-in fade-in-0 zoom-in-95 slide-in-from-bottom-2 duration-150")}>
+                    <ChangedFilesList files={gitChangedFiles} currentDirectory={currentDirectory} onOpenFile={handleOpenFile} />
                 </div>
-            )}
+            ))}
         </div>
     );
 });
