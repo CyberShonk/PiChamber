@@ -3,169 +3,131 @@ package com.pichamber.app;
 import android.app.Presentation;
 import android.content.Context;
 import android.graphics.Color;
-import android.graphics.Typeface;
-import android.graphics.drawable.GradientDrawable;
-import android.graphics.drawable.StateListDrawable;
+import android.graphics.drawable.ColorDrawable;
 import android.os.Bundle;
-import android.text.TextUtils;
 import android.view.Display;
-import android.view.Gravity;
-import android.view.View;
-import android.view.Window;
 import android.view.WindowManager;
-import android.widget.Button;
-import android.widget.LinearLayout;
-import android.widget.ScrollView;
-import android.widget.TextView;
+import android.webkit.JavascriptInterface;
+import android.webkit.WebResourceRequest;
+import android.webkit.WebResourceResponse;
+import android.webkit.WebView;
+import android.webkit.WebViewClient;
+import com.getcapacitor.Bridge;
 import com.getcapacitor.JSObject;
-import org.json.JSONArray;
 import org.json.JSONObject;
+import java.io.ByteArrayInputStream;
+import java.util.function.Consumer;
 
-/** Touch-only companion. Never hosts an EditText, keyboard, terminal or chat. */
+/** Local shared UI only: no Capacitor injection, host client, network, or text input. */
 final class CompanionPresentation extends Presentation {
-    interface ActionListener { void onAction(JSObject action); }
-    private final ActionListener actions;
-    private LinearLayout root;
-    private String lastRendered = "";
-    private ScrollView fileScroll;
-    private long workspaceScope = -1;
-    private int foreground;
-    private int muted;
-    private int border;
-    private int selection;
-    private int selectionForeground;
+    private final Bridge bridge;
+    private final Consumer<JSObject> action;
+    private final JSONObject positions;
+    private WebView web;
+    private JSObject latest;
+    private boolean loaded;
+    private String loadedDocument;
 
-    CompanionPresentation(Context context, Display display, ActionListener listener) {
-        super(context, display, android.R.style.Theme_DeviceDefault_NoActionBar);
-        actions = listener;
+    CompanionPresentation(Context context, Display display, Bridge bridge, JSONObject positions, Consumer<JSObject> action) {
+        super(context, display);
+        this.bridge = bridge;
+        this.positions = positions;
+        this.action = action;
     }
 
-    @Override
-    protected void onCreate(Bundle savedInstanceState) {
-        super.onCreate(savedInstanceState);
-        Window window = getWindow();
-        if (window != null) {
-            // Accept touches without moving input/IME focus from the main Activity.
-            window.addFlags(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM);
-            // Both flags keep this window below the IME, including cross-display IMEs.
-            window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_UNCHANGED | WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
-            window.setLayout(WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT);
+    @Override protected void onCreate(Bundle state) {
+        super.onCreate(state);
+        if (getWindow() != null) {
+            getWindow().addFlags(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM);
+            getWindow().setLayout(WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT);
         }
-        root = new LinearLayout(getContext());
-        root.setOrientation(LinearLayout.VERTICAL);
-        int padding = dp(16);
-        root.setPadding(padding, padding, padding, padding);
-        root.setFitsSystemWindows(true);
-        setContentView(root);
-    }
-
-    private int dp(int value) { return Math.round(value * getContext().getResources().getDisplayMetrics().density); }
-    private int color(JSONObject colors, String name) {
-        String value = colors.optString(name);
-        // Shared themes use #RRGGBBAA; Android uses #AARRGGBB.
-        if (value.matches("#[0-9a-fA-F]{8}")) value = "#" + value.substring(7, 9) + value.substring(1, 7);
-        try { return Color.parseColor(value); }
-        catch (IllegalArgumentException invalid) { return name.equals("background") ? Color.BLACK : Color.WHITE; }
-    }
-
-    private TextView text(String value, int size, int ink) {
-        TextView view = new TextView(getContext());
-        view.setText(value.length() > 500 ? value.substring(0, 500) + "…" : value);
-        view.setTextSize(size);
-        view.setTextColor(ink);
-        view.setMaxLines(2);
-        view.setEllipsize(TextUtils.TruncateAt.END);
-        view.setPadding(0, 0, 0, dp(8));
-        return view;
-    }
-
-    private GradientDrawable fill(int ink) {
-        GradientDrawable drawable = new GradientDrawable();
-        drawable.setColor(ink);
-        drawable.setCornerRadius(dp(8));
-        drawable.setStroke(dp(1), border);
-        return drawable;
-    }
-
-    private Button button(String label, long scope, String type, int index) {
-        Button button = new Button(getContext());
-        button.setText(label);
-        button.setAllCaps(false);
-        button.setTextSize(14);
-        button.setTextColor(new android.content.res.ColorStateList(
-            new int[][] { new int[] { android.R.attr.state_pressed }, new int[] {} },
-            new int[] { selectionForeground, foreground }));
-        button.setMinHeight(dp(48));
-        button.setMaxLines(2);
-        button.setEllipsize(TextUtils.TruncateAt.END);
-        StateListDrawable backgrounds = new StateListDrawable();
-        backgrounds.addState(new int[] { android.R.attr.state_pressed }, fill(selection));
-        backgrounds.addState(new int[] {}, fill(Color.TRANSPARENT));
-        button.setBackground(backgrounds);
-        button.setPadding(dp(12), dp(8), dp(12), dp(8));
-        button.setOnClickListener(view -> {
-            JSObject action = new JSObject();
-            action.put("scope", scope);
-            action.put("type", type);
-            if (index >= 0) action.put("index", index);
-            actions.onAction(action);
+        web = new WebView(getContext());
+        web.setFocusable(false);
+        web.setFocusableInTouchMode(false);
+        web.getSettings().setJavaScriptEnabled(true);
+        web.getSettings().setAllowFileAccess(false);
+        web.getSettings().setAllowContentAccess(false);
+        web.getSettings().setDomStorageEnabled(false);
+        web.getSettings().setBlockNetworkLoads(true);
+        web.getSettings().setSupportZoom(false);
+        web.addJavascriptInterface(new Actions(), "CompanionActions");
+        web.setWebViewClient(new WebViewClient() {
+            @Override public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) { return true; }
+            @Override public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
+                android.net.Uri uri = request.getUrl();
+                String path = uri.getPath();
+                if ("https".equals(uri.getScheme()) && "localhost".equals(uri.getHost()) && path != null && path.startsWith("/assets/")
+                    && (path.endsWith(".css") || path.endsWith(".woff2") || path.endsWith(".woff") || path.endsWith(".ttf"))) {
+                    WebResourceResponse response = bridge.getLocalServer().shouldInterceptRequest(request);
+                    if (response != null) return response;
+                }
+                return new WebResourceResponse("text/plain", "UTF-8", new ByteArrayInputStream(new byte[0]));
+            }
+            @Override public void onPageFinished(WebView view, String url) { loaded = true; publish(); }
         });
-        return button;
+        setContentView(web);
     }
 
-    void render(JSObject snapshot) {
-        String serialized = snapshot.toString();
-        if (serialized.equals(lastRendered)) return;
-        lastRendered = serialized;
-        JSONObject colors = snapshot.optJSONObject("colors");
-        if (colors == null || root == null) return;
-        foreground = color(colors, "foreground");
-        muted = color(colors, "muted");
-        border = color(colors, "border");
-        selection = color(colors, "selection");
-        selectionForeground = color(colors, "selectionForeground");
-        int previousScroll = fileScroll != null && workspaceScope == snapshot.optLong("workspaceScope") ? fileScroll.getScrollY() : 0;
-        workspaceScope = snapshot.optLong("workspaceScope");
-        root.removeAllViews();
-        root.setBackgroundColor(color(colors, "background"));
-        long scope = snapshot.optLong("scope");
-        TextView heading = text(snapshot.optString("workspace"), 20, foreground);
-        heading.setTypeface(null, Typeface.BOLD);
-        root.addView(heading);
-        String branch = snapshot.optString("branch");
-        if (!branch.isEmpty()) root.addView(text(branch, 14, muted));
-        root.addView(text(snapshot.optString("summary"), 14, muted));
-        LinearLayout shortcuts = new LinearLayout(getContext());
-        String[] names = { "Changes", "Files", "App settings" };
-        String[] types = { "changes", "files", "settings" };
-        for (int i = 0; i < names.length; i++) {
-            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, dp(56), 1);
-            if (i > 0) params.setMarginStart(dp(8));
-            shortcuts.addView(button(names[i], scope, types[i], -1), params);
+    void render(JSObject frame) {
+        latest = frame;
+        if (web == null) return;
+        try {
+            int background = Color.parseColor(frame.optString("background"));
+            web.setBackgroundColor(background);
+            if (getWindow() != null) getWindow().setBackgroundDrawable(new ColorDrawable(background));
+        } catch (IllegalArgumentException ignored) { /* CSS remains the authoritative theme. */ }
+        String document = frame.optString("document");
+        if (!document.equals(loadedDocument)) {
+            loadedDocument = document;
+            loaded = false;
+            web.loadDataWithBaseURL("https://localhost/", document, "text/html", "UTF-8", null);
+        } else publish();
+    }
+
+    @Override protected void onStart() {
+        super.onStart();
+        if (getWindow() != null) getWindow().setLayout(WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT);
+    }
+
+    private void publish() {
+        if (!loaded || latest == null || web == null) return;
+        web.evaluateJavascript("window.companionRender(" + JSONObject.quote(latest.optString("html")) + "," + latest.optLong("scope") + "," + latest.optLong("workspaceScope") + "," + positions.toString() + ")", null);
+    }
+
+    private final class Actions {
+        @JavascriptInterface public void post(String payload) {
+            if (payload == null || payload.length() > 1024) return;
+            try {
+                JSObject event = new JSObject(payload);
+                web.post(() -> { if (web != null && latest != null && event.optLong("scope", -1) == latest.optLong("scope", -2)) action.accept(event); });
+            } catch (Exception ignored) { /* Reject malformed local actions. */ }
         }
-        root.addView(shortcuts);
-        View divider = new View(getContext());
-        divider.setBackgroundColor(border);
-        LinearLayout.LayoutParams line = new LinearLayout.LayoutParams(-1, dp(1));
-        line.setMargins(0, dp(12), 0, dp(12));
-        root.addView(divider, line);
-        ScrollView scroll = new ScrollView(getContext());
-        fileScroll = scroll;
-        LinearLayout files = new LinearLayout(getContext());
-        files.setOrientation(LinearLayout.VERTICAL);
-        JSONArray items = snapshot.optJSONArray("files");
-        if (items != null) for (int i = 0; i < Math.min(50, items.length()); i++) {
-            JSONObject item = items.optJSONObject(i);
-            if (item == null) continue;
-            Button row = button(item.optString("label"), scope, "file", i);
-            row.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
-            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, -2);
-            params.bottomMargin = dp(8);
-            files.addView(row, params);
+        @JavascriptInterface public void scroll(String payload) {
+            if (payload == null || payload.length() > 4096) return;
+            try {
+                JSONObject next = new JSONObject(payload);
+                web.post(() -> {
+                    if (web == null) return;
+                    java.util.Iterator<String> keys = next.keys();
+                    while (keys.hasNext()) {
+                        String key = keys.next();
+                        org.json.JSONArray value = next.optJSONArray(key);
+                        if (key.matches("[a-z0-9-]{1,40}") && value != null && value.length() == 2) {
+                            try { positions.put(key, new org.json.JSONArray().put(Math.max(0, Math.min(1000000, value.optInt(0)))).put(Math.max(0, Math.min(1000000, value.optInt(1))))); } catch (Exception ignored) { }
+                        }
+                    }
+                });
+            } catch (Exception ignored) { }
         }
-        scroll.addView(files);
-        root.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
-        scroll.post(() -> { if (fileScroll == scroll) scroll.scrollTo(0, previousScroll); });
-        root.addView(text("Tap a file to open its diff on the main screen.", 12, muted));
+    }
+    @Override protected void onStop() {
+        super.onStop();
+        if (web != null) {
+            web.removeJavascriptInterface("CompanionActions");
+            web.stopLoading();
+            web.destroy();
+            web = null;
+        }
+        latest = null;
     }
 }

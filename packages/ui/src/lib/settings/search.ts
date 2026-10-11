@@ -573,10 +573,8 @@ const SETTINGS_SEARCH_ITEMS: readonly SettingsSearchItem[] = [
     isAvailable: () => isCapacitorApp(),
   },
   {
-    id: 'appearance.android-dual-screen',
-    page: 'appearance',
-    title: 'Second-screen companion',
-    keywords: ['android', 'ayn', 'thor', 'dual screen', 'display', 'keyboard'],
+    id: 'appearance.android-dual-screen', page: 'appearance', title: 'Second-screen companion',
+    keywords: ['android', 'thor', 'dual screen', 'display', 'review', 'files', 'sessions', 'questions'],
     isAvailable: () => isCapacitorApp() && getClientPlatform() === 'android',
   },
   {

@@ -104,9 +104,16 @@ export const NativeMobileSessionSwitcher: React.FC<{
 
   const items = useSwitcherItems(open || shouldRender, { maxParents: RECENT_SESSIONS_LIMIT });
   const [query, setQuery] = React.useState('');
+  const [searchOpen, setSearchOpen] = React.useState(false);
+  const searchRef = React.useRef<HTMLInputElement>(null);
   React.useEffect(() => {
-    if (!open) setQuery('');
+    if (!open) { setQuery(''); setSearchOpen(false); }
   }, [open]);
+  React.useEffect(() => {
+    if (!open || !searchOpen) return;
+    const frame = requestAnimationFrame(() => searchRef.current?.focus());
+    return () => cancelAnimationFrame(frame);
+  }, [open, searchOpen]);
   const filteredItems = React.useMemo(() => filterMobileRecentSessions(items, query), [items, query]);
 
   const handleSelect = React.useCallback((session: Session) => {
@@ -124,7 +131,7 @@ export const NativeMobileSessionSwitcher: React.FC<{
         role="dialog"
         aria-label={"Open session switcher"}
         className={cn(
-          'flex flex-col overflow-hidden rounded-[20px] border border-border/70 bg-[var(--surface-elevated)] p-2 shadow-[0_12px_32px_rgb(0_0_0_/_0.2)] will-change-transform',
+          'oc-native-session-switcher flex flex-col overflow-hidden rounded-[20px] border border-border/70 bg-[var(--surface-elevated)] p-2 shadow-[0_12px_32px_rgb(0_0_0_/_0.2)] will-change-transform',
           isPopover ? 'absolute origin-top-left' : 'mx-3 mt-2',
           isExiting ? 'pointer-events-none' : 'pointer-events-auto',
         )}
@@ -142,9 +149,16 @@ export const NativeMobileSessionSwitcher: React.FC<{
       >
         <div className="flex shrink-0 items-center justify-between gap-2 px-2 pb-1">
           <span className="typography-ui-label font-medium">Recent sessions</span>
+          <div className="flex items-center">
+          <Button variant="ghost" size="icon" className="min-h-[44px] min-w-[44px]" aria-label="Search recent sessions" aria-expanded={searchOpen} onClick={() => {
+            if (searchOpen) { setQuery(''); searchRef.current?.blur(); }
+            setSearchOpen((value) => !value);
+          }}><Icon name="search" className="size-4" /></Button>
           <Button variant="ghost" size="icon" className="min-h-[44px] min-w-[44px]" onClick={onClose} aria-label="Close session switcher"><Icon name="close" className="size-4" /></Button>
+          </div>
         </div>
-        <input
+        {searchOpen && <input
+          ref={searchRef}
           type="search"
           value={query}
           onChange={(event) => setQuery(event.target.value)}
@@ -153,7 +167,8 @@ export const NativeMobileSessionSwitcher: React.FC<{
           autoCapitalize="none"
           autoCorrect="off"
           className="mb-2 h-11 shrink-0 rounded-lg border border-border bg-transparent px-3 text-[16px] text-foreground outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
-        />
+          onKeyDown={(event) => { if (event.key === 'Escape') { event.stopPropagation(); setQuery(''); setSearchOpen(false); } }}
+        />}
         <div className="oc-hide-scrollbar min-h-0 flex-1 space-y-0.5 overflow-y-auto overscroll-contain">
           {filteredItems.length === 0 ? (
             <p className="px-3 py-6 text-center typography-small text-muted-foreground">

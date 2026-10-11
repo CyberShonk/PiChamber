@@ -8,15 +8,13 @@ import { useConfigStore } from '@/stores/useConfigStore';
 import { useUIStore } from '@/stores/useUIStore';
 import { useSessionUIStore } from '@/sync/session-ui-store';
 import {
-  computeCacheHitRate,
-  computePiContextWindowTokens,
   extractSessionMessageBreakdown,
   type DetailedTokenBreakdown,
-  type PiUsageLike,
 } from '@/stores/utils/tokenUtils';
 import { useSessions, useSessionMessageRecords } from '@/sync/sync-context';
 import { copyTextToClipboard } from '@/lib/clipboard';
 import { getSessionDisplayTitle } from '@/lib/chat/sessionTitle';
+import { summarizeSessionContext } from './sessionContextSummary';
 import { useTransientValue } from '@/hooks/useTransientValue';
 import {
   derivePartsLabel,
@@ -29,18 +27,6 @@ import { formatDateTimeForPreference } from '@/lib/timeFormat';
 
 type SessionMessage = { info: Message; parts: Part[] };
 
-type ProviderModelLike = {
-  id?: string;
-  name?: string;
-  limit?: { context?: number };
-};
-
-type ProviderLike = {
-  id?: string;
-  name?: string;
-  models?: ProviderModelLike[];
-};
-
 type TokenBreakdown = DetailedTokenBreakdown;
 
 type ContextBuckets = {
@@ -50,27 +36,11 @@ type ContextBuckets = {
   other: number;
 };
 
-const EMPTY_BREAKDOWN: TokenBreakdown = {
-  input: 0,
-  output: 0,
-  reasoning: 0,
-  cacheRead: 0,
-  cacheWrite: 0,
-  total: 0,
-};
-
 const EMPTY_BUCKETS: ContextBuckets = {
   user: 0,
   assistant: 0,
   tool: 0,
   other: 0,
-};
-
-const toNonNegativeNumber = (value: unknown): number => {
-  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
-    return 0;
-  }
-  return value;
 };
 
 const extractTokenBreakdown = (message: SessionMessage): TokenBreakdown => extractSessionMessageBreakdown(message);
@@ -213,21 +183,6 @@ const formatDateTime = (timestamp: number | null, timeFormatPreference: TimeForm
   });
 };
 
-const resolveProviderAndModel = (
-  providers: ProviderLike[],
-  providerID: string,
-  modelID: string,
-): { providerName: string; modelName: string; contextLimit: number | null } => {
-  const provider = providers.find((entry) => entry.id === providerID);
-  const model = provider?.models?.find((entry) => entry.id === modelID);
-
-  return {
-    providerName: provider?.name || providerID || '-',
-    modelName: model?.name || modelID || '-',
-    contextLimit: typeof model?.limit?.context === 'number' ? model.limit.context : null,
-  };
-};
-
 export const ContextPanelContent: React.FC = () => {
   const timeFormatPreference = useUIStore((state) => state.timeFormatPreference);
   const [expandedRawMessages, setExpandedRawMessages] = React.useState<Record<string, boolean>>({});
@@ -255,55 +210,9 @@ export const ContextPanelContent: React.FC = () => {
   const viewModel = React.useMemo(() => {
     const currentSession = currentSessionId ? sessions.find((session) => session.id === currentSessionId) ?? null : null;
 
-    const assistantMessages = sessionMessages.filter((entry) => deriveMessageRole(entry.info).role === 'assistant');
-    const userMessages = sessionMessages.filter((entry) => deriveMessageRole(entry.info).isUser);
-
-    // Prefer the most recent assistant message that carries Pi usage. Pi
-    // owns the token contract, so we only fall back to legacy token
-    // extraction when no usage is present (e.g. older daemon builds).
-    let contextMessage: SessionMessage | null = null;
-    for (let i = assistantMessages.length - 1; i >= 0; i -= 1) {
-      const message = assistantMessages[i];
-      if (extractTokenBreakdown(message).total > 0) {
-        contextMessage = message;
-        break;
-      }
-    }
-
-    const tokenBreakdown = contextMessage ? extractTokenBreakdown(contextMessage) : EMPTY_BREAKDOWN;
-    const contextUsage = (contextMessage?.info as { usage?: PiUsageLike } | undefined)?.usage;
-
-    // Cache hit rate for the last assistant message. `input` is the non-cached portion
-    // (total input - cache.read - cache.write per Pi usage semantics),
-    // so hit rate = cache.read / (input + cache.read + cache.write).
-    const cacheHitRate = computeCacheHitRate({
-      input: tokenBreakdown.input,
-      cache: { read: tokenBreakdown.cacheRead, write: tokenBreakdown.cacheWrite },
-    });
-
-    const totalAssistantCost = assistantMessages.reduce((sum, message) => {
-      const cost = toNonNegativeNumber((message.info as { cost?: unknown }).cost);
-      return sum + cost;
-    }, 0);
-
-    const latestModel = (contextMessage?.info?.model as { providerID?: string; modelID?: string } | undefined) ?? null;
-    const providerModel = resolveProviderAndModel(
-      providers as ProviderLike[],
-      latestModel?.providerID || '',
-      latestModel?.modelID || '',
-    );
-
-    const contextLimit = providerModel.contextLimit;
-    // Pi resets the context-bar numerator to "tokens in the window"
-    // (input + cacheRead + cacheWrite) so the bar reflects what the model
-    // actually consumed, not the turn's own output. When usage is absent
-    // we keep the legacy total so the bar still matches the chart.
-    const contextWindowTokens = contextUsage
-      ? computePiContextWindowTokens(contextUsage)
-      : tokenBreakdown.total;
-    const usagePercent = contextLimit && contextLimit > 0
-      ? Math.min(999, (contextWindowTokens / contextLimit) * 100)
-      : 0;
+    const summary = summarizeSessionContext(sessionMessages, providers);
+    const { tokenBreakdown, contextUsage, cacheHitRate, totalAssistantCost,
+      providerModel, contextLimit, contextWindowTokens, usagePercent } = summary;
 
     const systemPrompt = ([...sessionMessages].reverse().find(
       (entry) => deriveMessageRole(entry.info).isUser && typeof (entry.info as { system?: unknown }).system === 'string',
@@ -330,9 +239,9 @@ export const ContextPanelContent: React.FC = () => {
 
     return {
       sessionTitle: getSessionDisplayTitle(currentSession),
-      messagesCount: sessionMessages.length,
-      userMessagesCount: userMessages.length,
-      assistantMessagesCount: assistantMessages.length,
+      messagesCount: summary.messagesCount,
+      userMessagesCount: summary.userMessagesCount,
+      assistantMessagesCount: summary.assistantMessagesCount,
       createdAt: (currentSession?.time?.created ?? firstMessageTs ?? null) as number | null,
       lastActivityAt: (lastMessageTs ?? currentSession?.time?.created ?? null) as number | null,
       providerModel,

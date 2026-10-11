@@ -552,6 +552,14 @@ export function MobileApp({ apis }: MobileAppProps) {
   // intermediate auto-opened draft before the restore decision lands.
   const [lastSessionRestorePending, setLastSessionRestorePending] = React.useState(isNativeMobileApp);
   React.useEffect(() => {
+    if (!isNativeMobileApp) return;
+    // Bound presentation from mount, independently of connection readiness.
+    // Recovery may mount the shell before a host connects; waiting for that
+    // connection to arm this timer would leave the logo covering it forever.
+    const timeout = window.setTimeout(() => setLastSessionRestorePending(false), 6000);
+    return () => window.clearTimeout(timeout);
+  }, [isNativeMobileApp]);
+  React.useEffect(() => {
     if (!isNativeMobileApp || !isConnected || lastSessionRestoreDoneRef.current) return;
     if (useSessionUIStore.getState().currentSessionId) {
       lastSessionRestoreDoneRef.current = true;
@@ -583,9 +591,6 @@ export function MobileApp({ apis }: MobileAppProps) {
       capturedGeneration = 0;
     }
     let cancelled = false;
-    // Safety valve: the overlay must never strand the user on the splash if
-    // the snapshot hangs — fall through to the draft after a bounded wait.
-    const overlayTimeoutId = window.setTimeout(() => setLastSessionRestorePending(false), 6000);
     void (async () => {
       // Stale/failed loads keep the ref unset so the next connect retries.
       // Only an authoritative `ready` for the persisted directory may
@@ -644,7 +649,6 @@ export function MobileApp({ apis }: MobileAppProps) {
     })();
     return () => {
       cancelled = true;
-      window.clearTimeout(overlayTimeoutId);
     };
   }, [connectionEpoch, isConnected, isNativeMobileApp]);
 
@@ -831,7 +835,7 @@ export function MobileApp({ apis }: MobileAppProps) {
                     until the last-session restore decides between session and
                     draft — otherwise the auto-opened draft flashes first. The
                     shell (and sync) still mounts and warms up underneath. */}
-                {isNativeMobileApp && lastSessionRestorePending ? (
+                {isNativeMobileApp && lastSessionRestorePending && !inTemporaryRecovery ? (
                   <div className="fixed inset-0 z-50 flex items-center justify-center bg-background">
                     <PiChamberLogo width={120} height={120} isAnimated />
                   </div>

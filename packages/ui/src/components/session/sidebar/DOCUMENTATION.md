@@ -72,7 +72,7 @@ Working indicator: shown only while the session is streaming. `card` rows overla
 
 `SessionSidebar` derives `nativeAppVariant` from the dedicated mobile provider
 and phone variant. SidebarHeader and SidebarProjectsList receive this explicit
-opt-in. Native phone search stays visible without autofocus; its Close action
+opt-in. Native phone search is collapsed behind a header button; its Close action
 returns to chat. Recent and Projects use local view state without changing the
 host's saved view preference. Actions occupy a footer row, so native list padding
 is 8px. Ordinary mobile callers retain their floating footer and 128px padding.
@@ -88,3 +88,13 @@ close header, and stacks the directory filter above the list on phones. Native
 restore/delete actions stay visible with touch targets. Other runtimes retain
 the original dialog layout. Native session context-menu opening emits one impact
 haptic through the preference-aware, rate-limited native feedback bridge.
+
+Native session search starts collapsed in the header. Opening uses the existing
+focus effect; closing clears its filter and blurs the field. Android handheld
+landscape mode caps the drawer width and uses compact view chips and footer.
+
+Native Android landscape session rows allow two title lines on six-inch
+handhelds. The scope is the dedicated mobile drawer at landscape widths of
+600px or more and heights of 600px or less; desktop, browser and portrait row
+spacing stay as before. Search still opens from the header button and starts
+collapsed.

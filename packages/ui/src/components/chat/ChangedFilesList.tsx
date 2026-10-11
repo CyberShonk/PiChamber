@@ -4,11 +4,12 @@ import { type ChangedFileEntry, getDisplayPath, getFileStats } from './changedFi
 
 interface ChangedFilesListProps {
     files: ChangedFileEntry[];
+    viewportBounded?: boolean;
     currentDirectory: string;
     onOpenFile: (file: ChangedFileEntry) => void;
 }
 
-export const ChangedFilesList: React.FC<ChangedFilesListProps> = ({ files, currentDirectory, onOpenFile }) => {
+export const ChangedFilesList: React.FC<ChangedFilesListProps> = ({ files, currentDirectory, onOpenFile, viewportBounded = false }) => {
     
     return (
         <>
@@ -17,7 +18,7 @@ export const ChangedFilesList: React.FC<ChangedFilesListProps> = ({ files, curre
                 <span className="typography-meta tabular-nums">{files.length}</span>
             </div>
 
-            <div className="max-h-[260px] overflow-y-auto">
+            <div className={viewportBounded ? "min-h-0 flex-1 overflow-y-auto overscroll-contain" : "max-h-[260px] overflow-y-auto"}>
                 {files.map((file, index) => {
                     const { fileName, dirPart } = getDisplayPath(file, currentDirectory);
                     const stats = getFileStats(file);

@@ -260,3 +260,8 @@ The native GitHub link picker uses NativeOnDemand to commit its module when the
 first load finishes. Loading and failed loads remain visible in a closable dialog;
 Retry does not require opening another composer control. Hosted/desktop retain
 the existing lazy picker. Closing during load prevents late mounting.
+
+Native Android handheld landscape mode reduces the collapsed editor's empty
+height and outer padding. Content-driven growth, scrolling and expanded composer
+sizing remain owned by ComposerEditor. Portrait and other runtimes keep their
+existing geometry.

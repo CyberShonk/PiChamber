@@ -4,7 +4,7 @@
     "name": "Red Carbon",
     "description": "Matte graphite, silver hardware and structural red trim. Based on the Red Carbon mainline design system.",
     "author": "CyberShonk",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "variant": "dark",
     "tags": [
       "dark",
@@ -15,17 +15,17 @@
   "colors": {
     "primary": {
       "base": "#B3121B",
-      "hover": "#D61A24",
+      "hover": "#BD2630",
       "active": "#931019",
       "foreground": "#E7E7E5",
       "muted": "#B3121B80",
-      "emphasis": "#FF8087"
+      "emphasis": "#D98D92"
     },
     "surface": {
       "background": "#070809",
       "foreground": "#E7E7E5",
       "muted": "#0C0D0E",
-      "mutedForeground": "#969A9D",
+      "mutedForeground": "#A1A5A8",
       "elevated": "#101214",
       "elevatedForeground": "#E7E7E5",
       "overlay": "#000000B3",
@@ -34,20 +34,20 @@
     "interactive": {
       "border": "#2C3034",
       "borderHover": "#6A6E72",
-      "borderFocus": "#D61A24",
-      "selection": "#760B11",
+      "borderFocus": "#BD2630",
+      "selection": "#29171B",
       "selectionForeground": "#E7E7E5",
-      "focus": "#D61A24",
+      "focus": "#BD2630",
       "focusRing": "#B3121B60",
       "cursor": "#C4C6C7",
       "hover": "#202326",
       "active": "#2C3034"
     },
     "status": {
-      "error": "#FF8087",
+      "error": "#D98D92",
       "errorForeground": "#070809",
-      "errorBackground": "#FF808720",
-      "errorBorder": "#FF808745",
+      "errorBackground": "#D98D9220",
+      "errorBorder": "#D98D9245",
       "warning": "#C58B3B",
       "warningForeground": "#070809",
       "warningBackground": "#C58B3B20",
@@ -63,16 +63,16 @@
     },
     "pr": {
       "open": "#89AF8D",
-      "draft": "#969A9D",
+      "draft": "#A1A5A8",
       "blocked": "#C58B3B",
       "merged": "#C4C6C7",
-      "closed": "#FF8087"
+      "closed": "#D98D92"
     },
     "syntax": {
       "base": {
         "background": "#070809",
         "foreground": "#E7E7E5",
-        "comment": "#969A9D",
+        "comment": "#A1A5A8",
         "keyword": "#C4C6C7",
         "string": "#89AF8D",
         "number": "#C58B3B",
@@ -82,7 +82,7 @@
         "operator": "#E7E7E5"
       },
       "tokens": {
-        "commentDoc": "#969A9D",
+        "commentDoc": "#A1A5A8",
         "stringEscape": "#C4C6C7",
         "keywordImport": "#C4C6C7",
         "storageModifier": "#C4C6C7",
@@ -109,19 +109,19 @@
         "boolean": "#C58B3B",
         "decorator": "#C4C6C7",
         "label": "#C58B3B",
-        "punctuation": "#969A9D",
+        "punctuation": "#A1A5A8",
         "macro": "#C4C6C7",
         "preprocessor": "#C4C6C7",
         "regex": "#89AF8D",
         "url": "#C4C6C7",
         "key": "#C58B3B",
-        "exception": "#FF8087"
+        "exception": "#D98D92"
       },
       "highlights": {
         "diffAdded": "#89AF8D",
         "diffAddedBackground": "#89AF8D1c",
-        "diffRemoved": "#FF8087",
-        "diffRemovedBackground": "#FF80871c",
+        "diffRemoved": "#D98D92",
+        "diffRemovedBackground": "#D98D921c",
         "diffModified": "#C4C6C7",
         "diffModifiedBackground": "#C4C6C71c",
         "lineNumber": "#6A6E72",
@@ -137,7 +137,7 @@
       "linkHover": "#E7E7E5",
       "inlineCode": "#E7E7E5",
       "inlineCodeBackground": "#C4C6C71f",
-      "blockquote": "#969A9D",
+      "blockquote": "#A1A5A8",
       "blockquoteBorder": "#2C3034",
       "listMarker": "#C4C6C780"
     },
@@ -146,21 +146,21 @@
       "userMessageBackground": "#101214",
       "assistantMessage": "#E7E7E5",
       "assistantMessageBackground": "#070809",
-      "timestamp": "#969A9D",
+      "timestamp": "#A1A5A8",
       "divider": "#2C3034"
     },
     "tools": {
       "background": "#10121480",
       "border": "#2C3034",
       "headerHover": "#C4C6C70d",
-      "icon": "#969A9D",
+      "icon": "#A1A5A8",
       "title": "#E7E7E5",
-      "description": "#969A9D",
+      "description": "#A1A5A8",
       "edit": {
         "added": "#89AF8D",
         "addedBackground": "#89AF8D20",
-        "removed": "#FF8087",
-        "removedBackground": "#FF808720",
+        "removed": "#D98D92",
+        "removedBackground": "#D98D9220",
         "lineNumber": "#6A6E72"
       }
     }

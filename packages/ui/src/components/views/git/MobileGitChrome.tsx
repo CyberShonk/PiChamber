@@ -280,8 +280,8 @@ export const MobileGitChrome: React.FC<MobileGitChromeProps> = ({
         }
       />
       {changeEntries.length > 0 ? (
-        <div className="flex min-h-0 flex-1 flex-col">
-          <div className="min-h-0 flex-1 overflow-hidden px-3 pt-2">
+        <div className="oc-mobile-git-layout flex min-h-0 flex-1 flex-col">
+          <div className="oc-mobile-git-list min-h-0 flex-1 overflow-hidden px-3 pt-2">
             <ChangesPanel
               groups={changeGroups}
               diffStats={status?.diffStats}
@@ -292,7 +292,7 @@ export const MobileGitChrome: React.FC<MobileGitChromeProps> = ({
               onVisiblePathsChange={onVisiblePathsChange}
             />
           </div>
-          <div className="shrink-0 border-t border-border/40 px-3 pb-3 pt-3">
+          <div className="oc-mobile-git-commit shrink-0 border-t border-border/40 px-3 pb-3 pt-3">
             <CommitSection
               stagedCount={stagedChangeEntries.length}
               commitMessage={commitMessage}

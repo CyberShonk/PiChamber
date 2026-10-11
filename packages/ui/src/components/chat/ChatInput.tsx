@@ -2596,6 +2596,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
               <div
                 className={cn(
                   "flex flex-col relative overflow-visible",
+                  !isComposerExpanded && "oc-composer-collapsed",
                   isComposerExpanded && "flex-1 min-h-0",
                   isDesktopStackedComposer &&
                     !isComposerExpanded &&

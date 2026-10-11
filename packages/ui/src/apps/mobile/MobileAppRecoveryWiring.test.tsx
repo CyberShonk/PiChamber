@@ -60,6 +60,7 @@ let focusProjectCalls: unknown[][] = [];
 let clearLastActiveCalls = 0;
 let resetCalls = 0;
 let reconnectCalls = 0;
+let persistedSession: { sessionId: string; directory: string } | null = null;
 
 const deferred = <T,>() => {
   let resolve!: (value: T) => void;
@@ -85,7 +86,9 @@ mock.module('@/components/ui/button', () => ({
   },
 }));
 mock.module('@/components/icon/Icon', () => ({ Icon: () => null }));
-mock.module('@/components/ui/PiChamberLogo', () => ({ PiChamberLogo: () => null }));
+mock.module('@/components/ui/PiChamberLogo', () => ({
+  PiChamberLogo: ({ width }: { width: number }) => React.createElement('span', null, width === 120 ? 'Boot logo' : 'Recovery indicator'),
+}));
 mock.module('@/components/ui/ErrorBoundary', () => ({
   ErrorBoundary: ({ children }: React.PropsWithChildren) => children,
 }));
@@ -132,11 +135,14 @@ mock.module('@/stores/useGlobalSessionsStore', () => ({
   resolveGlobalSessionDirectory: () => null,
 }));
 mock.module('@/sync/last-session-cache', () => ({
-  readLastActiveSession: () => null,
+  readLastActiveSession: () => persistedSession,
   clearLastActiveSession: () => {
     clearLastActiveCalls += 1;
   },
   persistLastActiveSession: () => undefined,
+}));
+mock.module('@/sync/session-catalog-access', () => ({
+  loadSessionCatalog: () => new Promise(() => undefined),
 }));
 mock.module('@/stores/useConfigStore', () => ({
   useConfigStore: Object.assign((selector: (s: ReturnType<typeof getCfgSnapshot>) => unknown) => selector(getCfgSnapshot()), {
@@ -568,6 +574,7 @@ const resetControls = () => {
   clearLastActiveCalls = 0;
   resetCalls = 0;
   reconnectCalls = 0;
+  persistedSession = null;
   setMobileConnectionUncertain(false);
 };
 
@@ -610,6 +617,10 @@ function lastSyncProp(): boolean | null {
   return syncPropsHistory.length > 0 ? syncPropsHistory[syncPropsHistory.length - 1]! : null;
 }
 
+function renderedText(node: FakeNode): string {
+  return String(node.textContent ?? '') + node.childNodes.map(renderedText).join('');
+}
+
 describe('MobileApp recovery wiring (mounted)', () => {
   test('queued auto-send stays paused while the transport is uncertain, drains after a verified healthy probe', async () => {
     reprobeHandler = async () => 'unchanged';
@@ -650,11 +661,41 @@ describe('MobileApp recovery wiring (mounted)', () => {
     expect(welcomeMounts).toBe(0);
   });
 
+  test('a hanging restore releases its logo without clearing saved session state', async () => {
+    persistedSession = { sessionId: 'saved-session', directory: '/repo' };
+    const { harness } = await mountMobileApp();
+    expect(renderedText(harness.container)).toContain('Boot logo');
+    await harness.advanceTime(6100);
+    expect(renderedText(harness.container)).not.toContain('Boot logo');
+    expect(shellMounts).toBe(1);
+    expect(shellUnmounts).toBe(0);
+    expect(clearLastActiveCalls).toBe(0);
+    expect(switchCalls).toHaveLength(0);
+  });
+
+  test('a connection drop during restore cannot cancel the splash deadline', async () => {
+    persistedSession = { sessionId: 'saved-session', directory: '/repo' };
+    const { harness, root } = await mountMobileApp();
+    await harness.advanceTime(3000);
+    cfgConnected = false;
+    cfgPhase = 'reconnecting';
+    await act(async () => {
+      root.render(React.createElement(MobileApp, { apis: {} as never }));
+    });
+    expect(renderedText(harness.container)).toContain('Boot logo');
+    await harness.advanceTime(3100);
+    expect(renderedText(harness.container)).not.toContain('Boot logo');
+    expect(shellMounts).toBe(1);
+    expect(shellUnmounts).toBe(0);
+    expect(clearLastActiveCalls).toBe(0);
+    expect(switchCalls).toHaveLength(0);
+  });
+
   test('cold launch with persisted endpoint + unreachable probe enters recovery, retains endpoint and drafts', async () => {
     cfgConnected = false;
     cfgPhase = 'connecting';
     reprobeHandler = async () => 'unreachable';
-    await mountMobileApp();
+    const { harness } = await mountMobileApp();
 
     expect(reprobeCalls).toBe(1);
     expect(switchCalls).toHaveLength(0);
@@ -664,6 +705,8 @@ describe('MobileApp recovery wiring (mounted)', () => {
     expect(shellMounts).toBe(1);
     expect(shellUnmounts).toBe(0);
     expect(welcomeMounts).toBe(0);
+    expect(renderedText(harness.container)).not.toContain('Boot logo');
+    expect(renderedText(harness.container)).toContain('Recovery indicator');
   });
 
   test('cold launch with persisted endpoint + needs-login probe drops to connect screen with auth-expired notice', async () => {
