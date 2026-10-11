@@ -13,6 +13,15 @@ const edgeSwipeSource = readFileSync(join(__dirname, 'useEdgeSwipe.ts'), 'utf8')
 const drawerSurfaceSource = readFileSync(join(__dirname, 'drawerSurface.ts'), 'utf8');
 
 describe('mobile drawer lifecycle', () => {
+  test('the workspace drawer can shrink to its keyboard-inset bottom anchor', () => {
+    const classes = workspaceDrawerSource.match(/className="([^"]*oc-keyboard-inset-surface[^"]*)"/)?.[1].split(/\s+/);
+    expect(classes).toContain('inset-y-0');
+    expect(classes).toContain('min-h-0');
+    expect(classes).not.toContain('h-full');
+    const terminalSource = readFileSync(join(__dirname, '../components/views/TerminalView.tsx'), 'utf8');
+    expect(terminalSource).toContain('relative min-h-0 flex-1 overflow-hidden');
+  });
+
   test('the session drawer gates live sidebar work while it is closed', () => {
     expect(sessionsSheetSource).toContain('mobileVariant={!isTabletSidebar}\n      isVisible={open}');
   });

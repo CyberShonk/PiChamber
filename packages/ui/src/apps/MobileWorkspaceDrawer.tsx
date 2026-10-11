@@ -408,7 +408,7 @@ export const MobileWorkspaceDrawer = React.memo(function MobileWorkspaceDrawer({
         role="dialog"
         aria-modal="true"
         aria-label={"Open workspace panel"}
-        className="oc-keyboard-inset-surface absolute inset-y-0 right-0 z-10 flex h-full w-full flex-col bg-sidebar"
+        className="oc-keyboard-inset-surface absolute inset-y-0 right-0 z-10 flex min-h-0 w-full flex-col bg-sidebar"
         style={{
           paddingTop: 'var(--oc-safe-area-top, 0px)',
           transform: entered ? 'none' : 'translateX(100%)',
