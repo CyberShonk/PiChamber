@@ -143,13 +143,13 @@ const SelectBody: React.FC<SelectBodyProps> = ({
               onFocus={() => setHighlightedIndex(index)}
               onClick={() => onRespond({ value: option })}
               className={cn(
-                'flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-left text-sm transition-colors outline-none',
+                'flex w-full items-start justify-between rounded-lg px-2.5 py-1.5 text-left text-sm transition-colors outline-none',
                 isHighlighted
                   ? 'bg-interactive-selection text-interactive-selection-foreground font-medium'
                   : 'text-foreground hover:bg-interactive-hover',
               )}
             >
-              <span className="truncate"><AnsiText text={option} /></span>
+              <span className="min-w-0 flex-1 whitespace-pre-wrap [overflow-wrap:anywhere]"><AnsiText text={option} /></span>
               {quickKey !== undefined && (
                 <span
                   className={cn(
@@ -710,17 +710,17 @@ export const ExtensionPromptDock: React.FC<ExtensionPromptDockProps> = ({ sessio
         aria-describedby={target.request.message ? messageId : undefined}
         tabIndex={-1}
         onKeyDown={handleKeyDown}
-        className="overflow-hidden rounded-xl border border-border/80 bg-card p-3 shadow-md transition-[opacity,transform] duration-150 outline-none"
+        className="max-h-[60dvh] overflow-y-auto rounded-xl border border-border/80 bg-card p-3 shadow-md transition-[opacity,transform] duration-150 outline-none [overflow-wrap:anywhere]"
       >
         {/* Header */}
-        <div className="mb-2.5 flex items-center justify-between gap-2 border-b border-border/40 pb-2">
-          <div className="flex min-w-0 items-center gap-1.5">
+        <div className="mb-2.5 flex flex-wrap items-start justify-between gap-2 border-b border-border/40 pb-2">
+          <div className="flex min-w-0 flex-1 basis-48 items-start gap-1.5">
             <Icon name="plug-2" className="size-3.5 shrink-0 text-muted-foreground" />
-            <span className="truncate text-xs font-semibold uppercase tracking-wider text-foreground">
+            <span className="min-w-0 whitespace-pre-wrap text-sm font-semibold text-foreground">
               <AnsiText text={target.request.title} />
             </span>
           </div>
-          <div className="flex shrink-0 items-center gap-2">
+          <div className="ml-auto flex shrink-0 items-center gap-2">
             {target.queueLength > 1 && (
               <span className="rounded-full bg-muted px-2 py-0.5 typography-micro font-medium text-muted-foreground">
                 1 of {target.queueLength}
