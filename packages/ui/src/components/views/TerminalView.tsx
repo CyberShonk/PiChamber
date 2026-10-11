@@ -386,7 +386,7 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ visible, onCloseView
   const renderChromeWrapper = !terminalHeaderSlot || isTouchTerminal || showQuickKeys;
 
   return (
-    <div className="flex h-full flex-col overflow-hidden bg-background">
+    <div className="flex h-full min-h-0 flex-col overflow-hidden bg-background">
       {headerControls && terminalHeaderSlot
         ? createPortal(
             <div className="flex min-w-0 flex-1 items-center gap-1.5">{headerControls}</div>,
@@ -497,7 +497,7 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ visible, onCloseView
       </div>
       ) : null}
 
-      <div className="relative flex-1 overflow-hidden" style={{ backgroundColor: xtermTheme.background }}>
+      <div className="relative min-h-0 flex-1 overflow-hidden" style={{ backgroundColor: xtermTheme.background }}>
         <div className="h-full w-full box-border pl-4 pr-1.5 pt-3 pb-4">
           {shouldRenderViewport && effectiveDirectory && directoryTerminalState
             ? directoryTerminalState.tabs.map((tab) => {

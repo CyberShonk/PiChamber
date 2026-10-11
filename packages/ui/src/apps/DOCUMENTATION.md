@@ -66,6 +66,14 @@
 
 - **Touch-action**: chat containers (`chatMainRef`, `mainInteractiveRef`, drawer drawers) use `pan-x pan-y` (previously `pan-y`) so horizontal descendants can scroll natively; `preventDefault` is only called after horizontal intent is locked.
 
+## Native workspace keyboard sizing
+
+The portaled workspace drawer derives its height from its top and keyboard-inset
+bottom anchors; it must not also set `h-full`, which overrides the inset on an
+absolutely positioned element. This applies to both Capacitor iOS and Android.
+The terminal viewport flexes with `min-h-0`, keeping its quick keys above the
+keyboard and allowing its existing ResizeObserver to refit the visible rows.
+
 ## Shared Mobile Files and Changes Ownership
 
 - Dedicated mobile no longer owns parallel Files or Changes controllers. `MobileWorkspaceDrawer` lazy-loads the shared `FilesView` and `GitView` entrypoints instead.
