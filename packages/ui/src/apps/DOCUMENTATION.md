@@ -268,15 +268,21 @@ the measured width. No second-display content is supplied in this revision.
 
 ### Thor companion readability
 
-Unified diffs use independent block rows, old/new line gutters and horizontal
-scrolling for long code lines. Blank additions and no-newline markers are preserved.
+Unified diffs use independent block rows and one compact line gutter (old line
+for removals, new line otherwise). Code wraps by default; the local Wrap control
+restores horizontal scrolling. Patch headers are collapsed behind Patch details.
+Files hides the file rail to give the preview the full width. Both presentation
+controls remain local to the companion document and survive frame refreshes;
+they never send host actions. Text previews share the wrapping and line gutters. Blank additions and no-newline markers are preserved.
 Context is an input-free summary of the selected session, using the same token
 contract as ContextPanelContent (latest reported input plus cache, not output).
 The controller subscribes to message records only in Context, with the existing
 live-tail suspension; other companion tabs do not project transcripts. Unknown
 limits and unreported usage remain unavailable instead of showing fabricated
 zero-percent capacity. Session scope controls stay fixed above the scrollable
-board; titles preserve case and can occupy two lines. Idle labels no longer
+board. The board uses nonshrinking flex rows so a long All projects list cannot
+squeeze titles and project labels out of their cards. Titles preserve case and
+can occupy two lines. Idle labels no longer
 consume title space; running, retrying, error, offline and unread states remain.
 
 ## Native startup restoration splash

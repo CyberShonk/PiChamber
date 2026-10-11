@@ -45,7 +45,7 @@ const SessionBoard = ({ view }: { view: CompanionView }) => (
         <Button variant="ghost" size="sm" aria-pressed={!view.projectOnly} data-caction={view.projectOnly ? 'scope' : undefined}>All projects</Button>
         <Button variant="ghost" size="sm" aria-pressed={view.projectOnly === true} data-caction={!view.projectOnly ? 'scope' : undefined}>This workspace</Button>
       </div>
-      <span className="typography-micro text-muted-foreground">{view.sessions.length} sessions</span>
+      <span className="typography-micro text-muted-foreground">{view.sessions.length === 1 ? '1 session' : `${view.sessions.length} sessions`}</span>
     </div>
     <div className="companion-scroll companion-sessions" data-scroll="sessions">
       {view.sessions.length === 0 ? <Empty text="No loaded sessions. Open the sessions list on the top screen." /> : (
@@ -97,21 +97,21 @@ const ContextSummary = ({ view }: { view: CompanionView }) => {
 };
 
 const FileRail = ({ view }: { view: CompanionView }) => (
-  <aside className="companion-scroll companion-files" data-scroll="files">
+  <aside id="companion-file-list" className="companion-scroll companion-files" data-scroll="files" aria-label="Changed files">
     {view.files.length === 0 ? <Empty text="No changed files available. Tap Refresh to check the workspace." /> : (
       view.files.map((file, index) => (
         <Button key={index} variant="ghost" size="default" className="companion-file"
           aria-pressed={view.selectedFile === index} data-caction={view.tab === 'review' ? 'file' : 'preview'}
           data-index={index} disabled={!view.connected}>
           <span className="companion-file-copy">
-            <span className="truncate text-foreground">{file.name}</span>
-            <span className="truncate typography-micro text-muted-foreground">
-              {file.parent || (file.staged ? 'Staged' : 'Working tree')}
+            <span className="companion-file-name text-foreground">{file.name}</span>
+            <span className="companion-file-meta typography-micro">
+              <span className="truncate text-muted-foreground" title={file.parent}>{file.parent || (file.staged ? 'Staged' : 'Working tree')}</span>
+              <span className="companion-count">
+                <span className="companion-added">{file.added ? `+${file.added}` : ''}</span>
+                <span className="companion-removed">{file.removed ? `−${file.removed}` : ''}</span>
+              </span>
             </span>
-          </span>
-          <span className="companion-count typography-micro">
-            <span className="companion-added">{file.added ? `+${file.added}` : ''}</span>
-            <span className="companion-removed">{file.removed ? `−${file.removed}` : ''}</span>
           </span>
         </Button>
       ))
@@ -121,32 +121,42 @@ const FileRail = ({ view }: { view: CompanionView }) => (
 
 const FilePreview = ({ view }: { view: CompanionView }) => {
   const preview = view.preview;
-  if (view.loading) return <Empty text="Loading preview…" />;
-  if (!preview) return <Empty text={view.tab === 'review' ? 'Select a file to review its diff here.' :
-    'Select a changed file to preview its content here. Images open at their natural aspect ratio.'} />;
+  const lines = preview?.kind === 'diff' ? companionDiffLines(preview.content) : [];
+  const firstHunk = lines.findIndex((line) => line.kind === 'hunk');
+  const patchHeader = firstHunk > 0 ? lines.slice(0, firstHunk) : [];
+  const diffBody = firstHunk > 0 ? lines.slice(firstHunk) : lines;
   return (
     <>
       <header className="companion-detail-title typography-ui-label">
-        <span className="truncate">{preview.title}</span>
-        <span className="typography-micro text-muted-foreground">
-          {view.tab === 'review' ? (view.selectedFile !== null && view.files[view.selectedFile]?.staged ? 'Staged' : 'Working tree') : 'Read only'}
-        </span>
+        <Button variant="ghost" size="sm" data-cpresentation="files" aria-label="Hide file list" aria-expanded="true" aria-controls="companion-file-list">
+          <Icon name="list-unordered" className="size-4" /><span>Files</span>
+        </Button>
+        <span className="companion-preview-name" title={preview?.title}>{preview?.title ?? 'Choose a file'}</span>
+        {(preview?.kind === 'text' || preview?.kind === 'diff') && <Button variant="ghost" size="sm" data-cpresentation="wrap" aria-label="Wrap code lines" aria-pressed="true">Wrap</Button>}
       </header>
       <div className="companion-scroll companion-preview" data-scroll={`preview-${view.selectedFile}`}>
-        {preview.kind === 'image' ? (
+        {view.loading ? <Empty text="Loading preview…" /> : !preview ? <Empty text={view.tab === 'review' ? 'Select a file to review its diff here.' :
+          'Select a changed file to preview its content here. Images open at their natural aspect ratio.'} /> : preview.kind === 'image' ? (
           <img src={preview.content} alt={preview.title} className="companion-image" />
         ) : preview.kind === 'diff' ? (
           <div className="companion-code companion-diff" aria-label="Unified diff">
-            {companionDiffLines(preview.content).map((line, index) => (
+            {patchHeader.length > 0 && <details className="companion-patch-header">
+              <summary>Patch details</summary>
+              <pre>{patchHeader.map((line) => line.text).join('\n')}</pre>
+            </details>}
+            {diffBody.map((line, index) => (
               <div key={index} className={`companion-diff-row companion-diff-${line.kind}`}>
-                <span className="companion-line-number" aria-hidden="true">{line.oldLine ?? ''}</span>
-                <span className="companion-line-number" aria-hidden="true">{line.newLine ?? ''}</span>
+                <span className="companion-line-number" title={line.kind === 'remove' ? `Old line ${line.oldLine}` : line.newLine !== undefined ? `Line ${line.newLine}` : undefined} aria-hidden="true">{line.newLine ?? line.oldLine ?? ''}</span>
                 <code>{line.text || ' '}</code>
               </div>
             ))}
           </div>
         ) : preview.kind === 'text' ? (
-          <pre className="companion-code">{preview.content}</pre>
+          <div className="companion-code companion-source" aria-label="File content">
+            {preview.content.split('\n').map((line, index) => <div className="companion-diff-row" key={index}>
+              <span className="companion-line-number" aria-hidden="true">{index + 1}</span><code>{line || ' '}</code>
+            </div>)}
+          </div>
         ) : <Empty text={preview.content} />}
       </div>
     </>
@@ -181,7 +191,7 @@ const AttentionTray = ({ view }: { view: CompanionView }) => (
 
 /** Static presentation only. The primary app validates and owns every action. */
 export const CompanionSurface = ({ view }: { view: CompanionView }) => (
-  <div className="oc-companion" data-view={view.tab}>
+  <div className="oc-companion" data-view={view.tab} data-code-wrap="true" data-files-hidden="false">
     <WorkspaceTabs view={view} />
     <div className="companion-context typography-meta text-muted-foreground">
       <span>{view.workspace || 'Choose a workspace'}</span>

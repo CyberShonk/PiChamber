@@ -97,7 +97,7 @@ test('visible-frame indices survive queued updates but cannot cross a workspace 
 
 test('diff renders separate rows with preserved casing and escaped code', () => {
   const html = renderToStaticMarkup(<CompanionSurface view={{ ...view, tab: 'review', preview: { kind: 'diff', title: 'MainActivity.kt', content: 'diff --git a/MainActivity.kt b/MainActivity.kt\n@@ -2,2 +2,2 @@\n-old()\n+New(<script>)\n unchanged' } }} />);
-  expect(html.match(/class="companion-diff-row /g)?.length).toBe(5);
+  expect(html.match(/class="companion-diff-row /g)?.length).toBe(4);
   expect(html).toContain('New(&lt;script&gt;)');
   expect(html).not.toContain('<br');
   expect(html).toContain('companion-line-number');
@@ -116,4 +116,65 @@ test('companion Context is input-free and distinguishes missing usage from a ful
   expect(html).toContain('Awaiting usage'); expect(html).toContain('Cache read');
   expect(html).toContain('href="#oc-donut-chart"');
   expect(html).not.toContain('<input'); expect(html).not.toContain('role="progressbar"');
+});
+
+
+test('code previews expose local layout controls and collapse only the patch preamble', () => {
+  const content = 'diff --git a/File.kt b/File.kt\n--- a/File.kt\n+++ b/File.kt\n@@ -5 +9 @@\n-old()\n+New(<script>)\n\\ No newline at end of file';
+  const html = renderToStaticMarkup(<CompanionSurface view={{ ...view, tab: 'review', preview: { kind: 'diff', title: 'File.kt', content } }} />);
+  expect(html).toContain('<details class="companion-patch-header">');
+  expect(html).toContain('<summary>Patch details</summary>');
+  expect(html).not.toContain('<details class="companion-patch-header" open');
+  expect(html.match(/class="companion-line-number"/g)?.length).toBe(4);
+  expect(html.indexOf('No newline')).toBeGreaterThan(html.indexOf('</details>'));
+  expect(html).toContain('data-cpresentation="wrap"');
+  expect(html).toContain('data-cpresentation="files"');
+  expect(html).toContain('aria-controls="companion-file-list"');
+  const source = renderToStaticMarkup(<CompanionSurface view={{ ...view, tab: 'artifacts', preview: { kind: 'text', title: 'File.kt', content: 'package Test\n\n<script>\n' } }} />);
+  expect(source.match(/class="companion-line-number"/g)?.length).toBe(4);
+  expect(source).toContain('&lt;script&gt;');
+  expect(source).toContain('aria-label="File content"');
+});
+
+test('local layout toggles survive fresh frames and never reach the host action bridge', () => {
+  const frame = companionFrame('', theme as Theme, 2, 1, []);
+  const script = /<script nonce="companion-shell">([\s\S]*?)<\/script>/.exec(frame.document)![1];
+  const attributes: Record<string, Record<string, string>> = { files: {}, wrap: {} };
+  const root = {
+    dataset: { filesHidden: 'false', codeWrap: 'true' },
+    querySelector: (selector: string) => {
+      const key = selector.includes('files') ? 'files' : 'wrap';
+      return { setAttribute: (name: string, value: string) => { attributes[key][name] = value; } };
+    },
+  };
+  const listeners: Record<string, (event: unknown) => void> = {};
+  const document = {
+    querySelector: () => root,
+    querySelectorAll: () => [],
+    getElementById: () => ({ set innerHTML(_value: string) { root.dataset.filesHidden = 'false'; root.dataset.codeWrap = 'true'; } }),
+    addEventListener: (type: string, callback: (event: unknown) => void) => { listeners[type] = callback; },
+  };
+  const posts: string[] = [];
+  const window: {
+    CompanionActions: { post: (message: string) => void; scroll: () => void };
+    companionRender: (html: string, scope: number, owner: number) => void;
+  } = {
+    CompanionActions: { post: (message: string) => { posts.push(message); }, scroll: () => undefined },
+    companionRender: () => undefined,
+  };
+  new Function('window', 'document', script)(window, document);
+  window.companionRender('frame 1', 1, 1);
+  const click = (key: string) => listeners.click({ target: { closest: (selector: string) => selector === '[data-cpresentation]' ? { dataset: { cpresentation: key } } : null } });
+  click('files');click('wrap');
+  expect(root.dataset).toEqual({ filesHidden: 'true', codeWrap: 'false' });
+  expect(attributes.files['aria-expanded']).toBe('false');
+  expect(attributes.files['aria-label']).toBe('Show file list');
+  expect(attributes.wrap['aria-pressed']).toBe('false');
+  window.companionRender('frame 2', 2, 1);
+  expect(root.dataset).toEqual({ filesHidden: 'true', codeWrap: 'false' });
+  expect(posts).toHaveLength(0);
+  listeners.click({ target: { closest: (selector: string) => selector === '[data-caction]' ? { dataset: { caction: 'refresh' } } : null } });
+  expect(JSON.parse(posts[0])).toEqual({ scope: 2, type: 'refresh' });
+  click('files');click('wrap');
+  expect(root.dataset).toEqual({ filesHidden: 'false', codeWrap: 'true' });
 });
