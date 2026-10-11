@@ -278,3 +278,12 @@ limits and unreported usage remain unavailable instead of showing fabricated
 zero-percent capacity. Session scope controls stay fixed above the scrollable
 board; titles preserve case and can occupy two lines. Idle labels no longer
 consume title space; running, retrying, error, offline and unread states remain.
+
+## Native startup restoration splash
+
+The last-session restoration logo has a six-second presentation deadline from
+`MobileApp` mount, independent of host connection and catalog readiness. Entering
+temporary recovery immediately reveals the retained shell and its recovery status.
+Connection changes cannot cancel or restart the deadline. Releasing the overlay
+does not cancel catalog restoration, clear persisted selection, or treat a failed
+load as an empty catalog; the existing runtime and generation guards still apply.
