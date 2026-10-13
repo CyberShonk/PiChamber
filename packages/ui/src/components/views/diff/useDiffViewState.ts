@@ -81,11 +81,15 @@ export function useDiffViewState(options: UseDiffViewStateOptions) {
   const diffFileLayout = useUIStore((state) => state.diffFileLayout);
   const setDiffFileLayout = useUIStore((state) => state.setDiffFileLayout);
   const diffWrapLinesStore = useUIStore((state) => state.diffWrapLines);
-  const setDiffWrapLines = useUIStore((state) => state.setDiffWrapLines);
+  const setStoredDiffWrapLines = useUIStore((state) => state.setDiffWrapLines);
+  // Phone/hosted-mobile diffs start readable without inheriting or rewriting
+  // desktop's persisted preference. The mobile toolbar can still toggle it.
+  const [mobileDiffWrapLines, setMobileDiffWrapLines] = React.useState(true);
   const openContextFileAtLine = useUIStore((state) => state.openContextFileAtLine);
   const currentSessionId = useSessionUIStore((state) => state.currentSessionId);
   const sessionMessageRecords = useSessionMessageRecords(currentSessionId ?? '', effectiveDirectory ?? undefined);
-  const diffWrapLines = diffWrapLinesStore;
+  const diffWrapLines = isMobile ? mobileDiffWrapLines : diffWrapLinesStore;
+  const setDiffWrapLines = isMobile ? setMobileDiffWrapLines : setStoredDiffWrapLines;
   const forcedStaged = activeDiffScope === 'staged' ? true : activeDiffScope === 'working' ? false : null;
   const activeDiffStaged = forcedStaged ?? displayFileStaged;
 

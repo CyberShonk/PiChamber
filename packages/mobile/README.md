@@ -77,6 +77,23 @@ Required local tools:
 - If chat sends or live output stalls only in the native app, verify the app build includes the direct-LAN `EventSource` transport for `/api/pi/events`; CapacitorHttp is intentionally used for ordinary API requests but buffers long-lived SSE responses. The server sends named SSE heartbeats that the native `EventSource` can observe; the client replaces a foreground stream that goes silent and resumes from its last accepted sequence. Native resume also replaces the `EventSource` because WKWebView may preserve a dead connection while the app is suspended without reporting an error. Temporary-unreachable recovery never disposes that stream; it only re-probes transports. From Instances, `Export diagnostics` shares a bounded, redacted client log (`pichamber-mobile-diagnostics-v1`). Diagnostics persist to `localStorage` under `pichamber.mobile.diagnostics.v1` (bounded to 300 entries, debounced with synchronous flush on `pagehide` / `visibilitychange` hidden) so logs survive process kills across cold launches. Redacted on record (tokens, passwords, URLs, and filesystem paths). Recorded lifecycle categories include `app-launch` (`start`), `app-lifecycle` (`resume`, `pause`, `visible`, `hidden`), `auto-connect` (`connected`, `unreachable`, `needs-login`, `no-candidate`), `recovery` (`start`, `attempt`, `success`, `exhausted`, `auth-expired`, `no-connection`, `cancel`), `reprobe` (`switched`, `unchanged`, `unreachable`, `needs-login`, `no-connection`), `pi-connection` (`loading`, `ready`, `unavailable`, `error`), `config-reconcile` (`attempt`, `success`, `failure`), `connect`, and `window-error` / `unhandled-rejection`.
 - If `serve-sim` preview says the stream is not producing frames, check the raw MJPEG stream before assuming the simulator stopped. In prior testing the raw stream worked while the browser preview UI stayed stale.
 
+## Portrait Changes and extension prompts
+
+Changes diffs start with line wrapping enabled on the mobile surface. The wrap
+toggle is local to the mounted view; it does not inherit or change the desktop's
+persisted wrap preference. Last turn retains recorded tool patches, including
+pathless patches labelled `Diff`, instead of requesting Git content for that
+placeholder. Git diff failures show the server's error, or the HTTP status when
+no error body is available.
+
+Blocking extension prompts give the question the full header width on phone
+viewports. Choice text wraps, including long paths, and option rows keep their
+natural height in the scrollable list rather than shrinking into overlapping
+text. Answers, dismissal, quick keys, and the dialog height limit are unchanged.
+
+These are shared web-asset changes; the native iOS bridge is unchanged. Portrait
+layout, touch scrolling, and the software keyboard still require device checks.
+
 ## Generated Assets
 
 Launcher, splash, and notification icons are generated from the PiChamber SVG mark with `bun run icons:brand` (same command that writes desktop/web brand PNGs). Do not restore Capacitor's default app or Android Studio placeholders.
