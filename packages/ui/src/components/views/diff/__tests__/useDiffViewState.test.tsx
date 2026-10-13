@@ -10,8 +10,9 @@ mock.module('@/hooks/useEffectiveDirectory', () => ({ useEffectiveDirectory: () 
 mock.module('@/hooks/useRuntimeAPIs', () => ({
   useRuntimeAPIs: () => ({ git: {}, files: {} }),
 }));
+const deviceInfo = { screenWidth: 1200, isMobile: false };
 mock.module('@/lib/device', () => ({
-  useDeviceInfo: () => ({ screenWidth: 1200, isMobile: false }),
+  useDeviceInfo: () => deviceInfo,
 }));
 mock.module('@/lib/sessionEvents', () => ({
   sessionEvents: { onGitRefreshHint: () => () => undefined },
@@ -31,6 +32,8 @@ mock.module('@/stores/useGitStore', () => {
     useGitLoadingStatus: () => false,
   };
 });
+const storedWrapWrites: boolean[] = [];
+const setStoredDiffWrapLines = (wrap: boolean) => { storedWrapWrites.push(wrap); };
 mock.module('@/stores/useUIStore', () => {
   const state = {
     pendingDiffFile: null,
@@ -41,8 +44,8 @@ mock.module('@/stores/useUIStore', () => {
     diffFileLayout: {},
     setDiffFileLayout: () => undefined,
     diffWrapLinesOverride: null,
-    wrapLinesByDefault: true,
-    setDiffWrapLines: () => undefined,
+    wrapLinesByDefault: false,
+    setDiffWrapLines: setStoredDiffWrapLines,
     openContextFileAtLine: () => undefined,
   };
   return { useUIStore: (selector: (value: typeof state) => unknown) => selector(state) };
@@ -160,6 +163,31 @@ afterEach(async () => {
   }
   restoreFns.splice(0).forEach((restore) => restore());
   latest = null;
+  deviceInfo.screenWidth = 1200;
+  deviceInfo.isMobile = false;
+  storedWrapWrites.length = 0;
+});
+
+describe('useDiffViewState mobile line wrapping', () => {
+  test('defaults mobile diffs to wrapped lines without changing desktop preferences', async () => {
+    deviceInfo.screenWidth = 390;
+    deviceInfo.isMobile = true;
+    const root = await renderHook({ diffScope: 'turn' });
+
+    expect(result().diffWrapLines).toBe(true);
+    await act(async () => result().setDiffWrapLines(false));
+    expect(result().diffWrapLines).toBe(false);
+    await act(async () => result().setDiffWrapLines(true));
+    expect(result().diffWrapLines).toBe(true);
+    expect(storedWrapWrites).toEqual([]);
+
+    deviceInfo.screenWidth = 1200;
+    deviceInfo.isMobile = false;
+    await rerender(root, { diffScope: 'turn' });
+    expect(result().diffWrapLines).toBe(false);
+    await act(async () => result().setDiffWrapLines(true));
+    expect(storedWrapWrites).toEqual([true]);
+  });
 });
 
 describe('useDiffViewState stacked diff mounting', () => {

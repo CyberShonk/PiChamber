@@ -281,7 +281,7 @@ export async function getGitDiff(directory: string, options: GetGitDiffOptions):
   );
 
   if (!response.ok) {
-    throw new Error(`Failed to get git diff: ${response.statusText}`);
+    throw await readGitError(response, `Failed to get git diff: ${response.statusText || `HTTP ${response.status}`}`);
   }
 
   return response.json();

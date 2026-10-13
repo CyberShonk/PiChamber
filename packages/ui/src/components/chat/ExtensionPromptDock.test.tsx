@@ -98,6 +98,31 @@ describe('ExtensionPromptDock', () => {
     expect(markup.match(/role="option"[^>]*tabindex="-1"/g)?.length).toBe(2);
   });
 
+  test('long wrapped options keep their full height inside the scrollable list', () => {
+    const session = createTestSession('sess-1');
+    const options = [
+      `1. Recommended approach — ${'A long explanation that must remain readable in portrait mode. '.repeat(4)}`,
+      `2. Alternative approach — ${'Another explanation with enough text to wrap across several lines. '.repeat(4)}`,
+      `3. Custom configuration — ${'project/'.repeat(40)}settings.json`,
+      '4. Type something.',
+    ];
+    session.extensionDialogs = [{
+      requestId: 'req-long-select',
+      method: 'select',
+      title: 'Which approach should this project use for its configuration?',
+      options,
+    }];
+    store.getState().reducer.bySession.set('sess-1', session);
+
+    const markup = renderToStaticMarkup(<ExtensionPromptDock sessionId="sess-1" />);
+    const rows = [...markup.matchAll(/<button[^>]*role="option"[^>]*>/g)].map((match) => match[0]);
+    expect(rows).toHaveLength(options.length);
+    expect(rows.every((row) => /\bshrink-0\b/.test(row))).toBe(true);
+    expect(markup).toContain('whitespace-pre-wrap [overflow-wrap:anywhere]');
+    expect(markup).toContain('basis-full sm:basis-48');
+    for (const option of options) expect(markup).toContain(option);
+  });
+
   test('renders form dialog with number min and max constraints', () => {
     const session = createTestSession('sess-1', '/repo');
     session.extensionDialogs = [

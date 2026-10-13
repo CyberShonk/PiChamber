@@ -143,7 +143,7 @@ const SelectBody: React.FC<SelectBodyProps> = ({
               onFocus={() => setHighlightedIndex(index)}
               onClick={() => onRespond({ value: option })}
               className={cn(
-                'flex w-full items-start justify-between rounded-lg px-2.5 py-1.5 text-left text-sm transition-colors outline-none',
+                'flex w-full shrink-0 items-start justify-between rounded-lg px-2.5 py-1.5 text-left text-sm transition-colors outline-none',
                 isHighlighted
                   ? 'bg-interactive-selection text-interactive-selection-foreground font-medium'
                   : 'text-foreground hover:bg-interactive-hover',
@@ -714,7 +714,7 @@ export const ExtensionPromptDock: React.FC<ExtensionPromptDockProps> = ({ sessio
       >
         {/* Header */}
         <div className="mb-2.5 flex flex-wrap items-start justify-between gap-2 border-b border-border/40 pb-2">
-          <div className="flex min-w-0 flex-1 basis-48 items-start gap-1.5">
+          <div className="flex min-w-0 flex-1 basis-full sm:basis-48 items-start gap-1.5">
             <Icon name="plug-2" className="size-3.5 shrink-0 text-muted-foreground" />
             <span className="min-w-0 whitespace-pre-wrap text-sm font-semibold text-foreground">
               <AnsiText text={target.request.title} />

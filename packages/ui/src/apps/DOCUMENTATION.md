@@ -196,14 +196,12 @@ it never treats persisted history as live activity. Offline copies are explicit,
 opt-in, limited to three UTF-8 payloads of 600 KB including metadata, and displayed
 in a separate read-only surface. They never hydrate sync stores or queue sends.
 
-Native push registration subscribes to runtime identity and re-registers with
-each connected host. Listener cleanup, bounded retries and generation checks
-reject late results. Device permission and host registration are separate
-statuses. Disabling unregisters the device and removes the current host token
-where possible; it never routes an old-host removal to a new host.
+The v1.0.5 rebase keeps upstream's push removal: native registration, device
+notification status/testing and their search entry are not restored. Shared
+in-app needs-input handling remains upstream-owned.
 
-`NativeAppPlugin.swift` supplies iOS haptics, Settings, notification testing,
-terminal paste confirmation and native file sharing without new dependencies.
+`NativeAppPlugin.swift` supplies iOS haptics, Settings, terminal paste confirmation
+and native file sharing without new dependencies.
 The shell publishes docked keyboard frame geometry, duration, curve and Reduce
 Motion state. New shells use those frames, including height changes and
 interactive dismissal; older shells retain the Capacitor event fallback.
@@ -213,8 +211,7 @@ URLs are not copied into the native error hint.
 
 Relay session probes classify non-authentication HTTP failures as unreachable,
 retaining credentials for recovery. HTTP 401 or an explicit unauthenticated
-session still requires sign-in. Native push errors classify missing iOS push
-entitlements without displaying raw native error payloads.
+session still requires sign-in.
 
 Native tokenless saved connections probe the host before deciding whether sign-in
 is required. Only an explicit auth-disabled session permits native access without

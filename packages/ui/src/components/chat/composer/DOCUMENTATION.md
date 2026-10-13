@@ -254,9 +254,9 @@ desktop keeps its existing attach menu. The shared link picker and insertion
 behavior are reused without changing the host API.
 
 Native app controls optionally provide keyboard dismissal without clearing the
-draft, light send feedback and a text attachment choice for pastes over 10,000
-characters. Delayed paste actions check host, session and editor identity before
-changing content. Hosted and desktop composer behavior remains unchanged.
+draft and light send feedback. The v1.0.5 rebase uses the shared oversized-paste
+attachment policy above on every runtime; it does not restore the former
+native-only 10,000-character paste prompt.
 
 The native GitHub link picker uses NativeOnDemand to commit its module when the
 first load finishes. Loading and failed loads remain visible in a closable dialog;

@@ -78,6 +78,23 @@ Required local tools:
 - If chat sends or live output stalls only in the native app, verify the app build includes the direct-LAN `EventSource` transport for `/api/pi/events`; CapacitorHttp is intentionally used for ordinary API requests but buffers long-lived SSE responses. The server sends named SSE heartbeats that the native `EventSource` can observe; the client replaces a foreground stream that goes silent and resumes from its last accepted sequence. Native resume also replaces the `EventSource` because WKWebView may preserve a dead connection while the app is suspended without reporting an error. Temporary-unreachable recovery never disposes that stream; it only re-probes transports. From Servers, `Export diagnostics` shares a bounded, redacted client log (`pichamber-mobile-diagnostics-v1`). Diagnostics persist to `localStorage` under `pichamber.mobile.diagnostics.v1` (bounded to 300 entries, debounced with synchronous flush on `pagehide` / `visibilitychange` hidden) so logs survive process kills across cold launches. Redacted on record (tokens, passwords, URLs, and filesystem paths). Recorded lifecycle categories include `app-launch` (`start`), `app-lifecycle` (`resume`, `pause`, `visible`, `hidden`), `auto-connect` (`connected`, `unreachable`, `needs-login`, `no-candidate`), `recovery` (`start`, `attempt`, `success`, `exhausted`, `auth-expired`, `no-connection`, `cancel`), `reprobe` (`switched`, `unchanged`, `unreachable`, `needs-login`, `no-connection`), `pi-connection` (`loading`, `ready`, `unavailable`, `error`), `config-reconcile` (`attempt`, `success`, `failure`), `connect`, and `window-error` / `unhandled-rejection`.
 - If `serve-sim` preview says the stream is not producing frames, check the raw MJPEG stream before assuming the simulator stopped. In prior testing the raw stream worked while the browser preview UI stayed stale.
 
+## Portrait Changes and extension prompts
+
+Changes diffs start with line wrapping enabled on the mobile surface. The wrap
+toggle is local to the mounted view; it does not inherit or change the desktop's
+persisted wrap preference. Last turn retains recorded tool patches, including
+pathless patches labelled `Diff`, instead of requesting Git content for that
+placeholder. Git diff failures show the server's error, or the HTTP status when
+no error body is available.
+
+Blocking extension prompts give the question the full header width on phone
+viewports. Choice text wraps, including long paths, and option rows keep their
+natural height in the scrollable list rather than shrinking into overlapping
+text. Answers, dismissal, quick keys, and the dialog height limit are unchanged.
+
+These are shared web-asset changes; the native iOS bridge is unchanged. Portrait
+layout, touch scrolling, and the software keyboard still require device checks.
+
 ## Generated Assets
 
 Launcher, splash, and notification icons are generated from the PiChamber SVG mark with `bun run icons:brand` (same command that writes desktop/web brand PNGs). Do not restore Capacitor's default app or Android Studio placeholders.
@@ -116,12 +133,10 @@ workspace shortcuts, native sharing and offline copies. Copies are labeled
 read-only snapshots, limited to three copies of 600 KB each and up to 200 loaded
 messages per explicit save. Older unloaded history is not included.
 
-Notification settings show OS permission and host registration independently,
-with retry, iOS Settings and a replaceable device test scheduled five seconds
-later. Background the app to see the test. Remote notifications use the existing
-APNs/FCM host/relay configuration; a device test does not verify remote delivery.
-Foreground push presentation remains suppressed. Multiline iOS terminal pastes
-require confirmation. Composer large pastes can be attached as text instead.
+The v1.0.5 rebase retains upstream's removal of background push, native device
+registration and notification tests. Multiline iOS terminal pastes still require
+confirmation. Composer pastes over 16,000 UTF-16 code units use the shared
+upstream text-attachment flow instead of the old native-only paste prompt.
 Native archive undo is limited to successful IDs and the original host.
 
 The iOS target compiles `NativeAppPlugin.swift` and registers it from
@@ -132,11 +147,8 @@ rotation, dictation height changes, interactive dismissal and Reduce Motion on
 physical devices. The source does not add a share extension or background
 execution entitlement. Incoming content still uses the existing picker/paste flow.
 
-A notification permission grant does not prove APNs registration. The signed
-iOS application and provisioning profile must include the push entitlement.
-The app identifies a missing entitlement when iOS reports it; device registration
-failures occur before host token registration. Re-pairing issues a new host
-credential after revocation; never restore or un-revoke an old token manually.
+Re-pairing issues a new host credential after revocation; never restore or
+un-revoke an old token manually.
 
 Saved connections to authentication-disabled hosts can auto-connect and recover
 without a stored bearer. A missing Keychain item triggers a host auth check rather

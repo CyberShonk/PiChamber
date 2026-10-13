@@ -583,7 +583,8 @@ describe('direct host identity before credential use', () => {
     try {
       fetchHandler = async (url) => url.endsWith('/health') ? okHealth(relay.serverId) : okSession();
       expect(await transport.probeConnectionCandidates(candidates, 'saved-token')).toEqual({
-        status: 'ok', transport: { kind: 'direct', url: 'https://host.example' },
+        status: 'ok', transport: { kind: 'direct', url: 'https://host.example', serverId: relay.serverId },
+        serverId: relay.serverId,
       });
       expect(fetchCalls[0]?.headers.authorization).toBeUndefined();
       expect(fetchCalls[1]?.headers.authorization).toBe('Bearer saved-token');
@@ -597,7 +598,7 @@ describe('direct host identity before credential use', () => {
       fetchHandler = async () => okHealth();
       expect(await transport.establishLiveTransport(candidates)).toBeNull();
       fetchHandler = async () => okHealth(relay.serverId);
-      expect(await transport.establishLiveTransport(candidates)).toEqual({ kind: 'direct', url: 'https://host.example' });
+      expect(await transport.establishLiveTransport(candidates)).toEqual({ kind: 'direct', url: 'https://host.example', serverId: relay.serverId });
     } finally {
       restoreAfterEach();
     }

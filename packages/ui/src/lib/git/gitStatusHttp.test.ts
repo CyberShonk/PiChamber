@@ -17,6 +17,7 @@ import {
   checkIsGitRepository,
   createGitWorktree,
   deleteGitWorktree,
+  getGitDiff,
   listGitWorktrees,
 } from './gitStatusHttp';
 import { getRuntimeKey } from '../runtime-switch';
@@ -70,6 +71,37 @@ beforeEach(() => {
 });
 
 const afterEachRestore = () => restoreMocks();
+
+describe('getGitDiff failures', () => {
+  test('preserves the server error when native HTTP has no status text', async () => {
+    installFetchMock(() => jsonResponse({ error: 'Diff path is outside the repository' }, 400));
+    try {
+      await expect(getGitDiff('/repo', { path: 'file.ts' }))
+        .rejects.toThrow('Diff path is outside the repository');
+    } finally {
+      afterEachRestore();
+    }
+  });
+
+  test('reports the HTTP status for non-JSON errors instead of a blank reason', async () => {
+    installFetchMock(() => new Response('Unavailable', { status: 503 }));
+    try {
+      await expect(getGitDiff('/repo', { path: 'file.ts' }))
+        .rejects.toThrow('Failed to get git diff: HTTP 503');
+    } finally {
+      afterEachRestore();
+    }
+  });
+
+  test('still returns a successful empty diff distinctly from failure', async () => {
+    installFetchMock(() => jsonResponse({ diff: '' }));
+    try {
+      expect(await getGitDiff('/repo', { path: 'file.ts' })).toEqual({ diff: '' });
+    } finally {
+      afterEachRestore();
+    }
+  });
+});
 
 describe('checkIsGitRepository cache', () => {
   test('positive results are served from cache', async () => {

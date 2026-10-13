@@ -60,13 +60,18 @@ export const extractChangedFiles = (parts: ToolPart[]): ChangedFile[] => {
 
         const sizeBeforeThisPart = files.length;
         const metadata = state?.metadata;
+        const patchText = typeof metadata?.patch === 'string' ? metadata.patch
+            : typeof metadata?.diff === 'string' ? metadata.diff : '';
+        let hasFilePath = false;
 
         const metaFiles = Array.isArray(metadata?.files) ? metadata.files : [];
         for (const file of metaFiles) {
             if (!file || typeof file !== 'object') continue;
             const record = file as { relativePath?: string; filePath?: string; additions?: unknown; deletions?: unknown; patch?: unknown };
             const rawPath = record.relativePath || record.filePath || '';
-            if (!rawPath || seen.has(rawPath)) continue;
+            if (!rawPath) continue;
+            hasFilePath = true;
+            if (seen.has(rawPath)) continue;
             seen.add(rawPath);
             files.push({
                 path: rawPath,
@@ -82,6 +87,7 @@ export const extractChangedFiles = (parts: ToolPart[]): ChangedFile[] => {
         if (metaFiles.length === 0 && metadata?.filediff && typeof metadata.filediff === 'object') {
             const fd = metadata.filediff as { file?: string; additions?: unknown; deletions?: unknown; patch?: unknown };
             const rawPath = typeof fd.file === 'string' ? fd.file : '';
+            if (rawPath) hasFilePath = true;
             if (rawPath && !seen.has(rawPath)) {
                 seen.add(rawPath);
                 files.push({
@@ -102,7 +108,9 @@ export const extractChangedFiles = (parts: ToolPart[]): ChangedFile[] => {
                 const fd = (result as { filediff?: { file?: string; additions?: unknown; deletions?: unknown; patch?: unknown } }).filediff;
                 if (!fd || typeof fd !== 'object') continue;
                 const rawPath = typeof fd.file === 'string' ? fd.file : '';
-                if (!rawPath || seen.has(rawPath)) continue;
+                if (!rawPath) continue;
+                hasFilePath = true;
+                if (seen.has(rawPath)) continue;
                 seen.add(rawPath);
                 files.push({
                     path: rawPath,
@@ -122,21 +130,27 @@ export const extractChangedFiles = (parts: ToolPart[]): ChangedFile[] => {
                 : typeof input?.file_path === 'string' ? input.file_path
                 : typeof input?.path === 'string' ? input.path
                 : undefined;
+            if (filePath) hasFilePath = true;
             if (filePath && !seen.has(filePath)) {
                 seen.add(filePath);
+                const parsed = patchText.trim() ? parsePatchStats(patchText) : undefined;
                 files.push({
                     path: filePath,
                     tool: toolName,
                     partId: part.id,
                     messageID: messageId,
+                    additions: parsed?.added,
+                    deletions: parsed?.removed,
+                    patch: parsed ? patchText : undefined,
                 });
             }
         }
 
-        if (files.length === sizeBeforeThisPart) {
-            const patchText = typeof metadata?.patch === 'string' ? metadata.patch.trim()
-                : typeof metadata?.diff === 'string' ? metadata.diff.trim() : '';
-            if (patchText && !seen.has('Diff')) {
+        // A repeated edit of a known path is not an unnamed file. Only use
+        // the display label when the tool supplied no path, keeping its patch
+        // so Last turn never asks Git to load a literal file named "Diff".
+        if (!hasFilePath && files.length === sizeBeforeThisPart) {
+            if (patchText.trim() && !seen.has('Diff')) {
                 seen.add('Diff');
                 const parsed = parsePatchStats(patchText);
                 files.push({
@@ -146,6 +160,7 @@ export const extractChangedFiles = (parts: ToolPart[]): ChangedFile[] => {
                     messageID: messageId,
                     additions: parsed.added,
                     deletions: parsed.removed,
+                    patch: patchText,
                 });
             }
         }
