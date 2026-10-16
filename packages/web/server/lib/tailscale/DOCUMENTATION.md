@@ -25,11 +25,17 @@ Ephemeral Cloudflare quick tunnels were removed; this module is unaffected.
 - `service.js`: `createTailscaleService` — persisted config, lifecycle
   (apply on start, remove on stop, reconcile on change), crash-safe mapping
   record, probe-before-advertise (direct fetch plus the `tailscale nc`
-  tailnet-path fallback), approval wait, and the status model. All
+  tailnet-path fallback), approval wait, the status model, and the
+  public-DNS watcher for Funnel (public) `active`. All
   process execution goes through the injected `runner` (argument arrays, no
   shell, bounded timeouts), and the tailnet-path probe goes through the
   injected `tailnetHealthFetch` (built from the resolved executable by
   default); tests inject fakes for both.
+- `public-dns.js`: `createResolvePublicDns` / `defaultResolvePublicDns` —
+  public-DNS readiness check for Funnel (public) `active`. Queries A and
+  AAAA for the MagicDNS hostname against public resolvers (1.1.1.1,
+  8.8.8.8) with a 3s timeout and a single try, and maps the outcome to
+  `'found' | 'not-found' | 'error'`. Never throws; sends only the hostname.
 - `nc-probe.js`: `createTailscaleNcHealthFetch` — the tailnet-path fallback
   for the self-probe. Spawns `tailscale nc <host> <port>`, runs a real TLS
   handshake over the child's stdio, and performs the same credential-free
@@ -191,8 +197,16 @@ loopback-proxies-bypass-auth hole.
 
 `{ installed, running /* BackendState Running */, loggedIn, magicDnsName,
 httpsCertsAvailable /* from CertDomains when present, else null */,
-config: { enabled, mode, httpsPort }, state, url, approvalUrl, errorCode,
+config: { enabled, mode, httpsPort }, state, url, publicDns, approvalUrl, errorCode,
 errorMessage, authGate: { privateAllowed, publicAllowed } }`
+
+`publicDns` is `'pending' | 'ready' | 'unknown' | null`, non-null ONLY while
+`config.mode === 'public'` AND `state === 'active'` (otherwise `null`).
+`pending` means the Funnel mapping is live for tailnet devices but the
+public DNS record is not yet visible from the public internet; `ready`
+means the record was found; `unknown` means the last check failed
+(timeouts, network errors, refused) while polling continues. Missing on
+older servers (the UI treats a missing field as `null`).
 
 `authGate` is computed with `checkTailscaleAuthGate` for each mode: private
 may stay allowed via `PICHAMBER_ALLOW_UNAUTHENTICATED_LAN`, public never is.
@@ -217,9 +231,10 @@ reports this server's `serverId` — the stable relay signing-key identity
 address BEFORE sending a bearer token). `settings.json` is portable (copied
 between hosts) and must never hold host identity. The probe compares against
 the injected `getServerId` (a null/throwing id fails the probe, so the URL
-stays `starting` and is never advertised). First-use
-Funnel DNS can take minutes: `starting` keeps re-probing with backoff for
-up to ~10 minutes.
+stays `starting` and is never advertised). `starting` keeps re-probing the
+mapping itself with backoff for up to ~10 minutes (probe-before-advertise);
+public DNS readiness for first-use Funnel links is reported separately via
+`publicDns` (see below) and never blocks `active`.
 
 When the direct fetch THROWS without an HTTP response (DNS/connect/abort —
 typical on hosts running tailscaled with `--tun=userspace-networking` or
@@ -232,6 +247,20 @@ triggers the fallback: something answered, so the tailnet path must not
 override it. For public (funnel) mode the fallback still verifies over the
 tailnet path, not the public internet path — it proves the mapping fronts
 this server, not that the public URL is reachable.
+
+Public-DNS watcher: when a reconcile reaches `active` in public mode, the
+service sets `publicDns: 'pending'` and starts a watcher for
+`hostInfo.magicDnsName` (no trailing dot) through the injected
+`resolvePublicDns` (public resolvers, never the host resolver): an immediate
+check, then every 30s for the first 20 minutes, then every 2 minutes, until
+`'found'`. `'found'` → `ready` and the watcher stops; `'not-found'` → stay
+`pending`; `'error'` → `'unknown'` (polling continues; a later `'not-found'`
+returns to `'pending'`, `'found'` to `'ready'`). The watcher is tied to the
+reconcile generation exactly like `probeTimer`: any `bumpGeneration()`
+(config change, retry, shutdown, dispose) stops it, timers are `unref()`'d,
+and a stale result after a generation bump never writes status. Tailnet
+devices can use the URL immediately; internet users may see NXDOMAIN until
+`ready` (~10–15 minutes on first use).
 
 Error codes: `auth_required` | `not_installed` | `not_running` |
 `not_logged_in` | `permission_denied` (`sudo tailscale set --operator=$USER`)

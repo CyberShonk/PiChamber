@@ -279,6 +279,17 @@ export const TailscaleRouteRow: React.FC = () => {
                   </Button>
                 )}
               />
+              {presentation?.publicDnsNote === 'pending' ? (
+                <p className="flex items-center gap-2 typography-meta text-muted-foreground" role="status">
+                  <Icon name="loader-4" className="h-3.5 w-3.5 animate-spin" aria-hidden />
+                  {'Public link is waiting for DNS. New Funnel links can take 10–15 minutes to work outside your tailnet; devices on your tailnet can connect now.'}
+                </p>
+              ) : null}
+              {presentation?.publicDnsNote === 'unknown' ? (
+                <p className="typography-meta text-muted-foreground" role="status">
+                  {"Couldn't check public DNS. New Funnel links can take 10–15 minutes to work outside your tailnet."}
+                </p>
+              ) : null}
             </div>
           ) : null}
 
@@ -361,9 +372,6 @@ export const TailscaleRouteRow: React.FC = () => {
             <p className="flex items-center gap-2 typography-meta text-muted-foreground" role="status">
               <Icon name="loader-4" className="h-3.5 w-3.5 animate-spin" aria-hidden />
               {'Setting up…'}
-              {presentation?.showStartingNote ? (
-                <span>{'First-time public addresses can take up to ~10 minutes.'}</span>
-              ) : null}
             </p>
           ) : null}
 

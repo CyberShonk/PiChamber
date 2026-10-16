@@ -206,7 +206,7 @@ const TEST_SERVER_ID = 'test-server-id';
 const matchingFetchImpl = async () => ({ ok: true, status: 200, json: async () => ({ serverId: TEST_SERVER_ID }) });
 
 /** In-memory fs + scripted command runner for lifecycle tests. */
-const createHarness = ({ handlers, port = 3000, uiPassword = 'secret' } = {}) => {
+const createHarness = ({ handlers, port = 3000, uiPassword = 'secret', resolvePublicDns } = {}) => {
   const files = new Map();
   const calls = [];
   const fsPromises = {
@@ -257,6 +257,9 @@ const createHarness = ({ handlers, port = 3000, uiPassword = 'secret' } = {}) =>
     // Fail closed by default: no existing test exercises the tailnet path,
     // and the real `tailscale nc` implementation must never spawn here.
     tailnetHealthFetch: async () => ({ ok: false, status: null, body: null, error: 'disabled-in-test' }),
+    // Never touch real DNS in tests: default to not-found (keeps existing
+    // tests unchanged); public-DNS tests inject their own sequence.
+    resolvePublicDns: resolvePublicDns || (async () => 'not-found'),
     logWarn: () => {},
   });
   return { service, calls, files, fsPromises };
@@ -1155,6 +1158,7 @@ describe('tailscale crash-restart repoint (record-owned mapping on a new port)',
       fsPromises,
       getServerId: async () => TEST_SERVER_ID,
       fetchImpl: matchingFetchImpl,
+      resolvePublicDns: async () => 'not-found',
       logWarn: () => {},
     });
     await service.loadConfig();
@@ -1905,6 +1909,7 @@ describe('tailscale tailnet-path probe fallback (nc)', () => {
         fallbackCalls.push(args);
         return tailnetHealthFetch(args);
       },
+      resolvePublicDns: async () => 'not-found',
       logWarn: () => {},
     });
     return { service, fallbackCalls };
@@ -2076,5 +2081,317 @@ describe('tailscale nc health fetch', () => {
     expect(children[0].kill).toHaveBeenCalledWith('SIGKILL');
     children[0].stdout.destroy();
     children[0].stdin.destroy();
+  });
+});
+
+describe('tailscale public DNS readiness (funnel)', () => {
+  const memFsFor = () => {
+    const memFs = new Map();
+    return {
+      memFs,
+      fsPromises: {
+        readFile: async (p) => {
+          if (!memFs.has(p)) { const e = new Error('x'); e.code = 'ENOENT'; throw e; }
+          return memFs.get(p);
+        },
+        writeFile: async (p, c) => { memFs.set(p, String(c)); },
+        mkdir: async () => {},
+        rename: async (a, b) => { memFs.set(b, memFs.get(a)); memFs.delete(a); },
+        unlink: async (p) => { memFs.delete(p); },
+      },
+    };
+  };
+  const flush = async (rounds = 5) => {
+    for (let i = 0; i < rounds; i += 1) {
+      await Promise.resolve();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+  };
+  const createPublicService = ({ dnsImpl, mode = 'public' } = {}) => {
+    const { fsPromises } = memFsFor();
+    const dnsCalls = [];
+    const resolvePublicDns = async (hostname) => {
+      dnsCalls.push(hostname);
+      return dnsImpl(hostname);
+    };
+    const service = createTailscaleService({
+      existsSync: () => false,
+      dataDir: '/data',
+      getPort: () => 3000,
+      isUiAuthEnabled: () => true,
+      isUnsafeUnauthenticatedLanAllowed: () => false,
+      runner: {
+        runTailscale: async (args) => {
+          const sub = mode === 'public' ? 'funnel' : 'serve';
+          if (args.includes(sub) && args.includes('status')) {
+            return { ok: true, code: 0, stdout: JSON.stringify({ Web: {} }), stderr: '', spawnError: null, timedOut: false };
+          }
+          if (args.includes('serve') && args.includes('status')) {
+            return { ok: true, code: 0, stdout: JSON.stringify({ Web: {} }), stderr: '', spawnError: null, timedOut: false };
+          }
+          if (args.includes('funnel') && args.includes('status')) {
+            return { ok: true, code: 0, stdout: JSON.stringify({ Web: {} }), stderr: '', spawnError: null, timedOut: false };
+          }
+          return { ok: true, code: 0, stdout: STATUS_JSON, stderr: '', spawnError: null, timedOut: false };
+        },
+      },
+      fsPromises,
+      getServerId: async () => TEST_SERVER_ID,
+      fetchImpl: matchingFetchImpl,
+      resolvePublicDns,
+      logWarn: () => {},
+    });
+    return { service, dnsCalls };
+  };
+
+  it('public active pending -> ready via interval with fake timers, then stops polling', async () => {
+    vi.useFakeTimers();
+    let dnsResult = 'not-found';
+    const { service, dnsCalls } = createPublicService({ dnsImpl: async () => dnsResult });
+    try {
+      await service.loadConfig();
+      const result = await service.setConfig({ enabled: true, mode: 'public', httpsPort: 443 });
+      expect(result.state).toBe('active');
+      // Immediate check runs async: flush it.
+      await vi.advanceTimersByTimeAsync(0);
+      expect(service.getStatus().publicDns).toBe('pending');
+      expect(dnsCalls.length).toBe(1);
+      // Still not found after one interval.
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(service.getStatus().publicDns).toBe('pending');
+      expect(dnsCalls.length).toBe(2);
+      // Record appears: next interval flips to ready and stops.
+      dnsResult = 'found';
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(service.getStatus().publicDns).toBe('ready');
+      const callsAtReady = dnsCalls.length;
+      await vi.advanceTimersByTimeAsync(10 * 60_000);
+      expect(dnsCalls.length).toBe(callsAtReady);
+      expect(service.getStatus().publicDns).toBe('ready');
+    } finally {
+      service.dispose();
+      vi.useRealTimers();
+    }
+  });
+
+  it('error maps to unknown and recovers to pending then ready', async () => {
+    vi.useFakeTimers();
+    let dnsResult = 'error';
+    const { service, dnsCalls } = createPublicService({ dnsImpl: async () => dnsResult });
+    try {
+      await service.loadConfig();
+      await service.setConfig({ enabled: true, mode: 'public', httpsPort: 443 });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(service.getStatus().publicDns).toBe('unknown');
+      dnsResult = 'not-found';
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(service.getStatus().publicDns).toBe('pending');
+      dnsResult = 'found';
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(service.getStatus().publicDns).toBe('ready');
+      expect(dnsCalls.length).toBeGreaterThanOrEqual(3);
+    } finally {
+      service.dispose();
+      vi.useRealTimers();
+    }
+  });
+
+  it('private active never queries DNS and reports null', async () => {
+    const { service, dnsCalls } = createPublicService({ dnsImpl: async () => 'found', mode: 'private' });
+    try {
+      await service.loadConfig();
+      const result = await service.setConfig({ enabled: true, mode: 'private', httpsPort: 443 });
+      expect(result.state).toBe('active');
+      expect(result.publicDns).toBeNull();
+      await flush();
+      expect(dnsCalls).toEqual([]);
+      expect(service.getStatus().publicDns).toBeNull();
+    } finally {
+      service.dispose();
+    }
+  });
+
+  it('non-active states report null (off)', async () => {
+    const { service } = createHarness({
+      handlers: {
+        'status --json': { ok: true, code: 0, stdout: STATUS_JSON, stderr: '', spawnError: null, timedOut: false },
+      },
+    });
+    try {
+      await service.loadConfig();
+      expect(service.getStatus().publicDns).toBeNull();
+      const off = await service.reconcile();
+      expect(off.state).toBe('off');
+      expect(off.publicDns).toBeNull();
+    } finally {
+      service.dispose();
+    }
+  });
+
+  it('mode switch public->private stops the watcher and reports null', async () => {
+    vi.useFakeTimers();
+    let dnsResult = 'not-found';
+    const { service, dnsCalls } = createPublicService({ dnsImpl: async () => dnsResult });
+    try {
+      await service.loadConfig();
+      await service.setConfig({ enabled: true, mode: 'public', httpsPort: 443 });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(service.getStatus().publicDns).toBe('pending');
+      const callsBefore = dnsCalls.length;
+      await service.setConfig({ enabled: true, mode: 'private', httpsPort: 443 });
+      expect(service.getStatus().publicDns).toBeNull();
+      await vi.advanceTimersByTimeAsync(5 * 60_000);
+      expect(dnsCalls.length).toBe(callsBefore);
+      expect(service.getStatus().publicDns).toBeNull();
+    } finally {
+      service.dispose();
+      vi.useRealTimers();
+    }
+  });
+
+  it('disable stops the watcher; a stale resolve never writes after the generation bump', async () => {
+    let releaseDns = null;
+    const gate = new Promise((resolve) => { releaseDns = resolve; });
+    const { fsPromises } = memFsFor();
+    const dnsCalls = [];
+    const service = createTailscaleService({
+      existsSync: () => false,
+      dataDir: '/data',
+      getPort: () => 3000,
+      isUiAuthEnabled: () => true,
+      isUnsafeUnauthenticatedLanAllowed: () => false,
+      runner: {
+        runTailscale: async (args) => {
+          if (args.includes('funnel') && args.includes('status')) {
+            return { ok: true, code: 0, stdout: JSON.stringify({ Web: {} }), stderr: '', spawnError: null, timedOut: false };
+          }
+          if (args.includes('serve') && args.includes('status')) {
+            return { ok: true, code: 0, stdout: JSON.stringify({ Web: {} }), stderr: '', spawnError: null, timedOut: false };
+          }
+          return { ok: true, code: 0, stdout: STATUS_JSON, stderr: '', spawnError: null, timedOut: false };
+        },
+      },
+      fsPromises,
+      getServerId: async () => TEST_SERVER_ID,
+      fetchImpl: matchingFetchImpl,
+      resolvePublicDns: async (hostname) => {
+        dnsCalls.push(hostname);
+        await gate;
+        return 'found';
+      },
+      logWarn: () => {},
+    });
+    try {
+      await service.loadConfig();
+      const active = await service.setConfig({ enabled: true, mode: 'public', httpsPort: 443 });
+      expect(active.state).toBe('active');
+      expect(active.publicDns).toBe('pending');
+      // Bump the generation while the immediate DNS check is in flight.
+      const disabled = await service.setConfig({ enabled: false });
+      expect(disabled.state).toBe('off');
+      expect(disabled.publicDns).toBeNull();
+      // Late DNS success must not resurrect publicDns.
+      releaseDns();
+      await flush(10);
+      expect(service.getStatus().state).toBe('off');
+      expect(service.getStatus().publicDns).toBeNull();
+    } finally {
+      try { releaseDns?.(); } catch {}
+      service.dispose();
+    }
+  });
+
+  it('shutdown stops the watcher: no further resolver calls', async () => {
+    vi.useFakeTimers();
+    let dnsResult = 'not-found';
+    const { service, dnsCalls } = createPublicService({ dnsImpl: async () => dnsResult });
+    try {
+      await service.loadConfig();
+      await service.setConfig({ enabled: true, mode: 'public', httpsPort: 443 });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(service.getStatus().publicDns).toBe('pending');
+      const callsBefore = dnsCalls.length;
+      await service.shutdown();
+      await vi.advanceTimersByTimeAsync(5 * 60_000);
+      expect(dnsCalls.length).toBe(callsBefore);
+    } finally {
+      service.dispose();
+      vi.useRealTimers();
+    }
+  });
+
+  it('interval backs off to 2 minutes after 20 minutes', async () => {
+    vi.useFakeTimers();
+    const { service, dnsCalls } = createPublicService({ dnsImpl: async () => 'not-found' });
+    try {
+      await service.loadConfig();
+      await service.setConfig({ enabled: true, mode: 'public', httpsPort: 443 });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(dnsCalls.length).toBe(1);
+      // 30s cadence for the first 20 minutes: 40 intervals reach t=20min.
+      for (let i = 0; i < 40; i += 1) {
+        await vi.advanceTimersByTimeAsync(30_000);
+      }
+      const callsAt20min = dnsCalls.length;
+      expect(callsAt20min).toBe(1 + 40);
+      // After 20 minutes the cadence is 2 minutes: +30s is not enough.
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(dnsCalls.length).toBe(callsAt20min);
+      await vi.advanceTimersByTimeAsync(90_000);
+      expect(dnsCalls.length).toBe(callsAt20min + 1);
+    } finally {
+      service.dispose();
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('public-dns resolver mapping', () => {
+  it('maps answers, NXDOMAIN/NODATA, and failures without touching the network', async () => {
+    const { createResolvePublicDns } = await import('./public-dns.js');
+    const scripted = ({ v4, v6 }) => {
+      const calls = [];
+      const resolve = createResolvePublicDns({
+        createResolver: () => ({
+          setServers: () => {},
+          cancel: () => {},
+          resolve4: async () => {
+            calls.push('v4');
+            if (v4 instanceof Error) throw v4;
+            return v4;
+          },
+          resolve6: async () => {
+            calls.push('v6');
+            if (v6 instanceof Error) throw v6;
+            return v6;
+          },
+        }),
+      });
+      return { resolve, calls };
+    };
+    const notFound4 = Object.assign(new Error('queryA ENOTFOUND m.ts.net'), { code: 'ENOTFOUND' });
+    const noData6 = Object.assign(new Error('queryAaaa ENODATA m.ts.net'), { code: 'ENODATA' });
+    // Any address -> found.
+    {
+      const { resolve: resolveFound } = scripted({ v4: ['93.184.216.34'], v6: noData6 });
+      expect(await resolveFound('m.ts.net')).toBe('found');
+    }
+    // All NXDOMAIN/NODATA -> not-found.
+    {
+      const { resolve: resolveNotFound } = scripted({ v4: notFound4, v6: noData6 });
+      expect(await resolveNotFound('m.ts.net')).toBe('not-found');
+    }
+    // Timeout/refused -> error.
+    {
+      const timeout = Object.assign(new Error('queryA ETIMEOUT m.ts.net'), { code: 'ETIMEOUT' });
+      const { resolve: resolveError } = scripted({ v4: timeout, v6: noData6 });
+      expect(await resolveError('m.ts.net')).toBe('error');
+    }
+    // Never throws on bad input.
+    {
+      const { resolve: resolveBad } = scripted({ v4: ['1.1.1.1'], v6: ['::1'] });
+      expect(await resolveBad('')).toBe('error');
+      expect(await resolveBad(null)).toBe('error');
+    }
   });
 });

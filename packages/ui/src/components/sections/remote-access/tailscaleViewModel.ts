@@ -40,8 +40,8 @@ export interface TailscalePresentation {
   showApproval: boolean;
   showPermissionFix: boolean;
   showAuthCallout: boolean;
-  /** First-use public DNS can take minutes — say so while starting. */
-  showStartingNote: boolean;
+  /** Funnel (public) active only: live public-DNS readiness note; null when ready/missing/private. */
+  publicDnsNote: 'pending' | 'unknown' | null;
   headline: string | null;
 }
 
@@ -84,7 +84,7 @@ export const presentTailscaleStatus = (status: TailscaleStatus | null): Tailscal
       showApproval: false,
       showPermissionFix: false,
       showAuthCallout: false,
-      showStartingNote: false,
+      publicDnsNote: null,
       headline: 'Tailscale is not installed on this computer.',
     };
   }
@@ -100,7 +100,7 @@ export const presentTailscaleStatus = (status: TailscaleStatus | null): Tailscal
       showApproval: false,
       showPermissionFix: false,
       showAuthCallout: false,
-      showStartingNote: false,
+      publicDnsNote: null,
       headline: notRunning
         ? 'The Tailscale daemon is not running.'
         : 'Tailscale is installed but you are not signed in.',
@@ -119,7 +119,7 @@ export const presentTailscaleStatus = (status: TailscaleStatus | null): Tailscal
         showApproval: false,
         showPermissionFix: false,
         showAuthCallout: false,
-        showStartingNote: false,
+        publicDnsNote: null,
         headline: null,
       };
     case 'unavailable': {
@@ -134,7 +134,7 @@ export const presentTailscaleStatus = (status: TailscaleStatus | null): Tailscal
           showApproval: false,
           showPermissionFix: false,
           showAuthCallout: false,
-          showStartingNote: false,
+          publicDnsNote: null,
           headline: 'Tailscale is not installed on this computer.',
         };
       }
@@ -149,7 +149,7 @@ export const presentTailscaleStatus = (status: TailscaleStatus | null): Tailscal
           showApproval: false,
           showPermissionFix: false,
           showAuthCallout: false,
-          showStartingNote: false,
+          publicDnsNote: null,
           headline: status.errorCode === 'not_running'
             ? 'The Tailscale daemon is not running.'
             : 'Tailscale is installed but you are not signed in.',
@@ -165,7 +165,7 @@ export const presentTailscaleStatus = (status: TailscaleStatus | null): Tailscal
         showApproval: false,
         showPermissionFix: false,
         showAuthCallout: false,
-        showStartingNote: false,
+        publicDnsNote: null,
         headline: status.errorMessage,
       };
     }
@@ -180,7 +180,7 @@ export const presentTailscaleStatus = (status: TailscaleStatus | null): Tailscal
         showApproval: false,
         showPermissionFix: false,
         showAuthCallout: true,
-        showStartingNote: false,
+        publicDnsNote: null,
         headline: 'Tailscale needs a UI password before it can be enabled.',
       };
     case 'starting':
@@ -194,7 +194,7 @@ export const presentTailscaleStatus = (status: TailscaleStatus | null): Tailscal
         showApproval: false,
         showPermissionFix: false,
         showAuthCallout: false,
-        showStartingNote: status.config.mode === 'public',
+        publicDnsNote: null,
         headline: null,
       };
     case 'needs-approval':
@@ -208,10 +208,14 @@ export const presentTailscaleStatus = (status: TailscaleStatus | null): Tailscal
         showApproval: true,
         showPermissionFix: false,
         showAuthCallout: false,
-        showStartingNote: false,
+        publicDnsNote: null,
         headline: 'Your tailnet admin must approve this route.',
       };
-    case 'active':
+    case 'active': {
+      const publicDnsNote = status.config.mode === 'public'
+        && (status.publicDns === 'pending' || status.publicDns === 'unknown')
+        ? status.publicDns
+        : null;
       return {
         pill: status.config.mode === 'public' ? 'On · Public' : 'On · Private',
         tone: status.config.mode === 'public' ? 'warning' : 'success',
@@ -222,9 +226,10 @@ export const presentTailscaleStatus = (status: TailscaleStatus | null): Tailscal
         showApproval: false,
         showPermissionFix: false,
         showAuthCallout: false,
-        showStartingNote: false,
+        publicDnsNote,
         headline: null,
       };
+    }
     case 'conflict':
       return {
         pill: 'Port in use',
@@ -236,7 +241,7 @@ export const presentTailscaleStatus = (status: TailscaleStatus | null): Tailscal
         showApproval: false,
         showPermissionFix: false,
         showAuthCallout: false,
-        showStartingNote: false,
+        publicDnsNote: null,
         headline: status.errorMessage ?? 'Another destination already uses this port in Tailscale.',
       };
     case 'error': {
@@ -251,7 +256,7 @@ export const presentTailscaleStatus = (status: TailscaleStatus | null): Tailscal
           showApproval: false,
           showPermissionFix: false,
           showAuthCallout: false,
-          showStartingNote: false,
+          publicDnsNote: null,
           // The row renders its Try again button for every non-permission
           // error state; this headline is the readable copy for it.
           headline: status.errorMessage ?? 'Could not read the current Tailscale status, so nothing was changed. Try again.',
@@ -268,7 +273,7 @@ export const presentTailscaleStatus = (status: TailscaleStatus | null): Tailscal
           showApproval: false,
           showPermissionFix: true,
           showAuthCallout: false,
-          showStartingNote: false,
+          publicDnsNote: null,
           headline: status.errorMessage ?? 'Tailscale denied the serve configuration.',
         };
       }
@@ -282,7 +287,7 @@ export const presentTailscaleStatus = (status: TailscaleStatus | null): Tailscal
         showApproval: false,
         showPermissionFix: false,
         showAuthCallout: false,
-        showStartingNote: false,
+        publicDnsNote: null,
         headline: status.errorMessage ?? 'Something went wrong.',
       };
     }

@@ -47,14 +47,24 @@ import {
   validateTailscaleConfig,
 } from './tailscale.js';
 import { createTailscaleNcHealthFetch } from './nc-probe.js';
+import { defaultResolvePublicDns } from './public-dns.js';
 
 const TAILSCALE_CONFIG_FILE = 'tailscale-config.json';
 const TAILSCALE_MAPPING_FILE = 'tailscale-mapping.json';
 
-// Funnel public DNS can take minutes on first use: keep re-probing with
-// backoff while `starting`, up to this budget, without blocking anything else.
+// Funnel public DNS can take minutes on first use: the mapping already
+// fronts this server (probe-before-advertise passed), so `active` is
+// reported immediately and public DNS readiness is tracked separately via
+// `publicDns` (see the public-DNS watcher below).
 const PROBE_RETRY_BUDGET_MS = 10 * 60 * 1000;
 const PROBE_RETRY_DELAYS_MS = [5_000, 10_000, 30_000, 60_000, 60_000, 60_000, 60_000, 60_000, 60_000, 60_000];
+
+// Public-DNS watcher cadence: check immediately on reaching active (public),
+// then every 30s for the first 20 minutes, then every 2 minutes, until the
+// public record is found.
+const PUBLIC_DNS_FAST_INTERVAL_MS = 30_000;
+const PUBLIC_DNS_SLOW_INTERVAL_MS = 2 * 60_000;
+const PUBLIC_DNS_FAST_WINDOW_MS = 20 * 60_000;
 
 // Config/retry HTTP responses wait for reconcile only up to this grace, then
 // return the current (possibly transitional) status while reconcile
@@ -188,6 +198,11 @@ export const createTailscaleService = ({
   env = process.env,
   logWarn = (message) => console.warn(message),
   configResponseGraceMs = CONFIG_RESPONSE_GRACE_MS,
+  // Public DNS readiness for Funnel (public) mode: async
+  // `(hostname) => 'found' | 'not-found' | 'error'`. Never throws.
+  // Defaults to the public-resolver check in `public-dns.js`; tests inject
+  // a fake so no real DNS is touched.
+  resolvePublicDns = defaultResolvePublicDns,
 } = {}) => {
   const effectiveRunner = runner || createDefaultTailscaleRunner({ platform });
   const executable = resolveTailscaleExecutable({ platform, env, existsSync });
@@ -211,6 +226,12 @@ export const createTailscaleService = ({
   };
   let generation = 0;
   let probeTimer = null;
+  // Public-DNS watcher state (Funnel/public `active` only). `publicDnsState`
+  // is exposed via `getStatus()` gated by mode+state, so non-active states
+  // always observe `null` without touching every `setRuntime` call site.
+  let publicDnsTimer = null;
+  let publicDnsState = null;
+  let publicDnsStartedAt = 0;
   // Serializes reconciles: each reconcile starts only after the previous
   // one settles, so a superseded Off can never remove a mapping after the
   // newer Private reconcile verified it. The tail swallows rejection so one
@@ -224,7 +245,8 @@ export const createTailscaleService = ({
   // mapping that is already written is quit-risky, like an active one.
   let mappingRecordPresent = false;
 
-  // Every generation bump cancels the in-flight apply first.
+  // Every generation bump cancels the in-flight apply first, and stops the
+  // public-DNS watcher (same generation tie as `probeTimer`).
   const bumpGeneration = () => {
     generation += 1;
     try {
@@ -232,6 +254,10 @@ export const createTailscaleService = ({
     } catch {
     }
     applyAbort = null;
+    if (publicDnsTimer) {
+      clearTimeout(publicDnsTimer);
+      publicDnsTimer = null;
+    }
   };
 
   const clearProbeTimer = () => {
@@ -239,6 +265,79 @@ export const createTailscaleService = ({
       clearTimeout(probeTimer);
       probeTimer = null;
     }
+  };
+
+  const clearPublicDnsTimer = () => {
+    if (publicDnsTimer) {
+      clearTimeout(publicDnsTimer);
+      publicDnsTimer = null;
+    }
+  };
+
+  const stopPublicDnsWatcher = () => {
+    clearPublicDnsTimer();
+    publicDnsState = null;
+    publicDnsStartedAt = 0;
+  };
+
+  const schedulePublicDnsCheck = (myGeneration, hostname) => {
+    clearPublicDnsTimer();
+    if (myGeneration !== generation) return;
+    if (publicDnsState === 'ready') return;
+    const elapsed = Date.now() - publicDnsStartedAt;
+    const delay = elapsed < PUBLIC_DNS_FAST_WINDOW_MS
+      ? PUBLIC_DNS_FAST_INTERVAL_MS
+      : PUBLIC_DNS_SLOW_INTERVAL_MS;
+    publicDnsTimer = setTimeout(async () => {
+      publicDnsTimer = null;
+      if (myGeneration !== generation) return;
+      await runPublicDnsCheck(myGeneration, hostname);
+    }, delay);
+    if (publicDnsTimer?.unref) publicDnsTimer.unref();
+  };
+
+  const runPublicDnsCheck = async (myGeneration, hostname) => {
+    if (myGeneration !== generation) return;
+    let result = 'error';
+    try {
+      const value = await resolvePublicDns(hostname);
+      if (value === 'found' || value === 'not-found' || value === 'error') {
+        result = value;
+      } else {
+        result = 'error';
+      }
+    } catch {
+      result = 'error';
+    }
+    // A stale result after a generation bump must never write status.
+    if (myGeneration !== generation) return;
+    // Only the live public/active mapping owns this watcher: a config
+    // change within the same generation window must not flip DNS state.
+    if (config.mode !== 'public' || status.state !== 'active') return;
+    if (result === 'found') {
+      publicDnsState = 'ready';
+      clearPublicDnsTimer();
+      return;
+    }
+    publicDnsState = result === 'error' ? 'unknown' : 'pending';
+    schedulePublicDnsCheck(myGeneration, hostname);
+  };
+
+  const startPublicDnsWatcher = (myGeneration, magicDnsName) => {
+    clearPublicDnsTimer();
+    const hostname = typeof magicDnsName === 'string'
+      ? magicDnsName.trim().replace(/\.$/, '')
+      : '';
+    if (!hostname) {
+      publicDnsState = null;
+      publicDnsStartedAt = 0;
+      return;
+    }
+    publicDnsState = 'pending';
+    publicDnsStartedAt = Date.now();
+    // Check immediately, then on the interval cadence. The async check
+    // schedules its own follow-up, so no timer is armed here.
+    void runPublicDnsCheck(myGeneration, hostname);
   };
 
   const setRuntime = (patch) => {
@@ -533,6 +632,11 @@ export const createTailscaleService = ({
       if (myGeneration !== generation) return;
       if (ok) {
         setRuntime({ state: 'active', url, approvalUrl: null, errorCode: null, errorMessage: null });
+        if (config.mode === 'public') {
+          startPublicDnsWatcher(myGeneration, status.magicDnsName);
+        } else {
+          stopPublicDnsWatcher();
+        }
         return;
       }
       scheduleProbeRetries(myGeneration, url, rest, elapsed + delay);
@@ -617,6 +721,7 @@ export const createTailscaleService = ({
    */
   const runReconcile = async (myGeneration) => {
     clearProbeTimer();
+    stopPublicDnsWatcher();
     setRuntime({ approvalUrl: null, errorCode: null, errorMessage: null });
     const boundPort = getPort();
     if (!Number.isInteger(boundPort) || boundPort <= 0) {
@@ -760,6 +865,11 @@ export const createTailscaleService = ({
         if (myGeneration !== generation) return getStatus();
         if (ok) {
           setRuntime({ state: 'active', url, approvalUrl: null });
+          if (config.mode === 'public') {
+            startPublicDnsWatcher(myGeneration, hostInfo.magicDnsName);
+          } else {
+            stopPublicDnsWatcher();
+          }
         } else {
           setRuntime({ state: 'starting', url: null });
           scheduleProbeRetries(myGeneration, url, PROBE_RETRY_DELAYS_MS);
@@ -780,6 +890,11 @@ export const createTailscaleService = ({
     if (myGeneration !== generation) return getStatus();
     if (ok) {
       setRuntime({ state: 'active', url, approvalUrl: null });
+      if (config.mode === 'public') {
+        startPublicDnsWatcher(myGeneration, hostInfo.magicDnsName);
+      } else {
+        stopPublicDnsWatcher();
+      }
     } else {
       // First-use HTTPS/DNS provisioning can take minutes: report starting
       // and keep re-probing in the background with backoff.
@@ -811,6 +926,12 @@ export const createTailscaleService = ({
       config: { ...config },
       state: status.state,
       url: status.state === 'active' ? status.url : null,
+      // Public DNS readiness (Funnel/public `active` only): 'pending' while
+      // the public record is not yet visible, 'ready' once found, 'unknown'
+      // when the last check failed; null otherwise.
+      publicDns: config.mode === 'public' && status.state === 'active'
+        ? (publicDnsState ?? 'pending')
+        : null,
       approvalUrl: status.approvalUrl,
       errorCode: status.errorCode,
       errorMessage: status.errorMessage,
@@ -900,6 +1021,7 @@ export const createTailscaleService = ({
   const shutdown = async () => {
     bumpGeneration();
     clearProbeTimer();
+    clearPublicDnsTimer();
     try {
       // Verify ownership before removing: a failed status query leaves the
       // mapping (and the record) untouched so the next start's stale
@@ -937,6 +1059,7 @@ export const createTailscaleService = ({
   const dispose = () => {
     bumpGeneration();
     clearProbeTimer();
+    clearPublicDnsTimer();
   };
 
   const getPairingCandidate = () => {
