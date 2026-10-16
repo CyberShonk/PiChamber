@@ -33,6 +33,23 @@ export const getActiveRelayDescriptor = (): Omit<RelayRuntimeDescriptor, 'grant'
 
 export const isRelayModeActive = (): boolean => activeTunnel !== null;
 
+// Render-time readers (e.g. the mobile server list's Direct/Relay label)
+// subscribe here so a tunnel opening or closing re-renders them instead of
+// leaving a stale snapshot. Notified only when relay mode flips.
+const relayModeListeners = new Set<() => void>();
+
+export const subscribeRelayMode = (listener: () => void): (() => void) => {
+  relayModeListeners.add(listener);
+  return () => {
+    relayModeListeners.delete(listener);
+  };
+};
+
+const notifyRelayModeChange = (wasActive: boolean): void => {
+  if (wasActive === isRelayModeActive()) return;
+  for (const listener of [...relayModeListeners]) listener();
+};
+
 /**
  * Activates relay mode with the given descriptor, replacing any previous tunnel.
  * Reuses the existing client when the descriptor is unchanged so a redundant
@@ -42,9 +59,11 @@ export const activateRelayTunnel = (descriptor: RelayRuntimeDescriptor): RelayTu
   if (activeTunnel && activeDescriptor && descriptorsEqual(activeDescriptor, descriptor)) {
     return activeTunnel;
   }
+  const wasActive = isRelayModeActive();
   activeTunnel?.close();
   activeDescriptor = descriptor;
   activeTunnel = createRelayTunnelClient(descriptor);
+  notifyRelayModeChange(wasActive);
   return activeTunnel;
 };
 
@@ -56,13 +75,17 @@ export const activateRelayTunnel = (descriptor: RelayRuntimeDescriptor): RelayTu
  */
 export const adoptRelayTunnel = (descriptor: RelayRuntimeDescriptor, client: RelayTunnelClient): void => {
   if (activeTunnel === client) return;
+  const wasActive = isRelayModeActive();
   activeTunnel?.close();
   activeDescriptor = descriptor;
   activeTunnel = client;
+  notifyRelayModeChange(wasActive);
 };
 
 export const deactivateRelayTunnel = (): void => {
+  const wasActive = isRelayModeActive();
   activeTunnel?.close();
   activeTunnel = null;
   activeDescriptor = null;
+  notifyRelayModeChange(wasActive);
 };

@@ -27,7 +27,7 @@ import { useMobileConnection, type MobileConnectInput } from '../mobileConnectio
 import { readConnections } from './mobileConnectionStorage';
 import type { MobileSavedConnection } from './mobileConnectionTypes';
 import { isActiveRuntimeConnection } from './mobileConnectionTransport';
-import { isRelayModeActive } from '@/lib/relay/runtime-tunnel';
+import { isRelayModeActive, subscribeRelayMode } from '@/lib/relay/runtime-tunnel';
 import { sharedProbeDeduper } from '@/lib/servers/probeDedupe';
 import {
   mobileConnectionToServerListItem,
@@ -153,7 +153,7 @@ export function useMobileServers(options: UseMobileServersOptions): UseMobileSer
   const conn = useMobileConnection(onConnected);
   const uncertain = useMobileConnectionUncertain();
   const [connectingId, setConnectingId] = React.useState<string | null>(null);
-  const relayActive = isRelayModeActive();
+  const relayActive = React.useSyncExternalStore(subscribeRelayMode, isRelayModeActive, isRelayModeActive);
   const deletedRef = React.useRef(onActiveConnectionDeleted);
   deletedRef.current = onActiveConnectionDeleted;
   const connRef = React.useRef(conn);
