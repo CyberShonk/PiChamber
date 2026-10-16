@@ -24,9 +24,18 @@ Ephemeral Cloudflare quick tunnels were removed; this module is unaffected.
   approval-URL extraction, permission-denied detection. No I/O.
 - `service.js`: `createTailscaleService` — persisted config, lifecycle
   (apply on start, remove on stop, reconcile on change), crash-safe mapping
-  record, probe-before-advertise, approval wait, and the status model. All
+  record, probe-before-advertise (direct fetch plus the `tailscale nc`
+  tailnet-path fallback), approval wait, and the status model. All
   process execution goes through the injected `runner` (argument arrays, no
-  shell, bounded timeouts); tests inject a fake.
+  shell, bounded timeouts), and the tailnet-path probe goes through the
+  injected `tailnetHealthFetch` (built from the resolved executable by
+  default); tests inject fakes for both.
+- `nc-probe.js`: `createTailscaleNcHealthFetch` — the tailnet-path fallback
+  for the self-probe. Spawns `tailscale nc <host> <port>`, runs a real TLS
+  handshake over the child's stdio, and performs the same credential-free
+  `GET /health` check Node-side (chunked encoding included) with
+  certificate verification ON. Never throws: every failure resolves to
+  `{ ok: false, ... }`.
 - `routes.js`: `registerTailscaleRoutes` — thin authenticated HTTP API
   following the `/api/pichamber/tunnel/*` conventions.
 - `tailscale.test.js`: unit tests with an injected fake runner.
@@ -208,9 +217,21 @@ reports this server's `serverId` — the stable relay signing-key identity
 address BEFORE sending a bearer token). `settings.json` is portable (copied
 between hosts) and must never hold host identity. The probe compares against
 the injected `getServerId` (a null/throwing id fails the probe, so the URL
-stays `starting` and is never advertised). First-time
-Funnel DNS can take minutes: `starting` keeps re-probing with backoff for up
-to ~10 minutes.
+stays `starting` and is never advertised). First-use
+Funnel DNS can take minutes: `starting` keeps re-probing with backoff for
+up to ~10 minutes.
+
+When the direct fetch THROWS without an HTTP response (DNS/connect/abort —
+typical on hosts running tailscaled with `--tun=userspace-networking` or
+whose resolver does not use MagicDNS, so the host cannot reach its own ts.net
+name), the same check is retried over the tailnet path via `tailscale nc`
+(`nc-probe.js`, same timeout, credential-free, TLS verification ON). The
+fallback must pass the identical gate: 2xx, JSON body, `serverId` match. An
+HTTP response from the direct path — non-OK or mismatched serverId — never
+triggers the fallback: something answered, so the tailnet path must not
+override it. For public (funnel) mode the fallback still verifies over the
+tailnet path, not the public internet path — it proves the mapping fronts
+this server, not that the public URL is reachable.
 
 Error codes: `auth_required` | `not_installed` | `not_running` |
 `not_logged_in` | `permission_denied` (`sudo tailscale set --operator=$USER`)
