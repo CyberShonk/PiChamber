@@ -71,8 +71,9 @@ const describeActionError = (message: string | null, code: string | null): strin
  * Tailscale route row: Off / Private / Public segmented control plus
  * actionable UI for every status-model state.
  *
- * The mode picker is a radiogroup (arrow-key navigable) so the Public
- * option stays reachable by keyboard and assistive tech. Off is always
+ * The mode picker is a radiogroup (arrow keys move focus; Space/Enter
+ * activates) so the Public option stays reachable by keyboard and
+ * assistive tech without arrowing through a live config change. Off is always
  * enabled once a status is known; Private/Public disable individually for
  * missing prerequisites or the per-mode server auth gate.
  */
@@ -124,19 +125,22 @@ export const TailscaleRouteRow: React.FC = () => {
     el?.focus();
   }, []);
 
+  // Arrow keys only move focus. Each mode change reconfigures the server's
+  // Tailscale exposure, so activation stays an explicit Space/Enter/click.
   const handleGroupKeyDown = React.useCallback((event: React.KeyboardEvent) => {
     if (event.key !== 'ArrowRight' && event.key !== 'ArrowLeft' && event.key !== 'ArrowUp' && event.key !== 'ArrowDown') {
       return;
     }
     event.preventDefault();
     const order: TailscaleModeValue[] = ['off', 'private', 'public'];
-    const currentIndex = order.indexOf(activeMode);
+    const focusedMode = (event.target as HTMLElement | null)?.closest<HTMLElement>('[data-mode]')?.dataset.mode;
+    const fromMode = order.includes(focusedMode as TailscaleModeValue) ? focusedMode as TailscaleModeValue : activeMode;
+    const currentIndex = order.indexOf(fromMode);
     const direction = event.key === 'ArrowRight' || event.key === 'ArrowDown' ? 1 : -1;
     for (let step = 1; step <= order.length; step += 1) {
       const next = order[(currentIndex + direction * step + order.length) % order.length] as TailscaleModeValue;
       if (!isOptionDisabled(next)) {
         focusOption(next);
-        tailscale.setMode(next);
         return;
       }
     }
