@@ -372,6 +372,15 @@ function createConnectUrlCommand({ serveCommand }) {
 
     if (isQuietMode(options)) {
       process.stdout.write(`${connectUrl}\n`);
+      // Quiet stdout stays link-only so scripts capturing it do not break;
+      // surface a non-active Tailscale outcome on stderr instead.
+      if (options.tailscale === true && tailscale && tailscale.state !== 'active') {
+        if (tailscale.state === 'needs-approval' && tailscale.approvalUrl) {
+          process.stderr.write(`[TAILSCALE_APPROVAL] Approve Tailscale access: ${tailscale.approvalUrl}\n`);
+        } else {
+          process.stderr.write(`[TAILSCALE_NOT_ACTIVE] Tailscale state is ${tailscale.state ?? 'unknown'}${tailscale.errorMessage ? `: ${tailscale.errorMessage}` : ''}.\n`);
+        }
+      }
       return;
     }
 

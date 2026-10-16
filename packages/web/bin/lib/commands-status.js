@@ -99,7 +99,7 @@ async function statusCommand(options = {}) {
 
     for (const instance of instances) {
       const tailscaleSuffix = instance.tailscale?.state && instance.tailscale.state !== 'off'
-        ? ` tailscale:${instance.tailscale.state}${instance.tailscale.url ? `:${instance.tailscale.url}` : ''}`
+        ? ` tailscale:${instance.tailscale.state}${instance.tailscale.url ? ` tailscale-url:${instance.tailscale.url}` : ''}`
         : '';
       process.stdout.write(
         `port ${instance.port} mode:${instance.launchMode || 'n/a'} pass:${toPasswordProtectionLabel(instance.passwordProtected)}${tailscaleSuffix}\n`
