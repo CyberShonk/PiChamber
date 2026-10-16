@@ -1,15 +1,43 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 
 import { PiSessionStore, type PendingInputTransition } from '@/apps/pi-session-store';
+import { piClient } from '@/lib/pi/client';
 import type { PiSessionEvent } from '@/lib/pi/protocol';
 
 interface StoreInternal {
   commitEvents: (events: readonly PiSessionEvent[]) => void;
   commitDeletion: (sessionId: string, directory?: string) => boolean;
   resetForEpochChange: () => Set<string>;
+  applyVerifiedEpochChange: (epoch: string) => Set<string> | null;
+  getState: () => { catalog: { byId: Map<string, { pendingInput?: unknown }> } };
+  stream: { dispose: () => void } | null;
+  state: { directory: string | null };
   /** Seeded so snapshot commits skip the transcript-restore network fetch. */
   restoringTranscriptById: Set<string>;
 }
+
+const originals = {
+  getSession: piClient.getSession.bind(piClient),
+  listPendingInput: piClient.listPendingInput.bind(piClient),
+};
+
+/** Keep snapshot-triggered transcript restores and recovery list fetches
+ *  offline: the daemon is not running under unit tests. */
+const stubClientForEpochTests = (streamEpoch: string): void => {
+  piClient.getSession = (async (id: string) => ({
+    session: { id, directory: '/repo', createdAt: 0, updatedAt: 0 },
+    lastSequence: 20,
+    messages: [],
+    isStreaming: false,
+    lifecycle: 'idle',
+    streamEpoch,
+  })) as unknown as typeof piClient.getSession;
+  piClient.listPendingInput = (async () => ({
+    sessions: [],
+    sequence: 0,
+    streamEpoch,
+  })) as unknown as typeof piClient.listPendingInput;
+};
 
 const asInternal = (store: PiSessionStore): StoreInternal => store as unknown as StoreInternal;
 
@@ -18,6 +46,7 @@ const inputEvent = (
   sequence: number,
   pending: { count: number; kind: 'input' | 'approval'; since: number } | null,
   serverNow?: number,
+  streamEpoch?: string,
 ): PiSessionEvent => ({
   protocolVersion: 1,
   kind: 'event',
@@ -25,6 +54,7 @@ const inputEvent = (
   sequence,
   sessionId,
   directory: '/repo',
+  ...(streamEpoch !== undefined ? { streamEpoch } : {}),
   payload: { pending, ...(serverNow !== undefined ? { serverNow } : {}) },
 });
 
@@ -32,6 +62,7 @@ const snapshotEvent = (
   sessionId: string,
   sequence: number,
   pending: { count: number; kind: 'input' | 'approval'; since: number } | null,
+  streamEpoch?: string,
 ): PiSessionEvent => ({
   protocolVersion: 1,
   kind: 'event',
@@ -39,6 +70,7 @@ const snapshotEvent = (
   sequence,
   sessionId,
   directory: '/repo',
+  ...(streamEpoch !== undefined ? { streamEpoch } : {}),
   payload: {
     snapshot: {
       lifecycle: 'idle',
@@ -52,6 +84,8 @@ describe('pending-input transitions', () => {
   afterEach(() => {
     for (const store of stores) store.dispose();
     stores = [];
+    piClient.getSession = originals.getSession;
+    piClient.listPendingInput = originals.listPendingInput;
   });
 
   const freshStore = (): { store: PiSessionStore; internal: StoreInternal; seen: PendingInputTransition[] } => {
@@ -140,13 +174,115 @@ describe('pending-input transitions', () => {
     expect(seen).toHaveLength(1);
   });
 
-  test('epoch resets never emit', () => {
+  test('verified epoch reset emits cleared for needing sessions and returns rows to unknown', () => {
+    const { store, internal, seen } = freshStore();
+    const pending = { count: 1, kind: 'input' as const, since: 1_000 };
+    // Stub row, never listed: learned from the live event alone.
+    internal.commitEvents([inputEvent('s-need', 1, pending)]);
+    expect(seen).toHaveLength(1);
+    // A row that resolved to known-clear before the reset.
+    internal.commitEvents([inputEvent('s-clear', 1, pending)]);
+    internal.commitEvents([inputEvent('s-clear', 2, null)]);
+    expect(seen).toHaveLength(3);
+    seen.length = 0;
+
+    internal.resetForEpochChange();
+
+    // Exactly one `cleared` for the needing session; null/unknown rows emit nothing.
+    expect(seen).toEqual([{ type: 'cleared', sessionId: 's-need', directory: '/repo', pending: null }]);
+    // The catalog contract holds: rows go to `undefined` (unknown), not `null`.
+    expect(store.getState().catalog.byId.get('s-need')?.pendingInput).toBeUndefined();
+    expect(store.getState().catalog.byId.get('s-clear')?.pendingInput).toBeUndefined();
+  });
+
+  test('epoch reset emits nothing for null or unknown rows', () => {
     const { internal, seen } = freshStore();
-    internal.commitEvents([inputEvent('s1', 1, { count: 1, kind: 'input', since: 1_000 })]);
+    // Authoritative empty for an unknown id materializes nothing.
+    internal.commitEvents([inputEvent('s-empty', 1, null)]);
+    expect(seen).toHaveLength(0);
+
+    internal.resetForEpochChange();
+    expect(seen).toHaveLength(0);
+  });
+
+  test('a new-epoch session.input emits opened again after a verified reset', () => {
+    const { internal, seen } = freshStore();
+    const pending = { count: 1, kind: 'input' as const, since: 1_000 };
+    internal.commitEvents([inputEvent('s1', 1, pending)]);
     expect(seen).toHaveLength(1);
 
     internal.resetForEpochChange();
+    expect(seen).toHaveLength(2);
+    expect(seen[1]).toEqual({ type: 'cleared', sessionId: 's1', directory: '/repo', pending: null });
+
+    // The reset dropped the ordering markers, so the next lifetime's open
+    // is not suppressed and its clear is not duplicated.
+    internal.commitEvents([inputEvent('s1', 2, { count: 1, kind: 'approval', since: 2_000 })]);
+    expect(seen).toHaveLength(3);
+    expect(seen[2]?.type).toBe('opened');
+    internal.commitEvents([inputEvent('s1', 3, null)]);
+    expect(seen).toHaveLength(4);
+    expect(seen[3]).toEqual({ type: 'cleared', sessionId: 's1', directory: '/repo', pending: null });
+  });
+
+  test('initial epoch establishment emits nothing and preserves pending', () => {
+    const { store, internal, seen } = freshStore();
+    const pending = { count: 1, kind: 'input' as const, since: 1_000 };
+    internal.commitEvents([inputEvent('s1', 1, pending)]);
     expect(seen).toHaveLength(1);
+
+    // First contact with the daemon lifetime establishes the epoch: no
+    // reset runs, so no `cleared` emits and pending survives.
+    internal.commitEvents([inputEvent('s-other', 1, pending, undefined, 'epoch-1')]);
+    expect(seen).toHaveLength(2);
+    expect(seen[1]?.type).toBe('opened');
+    expect(store.getState().catalog.byId.get('s1')?.pendingInput).toEqual(pending);
+  });
+
+  test('health-verified epoch change emits cleared through applyVerifiedEpochChange', () => {
+    const { store, internal, seen } = freshStore();
+    stubClientForEpochTests('epoch-2');
+    internal.stream = { dispose: () => undefined };
+    const pending = { count: 1, kind: 'input' as const, since: 1_000 };
+    // The stamped live event establishes the first epoch and opens the alert.
+    internal.commitEvents([inputEvent('s1', 1, pending, undefined, 'epoch-1')]);
+    expect(seen).toHaveLength(1);
+
+    // A health-verified restart resets the lifetime: one `cleared` for the
+    // needing row, and the row returns to unknown.
+    expect(internal.applyVerifiedEpochChange('epoch-2')).not.toBeNull();
+    expect(seen).toHaveLength(2);
+    expect(seen[1]).toEqual({ type: 'cleared', sessionId: 's1', directory: '/repo', pending: null });
+    expect(store.getState().catalog.byId.get('s1')?.pendingInput).toBeUndefined();
+
+    // New-lifetime frames order from the cleared markers, so `opened` fires again.
+    internal.commitEvents([inputEvent('s1', 2, pending, undefined, 'epoch-2')]);
+    expect(seen).toHaveLength(3);
+    expect(seen[2]?.type).toBe('opened');
+  });
+
+  test('snapshot-driven verified epoch change emits cleared through commitEvents', () => {
+    const { store, internal, seen } = freshStore();
+    stubClientForEpochTests('epoch-2');
+    internal.stream = { dispose: () => undefined };
+    internal.state = { ...store.getState(), directory: '/repo' };
+    const pending = { count: 1, kind: 'input' as const, since: 1_000 };
+    internal.commitEvents([inputEvent('s1', 1, pending, undefined, 'epoch-1')]);
+    expect(seen).toHaveLength(1);
+
+    // A snapshot stamped with an unseen epoch is a verified restart: the
+    // reset emits `cleared` for the needing row before the new lifetime's
+    // frames apply. (The stubbed detail keeps the snapshot's transcript
+    // restore offline.)
+    internal.commitEvents([snapshotEvent('s-other', 3, null, 'epoch-2')]);
+    expect(seen).toHaveLength(2);
+    expect(seen[1]).toEqual({ type: 'cleared', sessionId: 's1', directory: '/repo', pending: null });
+    expect(store.getState().catalog.byId.get('s1')?.pendingInput).toBeUndefined();
+
+    // New-lifetime frames order from the cleared markers, so `opened` fires again.
+    internal.commitEvents([inputEvent('s1', 4, pending, undefined, 'epoch-2')]);
+    expect(seen).toHaveLength(3);
+    expect(seen[2]?.type).toBe('opened');
   });
 
   test('clear+open in one batch emits cleared then opened', () => {

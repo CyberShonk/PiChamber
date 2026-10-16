@@ -142,8 +142,10 @@ export const getPiSessionStore = (): PiSessionStore => {
  *   was deleted while non-null.
  *
  * Changes in count or `since` while staying non-null emit nothing. List
- * fetches, snapshots, details, and epoch resets never emit — only live
- * `session.input` events (and row deletion) do.
+ * fetches, snapshots, and details never emit — only live `session.input`
+ * events (and row deletion) do, plus one `cleared` per needing session on
+ * a verified stream-epoch change (the retired daemon's pending requests
+ * cannot survive it).
  */
 export interface PendingInputTransition {
   type: 'opened' | 'cleared';
@@ -556,6 +558,24 @@ export class PiSessionStore {
    */
   private resetForEpochChange(): Set<PiSessionId> {
     const previouslyHydrated = new Set(this.hydratedSessionIds);
+    // Every pending request died with the retired daemon lifetime, but rows
+    // that recovery never re-lists (e.g. stubs whose directory is never
+    // listed) would stay `undefined` forever while their toast and OS
+    // notification linger. Emit one authoritative `cleared` per session that
+    // was needing input so alert surfaces dismiss; the rows themselves
+    // still go to `undefined` (unknown) below. Only this verified-epoch-
+    // change path emits: first epoch establishment never reaches here, and
+    // runtime switches dismiss everything through their own reset.
+    const epochCleared: PendingInputTransition[] = [];
+    for (const record of this.state.catalog.byId.values()) {
+      if (record.pendingInput == null) continue;
+      epochCleared.push({
+        type: 'cleared',
+        sessionId: record.id,
+        directory: record.directory,
+        pending: null,
+      });
+    }
     this.lifecycleSequenceById.clear();
     // The new daemon's sequence space is unrelated: drop every accepted
     // pending-input marker and return all rows to unknown. Recovery
@@ -580,6 +600,11 @@ export class PiSessionStore {
     this.settleCarriedOverActivity();
     const unknownPending = resetCatalogPendingInput(this.state.catalog);
     if (unknownPending !== this.state.catalog) this.state = { ...this.state, catalog: unknownPending };
+    // State is committed: notify through the same mechanism the live path
+    // uses. The per-session sequence markers were dropped above, so a
+    // new-epoch `session.input` still transitions unknown -> non-null
+    // (`opened`) and cannot duplicate this `cleared`.
+    this.emitPendingInputTransitions(epochCleared);
     return previouslyHydrated;
   }
   /**
@@ -1033,7 +1058,9 @@ export class PiSessionStore {
   /**
    * Subscribe to live pending-input `opened`/`cleared` transitions.
    * Fires only for the LIVE `session.input` event path (and row deletion),
-   * never for list fetches, snapshots, details, or epoch resets.
+   * never for list fetches, snapshots, or details — plus one `cleared` per
+   * needing session on a verified stream-epoch change (see
+   * `resetForEpochChange`).
    * Returns an unsubscribe function.
    */
   subscribePendingInputTransitions = (
@@ -3983,9 +4010,10 @@ export class PiSessionStore {
     // non-null (count/`since` changes, duplicate opens) emits nothing. When
     // the walk's final state disagrees with the committed row (gating
     // rejected some events), fall back to the endpoint comparison for that
-    // session so no spurious transitions emit. Snapshots, list rows,
-    // details, and epoch resets take no part — only the live event path
-    // emits (row deletion emits `cleared` through `commitDeletion`).
+    // session so no spurious transitions emit. Snapshots, list rows, and
+    // details take no part — only the live event path emits here (row
+    // deletion emits `cleared` through `commitDeletion`; a verified epoch
+    // change emits `cleared` through `resetForEpochChange`).
     const pendingInputTransitions: PendingInputTransition[] = [];
     if (catalogChanged) {
       const prevCatalog = this.state.catalog;

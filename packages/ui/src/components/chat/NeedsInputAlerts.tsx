@@ -156,9 +156,11 @@ interface NeedingAlertCatalogEntry {
  * input. Only a known `null` dismisses the toast and OS notification:
  * unknown (`undefined`) is not cleared, and a missing row is left alone
  * because directory listings can drop rows without the session ending
- * (real deletions already emit `cleared` through the deletion path). Non-live paths
- * (global refetch, list rows, snapshots, details, epoch resets) never emit
- * transitions, so without this the alert surfaces would linger forever.
+ * (real deletions already emit `cleared` through the deletion path, and a
+ * verified epoch change now emits `cleared` for previously-needing rows).
+ * Other non-live paths (global refetch, list rows, snapshots, details)
+ * never emit transitions, so without this the alert surfaces would linger
+ * forever.
  */
 export const selectStaleNeedingAlertSessions = (
   raisedSessionIds: readonly string[],
@@ -219,7 +221,8 @@ export const NeedsInputAlerts: React.FC = () => {
     raisedTagsRef.current.clear();
   }, []);
 
-  // Live transitions only — the store never fires for list/snapshot/detail/epoch.
+  // Live transitions only — the store never fires for list/snapshot/detail
+  // (plus `cleared` on a verified epoch change for previously-needing rows).
   React.useEffect(() => subscribePendingInputTransitions((transition: PendingInputTransition) => {
     if (transition.type === 'cleared' || !transition.pending) {
       dismissSessionAlert(transition.sessionId);
@@ -266,8 +269,9 @@ export const NeedsInputAlerts: React.FC = () => {
   }, [currentSessionId, dismissSessionAlert]);
 
   // Pending state can also clear through non-live paths — the global
-  // pending-input refetch, list rows, snapshots, details, or an epoch
-  // reset — which never emit transitions by design. Reconcile every raised
+  // pending-input refetch, list rows, snapshots, or details — which never
+  // emit transitions by design. (A verified epoch change does emit
+  // `cleared`.) Reconcile every raised
   // alert against the authoritative catalog set so those toasts and OS
   // notifications cannot linger forever. Only a known `null` dismisses.
   const needing = useSessionsNeedingInput();
