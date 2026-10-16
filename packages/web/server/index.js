@@ -3,9 +3,7 @@ import compression from 'compression';
 import express from 'express';
 import fs from 'node:fs';
 import http from 'node:http';
-import crypto from 'node:crypto';
 import os from 'node:os';
-import webPush from 'web-push';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -20,9 +18,7 @@ import { registerTailscaleRoutes } from './lib/tailscale/routes.js';
 import { registerPiRuntimeRoutes } from './lib/pi/routes.js';
 import { createDockerInitialLocalSettings, createPiUiSettingsStore } from './lib/pi/ui-settings-store.js';
 import { detectLinuxDistribution } from './lib/server/linux-distribution.js';
-import { createNotificationDeliveryRuntime } from './lib/notifications/delivery-runtime.js';
 import { createPiNotificationWatcher } from './lib/notifications/pi-notification-watcher.js';
-import { registerNotificationRoutes } from './lib/notifications/routes.js';
 import { registerWorkspaceIntegrations } from './lib/workspace/host.js';
 import { createPiSessionDaemonSupervisor } from './lib/pi/session-daemon/supervisor.js';
 import {
@@ -156,12 +152,6 @@ export async function startWebUiServer(options = {}) {
       ? createDockerInitialLocalSettings()
       : {},
   });
-  const notificationDelivery = createNotificationDeliveryRuntime({
-    dataDir: PICHAMBER_DATA_DIR,
-    webPush,
-    crypto,
-    onDesktopNotification: options.onDesktopNotification,
-  });
   const tunnelService = createTunnelService({
     dataDir: PICHAMBER_DATA_DIR,
     getPort: () => {
@@ -268,7 +258,6 @@ export async function startWebUiServer(options = {}) {
     getPiSessionDaemonRuntime: () => piSessionDaemonRuntime,
     uiSettingsStore,
   });
-  registerNotificationRoutes(app, { uiAuthController, delivery: notificationDelivery });
   // Cloudflare Tunnel external access (managed-remote and managed-local modes).
   const requireTunnelAuth = (req, res, next) => uiAuthController.requireAuth(req, res, next);
   app.get('/api/pichamber/tunnel/status', requireTunnelAuth, async (_req, res) => {
@@ -322,12 +311,16 @@ export async function startWebUiServer(options = {}) {
   }
   // Warm startup creates the daemon credential before subscriptions can read
   // it. The watcher then owns transport retries independently of browsers so
-  // native background push keeps working after reconnects.
-  notificationWatcher = createPiNotificationWatcher({
-    supervisor: piSessionDaemonRuntime,
-    uiSettingsStore,
-    delivery: notificationDelivery,
-  });
+  // the local desktop notification still fires after reconnects. Web/CLI
+  // servers have no local delivery, so the watcher only runs when Electron
+  // supplies its native notification callback.
+  if (typeof options.onDesktopNotification === 'function') {
+    notificationWatcher = createPiNotificationWatcher({
+      supervisor: piSessionDaemonRuntime,
+      uiSettingsStore,
+      notify: options.onDesktopNotification,
+    });
+  }
   void piSessionDaemonRuntime.start()
     .catch((error) => {
       console.warn(`[PiSessionDaemon] unavailable: ${error?.code ?? 'DAEMON_UNAVAILABLE'}`);

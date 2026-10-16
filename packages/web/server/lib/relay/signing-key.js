@@ -1,12 +1,12 @@
-// Per-server relay signing identity (ECDSA P-256), extracted from
-// lib/notifications/apns-runtime.js so both the push relay and the private
-// relay share the SAME keypair and thus the SAME serverId
-// (base64url(SHA-256(canonical public JWK))). Storage is via the injected
-// accessors backed by the host-local `<dataDir>/relay-identity.json` (see
-// `identity-store.js`) — never settings.json, which is portable between hosts
-// and rewritten by the UI settings store. Existing installs migrate: when the
+// Per-server relay signing identity (ECDSA P-256). The keypair defines the
+// host's serverId (base64url(SHA-256(canonical public JWK))): the private
+// relay's routing id and the identity paired clients pin via /health.
+// Storage is via the injected accessors backed by the host-local
+// `<dataDir>/relay-identity.json` (see `identity-store.js`) — never
+// settings.json, which is portable between hosts and rewritten by the UI
+// settings store. Existing installs migrate: when the
 // identity file does not exist, reads fall back to the legacy settings.json
-// keys so serverId stays stable (push token binding depends on it).
+// keys so serverId stays stable (paired devices pin it).
 
 /**
  * @param {{
@@ -29,7 +29,7 @@ export const getOrCreateRelaySigningKeypair = async ({ crypto, readSettingsFromD
   }
   // Regeneration gate: the lenient settings reader maps read failures to `{}`,
   // indistinguishable from "first run". Minting a new keypair changes serverId,
-  // which orphans every paired device and push binding AND the write below would
+  // which orphans every paired device AND the write below would
   // clobber the identity file with the empty spread. Re-verify with the strict
   // reader (throws on corrupt/unreadable) before generating; if it finds the
   // key the lenient read lost, use it and generate nothing.
@@ -42,7 +42,7 @@ export const getOrCreateRelaySigningKeypair = async ({ crypto, readSettingsFromD
     }
   }
   // Loud on purpose: a new signing key means a new serverId — every previously
-  // paired device and push binding is orphaned. Expected exactly once, on first run.
+  // paired device is orphaned. Expected exactly once, on first run.
   console.warn('[relay-identity] Generating NEW relay signing keypair (serverId changes; previously paired devices must re-pair)');
   const { privateKey, publicKey } = crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' });
   const privateJwk = privateKey.export({ format: 'jwk' });
@@ -58,8 +58,8 @@ export const canonicalPublicJwkString = (jwk) =>
   JSON.stringify({ crv: jwk.crv, kty: jwk.kty, x: jwk.x, y: jwk.y });
 
 /**
- * serverId = base64url(SHA-256(canonical public JWK)). Must match the push
- * relay's deriveServerId — this id is the routing key for both relays.
+ * serverId = base64url(SHA-256(canonical public JWK)). This id is the
+ * private relay's routing key, so the derivation must stay stable.
  * @param {{ crypto: typeof import('node:crypto') }} deps
  * @param {JsonWebKey} publicJwk
  */
