@@ -30,6 +30,8 @@ export interface TailscaleAuthGate {
   publicAllowed: boolean;
 }
 
+export type TailscalePublicDnsState = 'pending' | 'ready' | 'unknown';
+
 export interface TailscaleStatus {
   installed: boolean;
   running: boolean;
@@ -40,6 +42,8 @@ export interface TailscaleStatus {
   state: TailscaleState;
   /** Set only once a probe of the URL answers as THIS server (no credentials sent). */
   url: string | null;
+  /** Funnel (public) `active` only: public DNS readiness; null otherwise. Missing on older servers. */
+  publicDns?: TailscalePublicDnsState | null;
   approvalUrl: string | null;
   errorCode: string | null;
   errorMessage: string | null;

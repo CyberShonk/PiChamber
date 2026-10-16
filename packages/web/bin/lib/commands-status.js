@@ -51,6 +51,7 @@ async function statusCommand(options = {}) {
             state: body.state,
             ...(typeof body.url === 'string' ? { url: body.url } : {}),
             ...(body.config && typeof body.config.mode === 'string' ? { mode: body.config.mode } : {}),
+            ...(typeof body.publicDns === 'string' ? { publicDns: body.publicDns } : {}),
           };
         }
       } catch {
@@ -99,7 +100,7 @@ async function statusCommand(options = {}) {
 
     for (const instance of instances) {
       const tailscaleSuffix = instance.tailscale?.state && instance.tailscale.state !== 'off'
-        ? ` tailscale:${instance.tailscale.state}${instance.tailscale.url ? ` tailscale-url:${instance.tailscale.url}` : ''}`
+        ? ` tailscale:${instance.tailscale.state}${instance.tailscale.url ? ` tailscale-url:${instance.tailscale.url}` : ''}${typeof instance.tailscale.publicDns === 'string' && instance.tailscale.publicDns ? ` tailscale-public-dns:${instance.tailscale.publicDns}` : ''}`
         : '';
       process.stdout.write(
         `port ${instance.port} mode:${instance.launchMode || 'n/a'} pass:${toPasswordProtectionLabel(instance.passwordProtected)}${tailscaleSuffix}\n`
@@ -121,7 +122,7 @@ async function statusCommand(options = {}) {
     const modeDetail = instance.launchMode ? `mode: ${instance.launchMode}` : '';
     const protectionDetail = `password: ${toPasswordProtectionLabel(instance.passwordProtected)}`;
     const tailscaleDetail = instance.tailscale?.state && instance.tailscale.state !== 'off'
-      ? `tailscale: ${instance.tailscale.state}${instance.tailscale.url ? ` (${instance.tailscale.url})` : ''}`
+      ? `tailscale: ${instance.tailscale.state}${instance.tailscale.url ? ` (${instance.tailscale.url})` : ''}${instance.tailscale.publicDns === 'pending' ? '; public DNS pending' : ''}${instance.tailscale.publicDns === 'unknown' ? '; public DNS unknown' : ''}`
       : '';
     const detail = [modeDetail, protectionDetail, tailscaleDetail].filter(Boolean).join('; ');
     if (instance.runtime === 'desktop') {

@@ -105,3 +105,65 @@ describe('status quiet tailscale tokens', () => {
     expect(stdout.trim()).toBe('port 3000 mode:daemon pass:no');
   });
 });
+
+describe('status tailscale public DNS', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    stubInstance();
+  });
+
+  it('includes publicDns in --json and as a quiet token only when a string', async () => {
+    vi.mocked(requestJson).mockResolvedValue({
+      response: { ok: true },
+      body: { state: 'active', url: 'https://host.ts.net', config: { mode: 'public' }, publicDns: 'pending' },
+    });
+
+    const { stdout } = await captureOutput(() => statusCommand({ explicitPort: true, port: 3000, quiet: true }));
+    const tokens = stdout.trim().split('\n')[0].split(/\s+/);
+    expect(tokens).toContain('tailscale-public-dns:pending');
+
+    const jsonOut = [];
+    const originalWrite = process.stdout.write;
+    process.stdout.write = ((chunk) => { jsonOut.push(String(chunk)); return true; });
+    try {
+      await statusCommand({ explicitPort: true, port: 3000, json: true });
+    } finally {
+      process.stdout.write = originalWrite;
+    }
+    const payload = JSON.parse(jsonOut.join(''));
+    expect(payload.instances[0].tailscale.publicDns).toBe('pending');
+  });
+
+  it('omits the quiet public-dns token when absent and says nothing extra for ready in human output', async () => {
+    vi.mocked(requestJson).mockResolvedValue({
+      response: { ok: true },
+      body: { state: 'active', url: 'https://host.ts.net', config: { mode: 'public' }, publicDns: 'ready' },
+    });
+    const { stdout: quietReady } = await captureOutput(() => statusCommand({ explicitPort: true, port: 3000, quiet: true }));
+    expect(quietReady).toContain('tailscale-public-dns:ready');
+
+    vi.mocked(requestJson).mockResolvedValue({
+      response: { ok: true },
+      body: { state: 'active', url: 'https://host.ts.net', config: { mode: 'private' } },
+    });
+    const { stdout: quietPrivate } = await captureOutput(() => statusCommand({ explicitPort: true, port: 3000, quiet: true }));
+    expect(quietPrivate).not.toContain('tailscale-public-dns:');
+  });
+
+  it('human output names pending/unknown and stays quiet for ready', async () => {
+    for (const [publicDns, expected] of [['pending', 'public DNS pending'], ['unknown', 'public DNS unknown']]) {
+      vi.mocked(requestJson).mockResolvedValue({
+        response: { ok: true },
+        body: { state: 'active', url: 'https://host.ts.net', config: { mode: 'public' }, publicDns },
+      });
+      const { stdout, stderr } = await captureOutput(() => statusCommand({ explicitPort: true, port: 3000 }));
+      expect(`${stdout}${stderr}`).toContain(expected);
+    }
+    vi.mocked(requestJson).mockResolvedValue({
+      response: { ok: true },
+      body: { state: 'active', url: 'https://host.ts.net', config: { mode: 'public' }, publicDns: 'ready' },
+    });
+    const { stdout, stderr } = await captureOutput(() => statusCommand({ explicitPort: true, port: 3000 }));
+    expect(`${stdout}${stderr}`).not.toContain('public DNS');
+  });
+});

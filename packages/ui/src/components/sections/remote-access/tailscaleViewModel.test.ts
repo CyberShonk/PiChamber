@@ -129,20 +129,54 @@ describe('tailscale status mapping', () => {
     expect(view?.showAuthCallout).toBe(true);
   });
 
-  test('starting shows setup state, with a DNS note only for public', () => {
-    const privateStarting = presentTailscaleStatus(baseStatus({
-      state: 'starting',
-      config: { enabled: true, mode: 'private', httpsPort: 443 },
-    }));
-    expect(privateStarting?.pill).toContain('Setting up');
-    expect(privateStarting?.tone).toBe('info');
-    expect(privateStarting?.showStartingNote).toBe(false);
+  test('starting shows setup state with no DNS note (DNS wait lives on active public)', () => {
+    for (const mode of ['private', 'public'] as const) {
+      const view = presentTailscaleStatus(baseStatus({
+        state: 'starting',
+        config: { enabled: true, mode, httpsPort: 443 },
+      }));
+      expect(view?.pill).toContain('Setting up');
+      expect(view?.tone).toBe('info');
+      expect(view?.publicDnsNote).toBeNull();
+    }
+  });
 
-    const publicStarting = presentTailscaleStatus(baseStatus({
-      state: 'starting',
+  test('active public surfaces the live public-DNS note; ready/missing/private render null', () => {
+    const pending = presentTailscaleStatus(baseStatus({
+      state: 'active',
+      url: 'https://m.ts.net',
+      publicDns: 'pending',
       config: { enabled: true, mode: 'public', httpsPort: 443 },
     }));
-    expect(publicStarting?.showStartingNote).toBe(true);
+    expect(pending?.publicDnsNote).toBe('pending');
+    const unknown = presentTailscaleStatus(baseStatus({
+      state: 'active',
+      url: 'https://m.ts.net',
+      publicDns: 'unknown',
+      config: { enabled: true, mode: 'public', httpsPort: 443 },
+    }));
+    expect(unknown?.publicDnsNote).toBe('unknown');
+    for (const status of [
+      baseStatus({
+        state: 'active',
+        url: 'https://m.ts.net',
+        publicDns: 'ready',
+        config: { enabled: true, mode: 'public', httpsPort: 443 },
+      }),
+      baseStatus({
+        state: 'active',
+        url: 'https://m.ts.net',
+        config: { enabled: true, mode: 'public', httpsPort: 443 },
+      }),
+      baseStatus({
+        state: 'active',
+        url: 'https://m.ts.net',
+        publicDns: 'pending',
+        config: { enabled: true, mode: 'private', httpsPort: 443 },
+      }),
+    ]) {
+      expect(presentTailscaleStatus(status)?.publicDnsNote).toBeNull();
+    }
   });
 
   test('needs-approval surfaces the approval action', () => {
