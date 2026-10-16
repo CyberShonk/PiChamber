@@ -95,9 +95,18 @@ const desktopPlatformName = (): string | undefined => {
   return undefined;
 };
 
+/** Bounded timeout for the credential-free /health pin read during pairing import. */
+export const DESKTOP_HOST_HEALTH_PIN_TIMEOUT_MS = 5_000;
+
+export type ImportDesktopHostPairingOptions = {
+  /** Override for the /health pin-read timeout (used by tests). Defaults to DESKTOP_HOST_HEALTH_PIN_TIMEOUT_MS. */
+  healthTimeoutMs?: number;
+};
+
 export const importDesktopHostPairing = async (
   link: string,
   hosts: DesktopHost[],
+  options?: ImportDesktopHostPairingOptions,
 ): Promise<{ hosts: DesktopHost[]; hostId: string }> => {
   const payload = parsePairingConnectionPayload(link);
   if (!payload) throw new Error('invalid-connect-link');
@@ -179,9 +188,61 @@ export const importDesktopHostPairing = async (
   const url = directUrl || (relay ? relayHostDisplayUrl(relay.serverId) : null);
   if (!url) throw new Error('pairing-missing-transport');
 
-  const existing = hosts.find((host) => (
-    relay ? host.relay?.serverId === relay.serverId : (!host.relay && normalizeHostUrl(host.apiUrl || host.url) === url)
-  ));
+  // Trust on first use: pin the redeemed server's identity from a
+  // credential-free /health read BEFORE dedup, so a re-pair over another
+  // transport can match the pinned row below. Best-effort with a bounded
+  // timeout: a black-holed address must not hang the pairing save UI, and a
+  // failed or timed-out read leaves the record unpinned (old behavior).
+  // Plain fetch (not runtimeFetch) with credentials omitted: this origin is
+  // not adopted yet, so no bearer or ambient credentials may be sent.
+  let reportedServerId: string | null = null;
+  if (redeemed.directUrl) {
+    const timeoutMs = options?.healthTimeoutMs ?? DESKTOP_HOST_HEALTH_PIN_TIMEOUT_MS;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const health = await fetch(`${redeemed.directUrl}/health`, {
+        headers: { Accept: 'application/json' },
+        signal: controller.signal,
+        credentials: 'omit',
+      });
+      if (health.ok) {
+        const body = (await health.json().catch(() => null)) as { serverId?: unknown } | null;
+        const reported = typeof body?.serverId === 'string' ? body.serverId.trim() : '';
+        if (reported) reportedServerId = reported;
+      }
+    } catch {
+      // Best-effort pin read: ignore failures, leave the record unpinned.
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  // Dedup: the same server re-paired over another transport (LAN URL vs
+  // Tailscale URL, or a relay candidate now present) must update its row,
+  // not create a second one. The new pairing's identity is the relay
+  // serverId and/or the /health-reported serverId when available; either
+  // pins the row alongside the existing URL/relay match. A URL match whose
+  // pinned serverId contradicts the fresh /health report is a different
+  // server at a reused address — never overwrite its credentials.
+  const pairingServerIds = new Set<string>();
+  if (relay?.serverId) pairingServerIds.add(relay.serverId);
+  if (reportedServerId) pairingServerIds.add(reportedServerId);
+  const matchesPairingIdentity = (host: DesktopHost): boolean => {
+    for (const serverId of pairingServerIds) {
+      if (host.serverId === serverId || host.relay?.serverId === serverId) return true;
+    }
+    return false;
+  };
+  const existing = hosts.find((host) => {
+    if (relay) {
+      if (host.relay?.serverId === relay.serverId) return true;
+    } else if (!host.relay && normalizeHostUrl(host.apiUrl || host.url) === url) {
+      if (host.serverId && reportedServerId && host.serverId !== reportedServerId) return false;
+      return true;
+    }
+    return matchesPairingIdentity(host);
+  });
   const hostId = existing?.id || (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
     ? crypto.randomUUID()
     : `host-${Date.now()}-${Math.random().toString(16).slice(2)}`);
@@ -194,22 +255,11 @@ export const importDesktopHostPairing = async (
     clientToken: redeemed.token,
     ...(relay ? { relay } : {}),
   };
-  // Trust on first use: pin the redeemed server's identity from a
-  // credential-free /health read when the record has none yet. Best-effort:
-  // a failed read leaves the record unpinned (old behavior).
-  if (!existing?.serverId && redeemed.directUrl) {
-    try {
-      const health = await fetch(`${redeemed.directUrl}/health`, {
-        headers: { Accept: 'application/json' },
-      });
-      if (health.ok) {
-        const body = (await health.json().catch(() => null)) as { serverId?: unknown } | null;
-        const reported = typeof body?.serverId === 'string' ? body.serverId.trim() : '';
-        if (reported) nextHost.serverId = reported;
-      }
-    } catch {
-      // Best-effort pin read: ignore failures, leave the record unpinned.
-    }
+  // An already-pinned record keeps its pin; otherwise adopt the fresh report.
+  if (existing?.serverId) {
+    nextHost.serverId = existing.serverId;
+  } else if (reportedServerId) {
+    nextHost.serverId = reportedServerId;
   }
   return {
     hostId,
