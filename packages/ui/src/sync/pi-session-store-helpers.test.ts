@@ -203,6 +203,25 @@ describe('pi-session-store-helpers', () => {
     expect(merged.lastSequence).toBe(7);
   });
 
+  test('keeps live notices when hydrating a resident with no transcript yet', () => {
+    const detail = {
+      session: { id: 'session-1', directory: '/dir' },
+      lastSequence: 5,
+      messages: [],
+    };
+    const notice = { id: 'n1', message: 'Mode switched', level: 'info' as const, createdAt: 1 };
+    const existing = {
+      ...hydrateSessionFromDetail(detail).session,
+      extensionNotices: [notice],
+    };
+    const fetched = hydrateSessionFromDetail(detail).session;
+
+    const merged = mergeHydratedSession(fetched, existing);
+
+    expect(merged.messages.size).toBe(0);
+    expect(merged.extensionNotices).toEqual([notice]);
+  });
+
   test('keeps a live mode status when stale hydration catches the first prompt', () => {
     const existing = hydrateSessionFromDetail({
       session: { id: 'session-1', directory: '/dir' },

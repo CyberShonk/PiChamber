@@ -1291,7 +1291,7 @@ export class PiSessionStore {
    * extension command — so toasts and the other-sessions strip would fall
    * back to "Untitled session" while listed surfaces show "Awaiting first
    * prompt" for the same session. One targeted `ensureHydrated` per session
-   * per runtime lifetime backfills the detail's total; the hydrate commit
+   * per runtime lifetime (a failed read may retry on a later trigger) backfills the detail's total; the hydrate commit
    * adopts it and later lists, hydrates, and recovery converge afterwards.
    * Never selects or focuses: the fetch is metadata-only backfill.
    */
@@ -1308,7 +1308,15 @@ export class PiSessionStore {
       if (this.hydrateInflightById.has(sessionId)) continue;
       if (this.isDeleted(sessionId)) continue;
       this.pendingMetadataBackfillAttempted.add(sessionId);
-      void this.ensureHydrated(sessionId).catch(() => undefined);
+      // `hydrate` records a failed read instead of rejecting, so check the
+      // outcome: a read that did not hydrate releases the attempt and the
+      // next live event or list response retries it. The failure path never
+      // re-triggers the backfill, so this cannot loop.
+      void this.ensureHydrated(sessionId).then(() => {
+        if (!this.hydratedSessionIds.has(sessionId)) this.pendingMetadataBackfillAttempted.delete(sessionId);
+      }, () => {
+        this.pendingMetadataBackfillAttempted.delete(sessionId);
+      });
     }
   }
 

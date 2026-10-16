@@ -84,11 +84,14 @@ const showInputToast = (
   directory: string,
   pending: PiPendingInputSummary,
   label: string,
+  onClosed: () => void,
 ): void => {
   toast.warning(alertTitleForKind(pending.kind), {
     id: toastIdForSession(sessionId),
     description: label,
     duration: Infinity,
+    onDismiss: onClosed,
+    onAutoClose: onClosed,
     action: {
       label: 'Open session',
       onClick: () => navigateToSession(sessionId, directory || null),
@@ -101,6 +104,8 @@ interface RaisedToast {
   directory: string;
   pending: PiPendingInputSummary;
   label: string;
+  /** Identifies this raise, so a late close callback from an older toast is ignored. */
+  raise: number;
 }
 
 /**
@@ -120,6 +125,22 @@ export const selectRelabeledAlertToasts = (
     if (label !== entry.label) changed.push([sessionId, label]);
   }
   return changed;
+};
+
+/**
+ * The user closed a raised toast (swipe) or it was dismissed: forget it so a
+ * later label change cannot re-show it. A close callback from an older raise
+ * of the same session's toast is ignored, so it cannot drop a newer one.
+ */
+export const forgetClosedAlertToast = (
+  content: Map<string, { raise: number }>,
+  raisedToastIds: Set<string>,
+  sessionId: string,
+  raise: number,
+): void => {
+  if (content.get(sessionId)?.raise !== raise) return;
+  content.delete(sessionId);
+  raisedToastIds.delete(toastIdForSession(sessionId));
 };
 
 /** One catalog row read for stale-alert reconciliation. */
@@ -162,6 +183,11 @@ export const NeedsInputAlerts: React.FC = () => {
   const raisedToastsRef = React.useRef(new Set<string>());
   // sessionId -> open toast content, so a late-resolving label updates it.
   const toastContentRef = React.useRef(new Map<string, RaisedToast>());
+  const nextRaiseRef = React.useRef(0);
+
+  const forgetClosedToast = React.useCallback((sessionId: string, raise: number) => {
+    forgetClosedAlertToast(toastContentRef.current, raisedToastsRef.current, sessionId, raise);
+  }, []);
 
   const dismissSessionAlert = React.useCallback((sessionId: string) => {
     const toastId = toastIdForSession(sessionId);
@@ -203,9 +229,11 @@ export const NeedsInputAlerts: React.FC = () => {
     const decision = decideInputAlert(readAlertContext(transition.sessionId, pending, transition.serverNow));
     if (decision === 'none') return;
     const label = displayTitleForSession(transition.sessionId);
-    raisedToastsRef.current.add(toastIdForSession(transition.sessionId));
-    toastContentRef.current.set(transition.sessionId, { directory: transition.directory, pending, label });
-    showInputToast(transition.sessionId, transition.directory, pending, label);
+    const raise = ++nextRaiseRef.current;
+    const sessionId = transition.sessionId;
+    raisedToastsRef.current.add(toastIdForSession(sessionId));
+    toastContentRef.current.set(sessionId, { directory: transition.directory, pending, label, raise });
+    showInputToast(sessionId, transition.directory, pending, label, () => forgetClosedToast(sessionId, raise));
     if (decision === 'toast-and-notify') {
       const tag = inputNeededNotificationTag(transition.sessionId, pending.since);
       raisedTagsRef.current.set(transition.sessionId, tag);
@@ -217,7 +245,7 @@ export const NeedsInputAlerts: React.FC = () => {
         title: label,
       });
     }
-  }), [dismissSessionAlert]);
+  }), [dismissSessionAlert, forgetClosedToast]);
 
   // Keep open toasts' session labels in step with the catalog. Re-showing
   // with the same id updates the toast in place. (An OS notification that
@@ -228,9 +256,9 @@ export const NeedsInputAlerts: React.FC = () => {
       const entry = toastContentRef.current.get(sessionId);
       if (!entry) continue;
       toastContentRef.current.set(sessionId, { ...entry, label });
-      showInputToast(sessionId, entry.directory, entry.pending, label);
+      showInputToast(sessionId, entry.directory, entry.pending, label, () => forgetClosedToast(sessionId, entry.raise));
     }
-  }, TOPIC_CATALOG), []);
+  }, TOPIC_CATALOG), [forgetClosedToast]);
 
   // The user opened the session: the dock strip owns it now.
   React.useEffect(() => {

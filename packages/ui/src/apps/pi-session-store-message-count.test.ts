@@ -188,6 +188,45 @@ describe('needing-session messageCount convergence', () => {
     }
   });
 
+  test('a failed backfill read is retried by the next trigger', async () => {
+    const store = new PiSessionStore();
+    stores.push(store);
+    const internal = asInternal(store);
+    internal.streamEpoch = 'epoch-1';
+    internal.stream = { dispose: () => undefined };
+    const originalGetSession = piClient.getSession;
+    const calls: string[] = [];
+    piClient.getSession = (async (id: string) => {
+      calls.push(id);
+      if (calls.length === 1) throw new Error('transient read failure');
+      return {
+        session: { id, directory: '/repo', createdAt: 1, updatedAt: 1, messageCount: 0 },
+        lastSequence: 9,
+        messages: [],
+        streamEpoch: 'epoch-1',
+      };
+    }) as unknown as typeof piClient.getSession;
+    try {
+      const response = {
+        sessions: [{ sessionId: 'sess-remote', directory: '/repo', pending: { count: 1, kind: 'input' as const, since: 100 } }],
+        sequence: 5,
+        streamEpoch: 'epoch-1',
+      };
+      internal.applyPendingInputList(response);
+      await flushAsync();
+      // The failure itself never retries.
+      expect(calls).toEqual(['sess-remote']);
+      expect(store.getState().catalog.byId.get('sess-remote')?.messageCount).toBeUndefined();
+
+      internal.applyPendingInputList(response);
+      await flushAsync();
+      expect(calls).toEqual(['sess-remote', 'sess-remote']);
+      expect(store.getState().catalog.byId.get('sess-remote')?.messageCount).toBe(0);
+    } finally {
+      piClient.getSession = originalGetSession;
+    }
+  });
+
   test('titled needing sessions are not backfilled: the count cannot change their label', async () => {
     const store = new PiSessionStore();
     stores.push(store);

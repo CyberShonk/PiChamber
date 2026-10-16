@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 
-import { selectRelabeledAlertToasts, selectStaleNeedingAlertSessions } from './NeedsInputAlerts';
+import { forgetClosedAlertToast, selectRelabeledAlertToasts, selectStaleNeedingAlertSessions } from './NeedsInputAlerts';
+import { PENDING_INPUT_TOAST_ID_PREFIX } from './inputAlertDecision';
 
 const pending = { count: 1, kind: 'input' as const, since: 1_000 };
 
@@ -70,5 +71,27 @@ describe('selectRelabeledAlertToasts', () => {
     const raised = new Map([['s1', { label: 'Deploy pipeline' }], ['s2', { label: 'Awaiting first prompt' }]]);
     const labels: Record<string, string> = { s1: 'Deploy pipeline', s2: 'Fix login' };
     expect(selectRelabeledAlertToasts(raised, (id) => labels[id]!)).toEqual([['s2', 'Fix login']]);
+  });
+});
+
+describe('forgetClosedAlertToast', () => {
+  const raisedState = (raise: number) => ({
+    content: new Map([['s1', { label: 'Awaiting first prompt', raise }]]),
+    raisedToastIds: new Set([`${PENDING_INPUT_TOAST_ID_PREFIX}s1`]),
+  });
+
+  test('a closed toast is forgotten, so a later label change cannot re-show it', () => {
+    const { content, raisedToastIds } = raisedState(1);
+    forgetClosedAlertToast(content, raisedToastIds, 's1', 1);
+    expect(content.size).toBe(0);
+    expect(raisedToastIds.size).toBe(0);
+    expect(selectRelabeledAlertToasts(content, () => 'Deploy pipeline')).toEqual([]);
+  });
+
+  test('a late close from an older raise leaves the newer toast tracked', () => {
+    const { content, raisedToastIds } = raisedState(2);
+    forgetClosedAlertToast(content, raisedToastIds, 's1', 1);
+    expect(content.get('s1')?.raise).toBe(2);
+    expect(raisedToastIds.has(`${PENDING_INPUT_TOAST_ID_PREFIX}s1`)).toBe(true);
   });
 });
