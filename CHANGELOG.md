@@ -4,8 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
-- **Server identity restored.** 1.0.5-rc.1 never saved its relay signing key, so `/health` reported no `serverId`, the key was regenerated on every request, and the Tailscale probe could never pass. The server now creates `relay-identity.json` once and reports the same `serverId` everywhere, and logs a warning if it cannot (`server/index`).
-- **Tailscale probe works in containers.** When the host cannot reach its own ts.net name, for example tailscaled with `--tun=userspace-networking` or a resolver without MagicDNS, the probe checks `/health` through `tailscale nc` over the tailnet instead of staying on Setting up for 10 minutes. A `probe_failed` error now says to check that MagicDNS and HTTPS certificates are enabled (`tailscale/nc-probe`, `tailscale/service`).
+## [1.0.5-rc.2] - 2026-10-17
+
+Fixes Tailscale remote access stuck on Setting up in 1.0.5-rc.1 (#193).
+
+- **Server identity restored.** 1.0.5-rc.1 never saved its relay signing key, so `/health` reported no `serverId`, the key was regenerated on every request, and the Tailscale probe could never pass. The server now creates `relay-identity.json` once and reports the same `serverId` everywhere, and logs a warning if it cannot (#193, `server/index`).
+- **Tailscale probe works in containers.** When the host cannot reach its own ts.net name, for example tailscaled with `--tun=userspace-networking` or a resolver without MagicDNS, the probe checks `/health` through `tailscale nc` over the tailnet instead of staying on Setting up for 10 minutes. A `probe_failed` error now says to check that MagicDNS and HTTPS certificates are enabled (#193, `tailscale/nc-probe`, `tailscale/service`).
 
 ## [1.0.5-rc.1] - 2026-10-17
 
