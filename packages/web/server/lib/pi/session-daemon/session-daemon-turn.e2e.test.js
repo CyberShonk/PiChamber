@@ -199,6 +199,15 @@ describe('session daemon agent turn end-to-end with real SDK', () => {
       defaultProvider: 'turn-mock-provider',
       defaultModel: 'turn-mock-model',
     }));
+    // Store a placeholder credential so the SDK marks the faux provider
+    // configured as soon as the extension registers it. Without one, the
+    // provider only becomes configured through an availability refresh, and
+    // the refresh session creation awaits can be superseded by the
+    // registration's own unawaited refresh, leaving initial model selection
+    // with no usable model. Faux providers ignore the key.
+    await writeFile(join(agentDir, 'auth.json'), JSON.stringify({
+      'turn-mock-provider': { type: 'api_key', key: 'faux-test-key' },
+    }));
 
     const endpoint = process.platform === 'win32'
       ? `\\\\.\\pipe\\pichamber-turn-e2e-${Date.now()}`
