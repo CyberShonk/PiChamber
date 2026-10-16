@@ -4,7 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
-- **Public Tailscale links report DNS readiness.** Public (Funnel) mode is active as soon as the server answers over the tailnet, instead of the URL looking ready while it still fails on the internet. Tailscale can take 10–15 minutes to publish the public DNS record for a new Funnel link. Until it appears, Remote Access says the public link is waiting for DNS and that tailnet devices can connect now. It switches to ready on its own. The server checks with public resolvers (1.1.1.1 and 8.8.8.8), sending only the ts.net hostname. `pichamber status` shows `public DNS pending`, and `--quiet`/`--json` report `publicDns` (`tailscale/public-dns`, `TailscaleRouteRow`).
+## [1.0.5-rc.3] - 2026-10-17
+
+Public Tailscale links report when they work on the internet (#194).
+
+- **Public Tailscale links report DNS readiness.** Public (Funnel) mode is active as soon as the server answers over the tailnet, instead of the URL looking ready while it still fails on the internet. Tailscale can take 10–15 minutes to publish the public DNS record for a new Funnel link. Until it appears, Remote Access says the public link is waiting for DNS and that tailnet devices can connect now. It switches to ready on its own. The server checks with public resolvers (1.1.1.1 and 8.8.8.8), sending only the ts.net hostname. `pichamber status` shows `public DNS pending`, and `--quiet`/`--json` report `publicDns` (#194, `tailscale/public-dns`, `TailscaleRouteRow`).
 
 ## [1.0.5-rc.2] - 2026-10-17
 
