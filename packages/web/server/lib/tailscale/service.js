@@ -15,6 +15,9 @@
  * All process execution goes through the injected `runner` (argument arrays,
  * no shell, bounded timeouts) so unit tests can inject a fake. The default
  * runner spawns the resolved executable directly with `windowsHide: true`.
+ * The tailnet-path health-probe fallback goes through the injected
+ * `tailnetHealthFetch` (a `tailscale nc` + TLS fetch built from the resolved
+ * executable by default); tests inject a fake.
  */
 
 import { spawn } from 'node:child_process';
@@ -43,6 +46,7 @@ import {
   resolveTailscaleExecutable,
   validateTailscaleConfig,
 } from './tailscale.js';
+import { createTailscaleNcHealthFetch } from './nc-probe.js';
 
 const TAILSCALE_CONFIG_FILE = 'tailscale-config.json';
 const TAILSCALE_MAPPING_FILE = 'tailscale-mapping.json';
@@ -168,6 +172,11 @@ export const createTailscaleService = ({
   isUnsafeUnauthenticatedLanAllowed = () => false,
   runner = null,
   fetchImpl = globalThis.fetch,
+  // Tailnet-path fallback for the self-probe (`tailscale nc` + TLS, see
+  // `nc-probe.js`). Defaults to the real implementation built from the
+  // resolved executable; tests inject a fake. Only used when the direct
+  // fetch throws without an HTTP response.
+  tailnetHealthFetch = null,
   fsPromises = fs.promises,
   existsSync = fs.existsSync,
   // Stable server identity (hash of the public relay signing key — not a
@@ -182,6 +191,8 @@ export const createTailscaleService = ({
 } = {}) => {
   const effectiveRunner = runner || createDefaultTailscaleRunner({ platform });
   const executable = resolveTailscaleExecutable({ platform, env, existsSync });
+  const effectiveTailnetHealthFetch = tailnetHealthFetch
+    || createTailscaleNcHealthFetch({ executable: executable.command });
   const configPath = path.join(dataDir, TAILSCALE_CONFIG_FILE);
   const mappingPath = path.join(dataDir, TAILSCALE_MAPPING_FILE);
 
@@ -432,6 +443,46 @@ export const createTailscaleService = ({
     return { removed: true };
   };
 
+  /**
+   * Shared identity check for both probe paths: the body must be a JSON
+   * object whose `serverId` equals this server's stable id.
+   */
+  const checkHealthBody = (body, expectedServerId) => {
+    const reported = body && typeof body === 'object' ? body.serverId : null;
+    return typeof reported === 'string' && reported.length > 0 && reported === expectedServerId;
+  };
+
+  /**
+   * Tailnet-path fallback: re-runs the same credential-free `/health`
+   * check through `tailscale nc` when the direct fetch threw without an
+   * HTTP response (host cannot resolve/reach its own MagicDNS name —
+   * userspace networking, non-MagicDNS resolver). A direct HTTP response,
+   * even non-OK or mismatched, never reaches here: something answered, so
+   * the tailnet path must not override it. Returns true only on a 2xx
+   * response whose JSON body carries this server's id.
+   */
+  const probeUrlOverTailnet = async (url, expectedServerId) => {
+    let host = null;
+    let port = 443;
+    try {
+      const parsed = new URL(url);
+      host = parsed.hostname || null;
+      port = parsed.port ? Number.parseInt(parsed.port, 10) : 443;
+    } catch {
+      return false;
+    }
+    if (!host || !Number.isInteger(port) || port <= 0) return false;
+    let result = null;
+    try {
+      result = await effectiveTailnetHealthFetch({ host, port, timeoutMs: TAILSCALE_PROBE_TIMEOUT_MS });
+    } catch {
+      return false;
+    }
+    if (!result || result.ok !== true) return false;
+    if (!Number.isInteger(result.status) || result.status < 200 || result.status >= 300) return false;
+    return checkHealthBody(result.body, expectedServerId);
+  };
+
   const probeUrl = async (url) => {
     // A null/throwing identity fails the probe: the URL stays `starting`
     // and is never advertised as `active`.
@@ -456,10 +507,12 @@ export const createTailscaleService = ({
       clearTimeout(timer);
       if (!response || !response.ok) return false;
       const body = await response.json().catch(() => null);
-      const reported = body && typeof body === 'object' ? body.serverId : null;
-      return typeof reported === 'string' && reported.length > 0 && reported === expectedServerId;
+      return checkHealthBody(body, expectedServerId);
     } catch {
-      return false;
+      // No HTTP response (DNS/connect/abort on hosts that cannot resolve
+      // or reach their own MagicDNS name): retry the identical check over
+      // the tailnet path instead of failing the probe.
+      return probeUrlOverTailnet(url, expectedServerId);
     }
   };
 
@@ -468,7 +521,7 @@ export const createTailscaleService = ({
     if (myGeneration !== generation) return;
     if (elapsed >= PROBE_RETRY_BUDGET_MS || delays.length === 0) {
       if (myGeneration === generation && status.state === 'starting') {
-        setRuntime({ state: 'error', errorCode: 'probe_failed', errorMessage: 'The Tailscale URL never answered as this server.' });
+        setRuntime({ state: 'error', errorCode: 'probe_failed', errorMessage: 'The Tailscale URL never answered as this server. Check that MagicDNS and HTTPS certificates are enabled for your tailnet, then retry.' });
       }
       return;
     }

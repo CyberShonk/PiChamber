@@ -17,6 +17,7 @@ import {
   validateTailscaleConfig,
 } from './tailscale.js';
 import { createTailscaleService } from './service.js';
+import { createTailscaleNcHealthFetch } from './nc-probe.js';
 
 describe('tailscale status parsing', () => {
   it('strips the trailing dot from DNSName and reports login state', () => {
@@ -253,6 +254,9 @@ const createHarness = ({ handlers, port = 3000, uiPassword = 'secret' } = {}) =>
     fsPromises,
     existsSync: () => false,
     fetchImpl: async () => ({ ok: false, status: 404, json: async () => null }),
+    // Fail closed by default: no existing test exercises the tailnet path,
+    // and the real `tailscale nc` implementation must never spawn here.
+    tailnetHealthFetch: async () => ({ ok: false, status: null, body: null, error: 'disabled-in-test' }),
     logWarn: () => {},
   });
   return { service, calls, files, fsPromises };
@@ -1857,5 +1861,220 @@ describe('tailscale reconcile serialization (Off/Private overlap)', () => {
     } finally {
       service.dispose();
     }
+  });
+});
+
+describe('tailscale tailnet-path probe fallback (nc)', () => {
+  const memFsFor = () => {
+    const memFs = new Map();
+    return {
+      memFs,
+      fsPromises: {
+        readFile: async (p) => {
+          if (!memFs.has(p)) { const e = new Error('x'); e.code = 'ENOENT'; throw e; }
+          return memFs.get(p);
+        },
+        writeFile: async (p, c) => { memFs.set(p, String(c)); },
+        mkdir: async () => {},
+        rename: async (a, b) => { memFs.set(b, memFs.get(a)); memFs.delete(a); },
+        unlink: async (p) => { memFs.delete(p); },
+      },
+    };
+  };
+  const createProbeService = ({ fetchImpl, tailnetHealthFetch }) => {
+    const { fsPromises } = memFsFor();
+    const fallbackCalls = [];
+    const service = createTailscaleService({
+      existsSync: () => false,
+      dataDir: '/data',
+      getPort: () => 3000,
+      isUiAuthEnabled: () => true,
+      isUnsafeUnauthenticatedLanAllowed: () => false,
+      runner: {
+        runTailscale: async (args) => {
+          if (args.includes('serve') && args.includes('status')) {
+            return { ok: true, code: 0, stdout: JSON.stringify({ Web: {} }), stderr: '', spawnError: null, timedOut: false };
+          }
+          return { ok: true, code: 0, stdout: STATUS_JSON, stderr: '', spawnError: null, timedOut: false };
+        },
+      },
+      fsPromises,
+      getServerId: async () => TEST_SERVER_ID,
+      fetchImpl,
+      tailnetHealthFetch: async (args) => {
+        fallbackCalls.push(args);
+        return tailnetHealthFetch(args);
+      },
+      logWarn: () => {},
+    });
+    return { service, fallbackCalls };
+  };
+  const directDnsFailure = async () => {
+    throw new Error('getaddrinfo ENOTFOUND mymachine.tailabc.ts.net');
+  };
+
+  it('goes active when the direct fetch throws but the tailnet path answers', async () => {
+    const { service, fallbackCalls } = createProbeService({
+      fetchImpl: directDnsFailure,
+      tailnetHealthFetch: async () => ({ ok: true, status: 200, body: { serverId: TEST_SERVER_ID } }),
+    });
+    await service.loadConfig();
+    const result = await service.setConfig({ enabled: true, mode: 'private', httpsPort: 443 });
+    expect(result.state).toBe('active');
+    expect(result.url).toBe('https://mymachine.tailabc.ts.net');
+    expect(fallbackCalls).toHaveLength(1);
+    expect(fallbackCalls[0]).toMatchObject({ host: 'mymachine.tailabc.ts.net', port: 443 });
+    service.dispose();
+  });
+
+  it('stays starting when the tailnet path reports a different server', async () => {
+    const { service, fallbackCalls } = createProbeService({
+      fetchImpl: directDnsFailure,
+      tailnetHealthFetch: async () => ({ ok: true, status: 200, body: { serverId: 'some-other-server' } }),
+    });
+    await service.loadConfig();
+    const result = await service.setConfig({ enabled: true, mode: 'private', httpsPort: 443 });
+    expect(result.state).toBe('starting');
+    expect(result.url).toBeNull();
+    expect(fallbackCalls).toHaveLength(1);
+    service.dispose();
+  });
+
+  it('never uses the tailnet path when the direct path answers', async () => {
+    // Non-OK direct response.
+    const nonOk = createProbeService({
+      fetchImpl: async () => ({ ok: false, status: 404, json: async () => null }),
+      tailnetHealthFetch: async () => ({ ok: true, status: 200, body: { serverId: TEST_SERVER_ID } }),
+    });
+    await nonOk.service.loadConfig();
+    const nonOkResult = await nonOk.service.setConfig({ enabled: true, mode: 'private', httpsPort: 443 });
+    expect(nonOkResult.state).toBe('starting');
+    expect(nonOkResult.url).toBeNull();
+    expect(nonOk.fallbackCalls).toEqual([]);
+    nonOk.service.dispose();
+    // Mismatching serverId direct response.
+    const mismatch = createProbeService({
+      fetchImpl: async () => ({ ok: true, status: 200, json: async () => ({ serverId: 'some-other-server' }) }),
+      tailnetHealthFetch: async () => ({ ok: true, status: 200, body: { serverId: TEST_SERVER_ID } }),
+    });
+    await mismatch.service.loadConfig();
+    const mismatchResult = await mismatch.service.setConfig({ enabled: true, mode: 'private', httpsPort: 443 });
+    expect(mismatchResult.state).toBe('starting');
+    expect(mismatchResult.url).toBeNull();
+    expect(mismatch.fallbackCalls).toEqual([]);
+    mismatch.service.dispose();
+  });
+
+  it('stays starting when the tailnet path fails, without an unhandled rejection', async () => {
+    const unhandled = [];
+    const onUnhandled = (reason) => unhandled.push(reason);
+    process.on('unhandledRejection', onUnhandled);
+    const services = [];
+    try {
+      // Throwing fallback.
+      const throwing = createProbeService({
+        fetchImpl: directDnsFailure,
+        tailnetHealthFetch: async () => { throw new Error('nc exploded'); },
+      });
+      services.push(throwing.service);
+      await throwing.service.loadConfig();
+      const throwingResult = await throwing.service.setConfig({ enabled: true, mode: 'private', httpsPort: 443 });
+      expect(throwingResult.state).toBe('starting');
+      expect(throwingResult.url).toBeNull();
+      expect(throwing.fallbackCalls).toHaveLength(1);
+      // Failing (non-throwing) fallback.
+      const failing = createProbeService({
+        fetchImpl: directDnsFailure,
+        tailnetHealthFetch: async () => ({ ok: false, status: null, body: null, error: 'timeout' }),
+      });
+      services.push(failing.service);
+      await failing.service.loadConfig();
+      const failingResult = await failing.service.setConfig({ enabled: true, mode: 'private', httpsPort: 443 });
+      expect(failingResult.state).toBe('starting');
+      expect(failingResult.url).toBeNull();
+      expect(failing.fallbackCalls).toHaveLength(1);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.removeListener('unhandledRejection', onUnhandled);
+      for (const service of services) service.dispose();
+    }
+  });
+});
+
+describe('tailscale nc health fetch', () => {
+  it('reports a spawn failure instead of throwing', async () => {
+    const fetch = createTailscaleNcHealthFetch({
+      executable: 'tailscale',
+      spawnFn: () => { throw new Error('spawn tailscale ENOENT'); },
+    });
+    const result = await fetch({ host: 'mymachine.tailabc.ts.net', port: 443, timeoutMs: 100 });
+    expect(result).toEqual({ ok: false, status: null, body: null, error: 'spawn' });
+  });
+
+  it('rejects an invalid target without spawning', async () => {
+    const spawnFn = vi.fn();
+    const fetch = createTailscaleNcHealthFetch({ executable: 'tailscale', spawnFn });
+    const result = await fetch({ host: '', port: 443, timeoutMs: 100 });
+    expect(result).toEqual({ ok: false, status: null, body: null, error: 'invalid-target' });
+    expect(spawnFn).not.toHaveBeenCalled();
+  });
+
+  it('kills the child when the probe times out', async () => {
+    const { PassThrough } = await import('node:stream');
+    const { EventEmitter } = await import('node:events');
+    const children = [];
+    const spawnFn = (command, args, options) => {
+      expect(command).toBe('tailscale');
+      expect(args).toEqual(['nc', 'mymachine.tailabc.ts.net', '443']);
+      expect(options).toMatchObject({ windowsHide: true, shell: false });
+      const child = new EventEmitter();
+      child.stdout = new PassThrough();
+      child.stdin = new PassThrough();
+      child.kill = vi.fn();
+      child.stdout.on('error', () => {});
+      child.stdin.on('error', () => {});
+      children.push(child);
+      return child;
+    };
+    const fetch = createTailscaleNcHealthFetch({ executable: 'tailscale', spawnFn });
+    // No handshake bytes ever arrive, so the probe must time out.
+    const result = await fetch({ host: 'mymachine.tailabc.ts.net', port: 443, timeoutMs: 50 });
+    expect(result.ok).toBe(false);
+    expect(result.error).toBe('timeout');
+    expect(children).toHaveLength(1);
+    expect(children[0].kill).toHaveBeenCalledWith('SIGKILL');
+    children[0].stdout.destroy();
+    children[0].stdin.destroy();
+  });
+
+  it('aborts on signal and kills the child', async () => {
+    const { PassThrough } = await import('node:stream');
+    const { EventEmitter } = await import('node:events');
+    const children = [];
+    const spawnFn = () => {
+      const child = new EventEmitter();
+      child.stdout = new PassThrough();
+      child.stdin = new PassThrough();
+      child.kill = vi.fn();
+      child.stdout.on('error', () => {});
+      child.stdin.on('error', () => {});
+      children.push(child);
+      return child;
+    };
+    const fetch = createTailscaleNcHealthFetch({ executable: 'tailscale', spawnFn });
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), 10);
+    const result = await fetch({
+      host: 'mymachine.tailabc.ts.net',
+      port: 443,
+      timeoutMs: 5_000,
+      signal: controller.signal,
+    });
+    expect(result).toEqual({ ok: false, status: null, body: null, error: 'aborted' });
+    expect(children).toHaveLength(1);
+    expect(children[0].kill).toHaveBeenCalledWith('SIGKILL');
+    children[0].stdout.destroy();
+    children[0].stdin.destroy();
   });
 });

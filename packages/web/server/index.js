@@ -1,6 +1,7 @@
 import 'reflect-metadata';
 import compression from 'compression';
 import express from 'express';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
@@ -169,7 +170,9 @@ export async function startWebUiServer(options = {}) {
   // settings store drops keys it does not own, so a legacy install's key must
   // be copied into relay-identity.json first. Failure is not fatal here; the
   // routes retry on demand.
-  await serverIdResolver.getServerId().catch(() => undefined);
+  await serverIdResolver.getServerId().catch((error) => {
+    console.warn(`[relay-identity] Failed to resolve serverId at startup: ${error?.message || error}`);
+  });
   // Tailscale remote access (tailnet-only serve / public funnel). Off by
   // default; enabled only via its settings API or CLI flags. The service
   // owns its persisted config, lifecycle and conflict rules — see
