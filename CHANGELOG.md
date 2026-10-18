@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.0.5-rc.4] - 2026-10-19
+
+Remote Access and Servers polish.
+
+- **Click-to-copy addresses in Remote Access.** The Local network and Tailscale addresses each show as one field. Clicking it copies the address and shows "Copied". The Tailscale open-link button sits inside the field (`RouteRow`, `TailscaleRouteRow`).
+- **One password message for blocked Tailscale.** When Tailscale needs a UI password, Remote Access shows one callout instead of three overlapping messages (`TailscaleRouteRow`).
+- **Server route next to the name.** The server list shows the route as text after the name (`my-server · Local network`) instead of a pill under the status. Servers with several routes pick one from a dropdown, and picking a route no longer also switches to that server (`ServerRow`).
+
 ## [1.0.5-rc.3] - 2026-10-17
 
 Public Tailscale links report when they work on the internet (#194).
