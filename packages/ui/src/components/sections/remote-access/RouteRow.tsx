@@ -1,6 +1,5 @@
 import * as React from 'react';
 
-import { Button } from '@/components/ui/button';
 import { Icon } from '@/components/icon/Icon';
 import type { IconName } from '@/components/icon/icons';
 import { cn } from '@/lib/utils';
@@ -58,31 +57,66 @@ export const RouteRow: React.FC<{
   </SettingsControlGroup>
 );
 
-/** Address line with copy button (and optional Open action). */
+/** Click-to-copy address field. Without `onOpen` the whole field is one button; with `onOpen` the bordered container holds a copy button plus an in-field open button. */
 export const RouteAddress: React.FC<{
   url: string;
   copyLabel: string;
-  action?: React.ReactNode;
-}> = ({ url, copyLabel, action }) => {
+  onOpen?: () => void;
+  openLabel?: string;
+}> = ({ url, copyLabel, onOpen, openLabel }) => {
   const { copied, copy } = useCopyFeedback();
-  return (
-    <div className="flex min-w-0 max-w-[24rem] items-center gap-1.5">
+  const ariaLabel = copied ? `${copyLabel} (copied)` : copyLabel;
+  const addressBody = (
+    <>
       <code className="min-w-0 flex-1 truncate font-mono typography-micro text-foreground">{url}</code>
-      <Button
-        type="button"
-        variant="ghost"
-        size="xs"
-        className="!font-normal shrink-0"
-        onClick={() => copy(url)}
-        aria-label={copied ? `${copyLabel} (copied)` : copyLabel}
-      >
+      <span className="flex shrink-0 items-center gap-1">
+        {copied ? (
+          <span className="typography-micro text-[var(--status-success)]">Copied</span>
+        ) : null}
         <Icon
           name={copied ? 'check' : 'file-copy'}
-          className={cn('h-3.5 w-3.5', copied && 'text-[var(--status-success)]')}
+          className={cn('h-3.5 w-3.5', copied ? 'text-[var(--status-success)]' : 'text-muted-foreground')}
           aria-hidden
         />
-      </Button>
-      {action}
+      </span>
+      {copied ? <span className="sr-only" role="status">Copied</span> : null}
+    </>
+  );
+
+  if (!onOpen) {
+    return (
+      <button
+        type="button"
+        onClick={() => copy(url)}
+        aria-label={ariaLabel}
+        title={url}
+        className="flex min-w-0 max-w-[24rem] items-center gap-1.5 rounded-md border border-[var(--interactive-border)] bg-[var(--surface-muted)] px-2 py-1.5 text-left transition-colors hover:bg-interactive-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+      >
+        {addressBody}
+      </button>
+    );
+  }
+
+  return (
+    <div className="flex min-w-0 max-w-[24rem] items-center gap-0.5 rounded-md border border-[var(--interactive-border)] bg-[var(--surface-muted)] py-1 pl-2 pr-1">
+      <button
+        type="button"
+        onClick={() => copy(url)}
+        aria-label={ariaLabel}
+        title={url}
+        className="flex min-w-0 flex-1 items-center gap-1.5 rounded-sm px-1 py-0.5 text-left transition-colors hover:bg-interactive-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+      >
+        {addressBody}
+      </button>
+      <button
+        type="button"
+        onClick={onOpen}
+        aria-label={openLabel ?? 'Open address'}
+        title={openLabel ?? undefined}
+        className="flex shrink-0 items-center justify-center rounded-sm p-1 text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+      >
+        <Icon name="external-link" className="h-3.5 w-3.5" aria-hidden />
+      </button>
     </div>
   );
 };

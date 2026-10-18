@@ -2,6 +2,11 @@ import { describe, expect, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { ServerList } from './ServerList';
 import { ServerRow } from './ServerRow';
+import {
+  resolveDisplayedRoute,
+  selectServerRouteByValue,
+  serverRouteOptionValue,
+} from './serverRouteDisplay';
 import { AddServerDialogBody } from './AddServerDialog';
 import {
   desktopHostToServerListItem,
@@ -87,7 +92,7 @@ const harnessItems = (): ServerListItem[] => {
 };
 
 describe('ServerRow', () => {
-  test('renders current/default badges, route chips, status, and address', () => {
+  test('renders current/default badges, route label, status, and address', () => {
     const [current] = harnessItems();
     const markup = renderToStaticMarkup(
       <ServerRow
@@ -100,6 +105,12 @@ describe('ServerRow', () => {
     expect(markup).toContain('Local');
     expect(markup).toContain('Current');
     expect(markup).toContain('This computer');
+    // Route renders as muted text next to the name, not a pill: no chip
+    // radiogroup remains on single-route rows.
+    expect(markup).toContain('text-muted-foreground');
+    expect(markup).not.toContain('role="radiogroup"');
+    expect(markup).not.toContain('role="radio"');
+    expect(markup.indexOf('>Local<')).toBeLessThan(markup.indexOf('This computer'));
     expect(markup).toContain('Connected');
     expect(markup).toContain('http://127.0.0.1:4020');
     expect(markup).toContain('aria-label="Actions for Local"');
@@ -137,7 +148,36 @@ describe('ServerRow', () => {
     expect(markup).not.toContain('Auth required');
   });
 
-  test('mixed transports render a radiogroup with the active route checked', () => {
+  test('mixed transports render the active route as a dropdown trigger', () => {
+    const mixed = desktopHostToServerListItem(
+      {
+        id: 'm',
+        label: 'Studio',
+        url: 'http://192.168.1.74:4020',
+        apiUrl: 'http://192.168.1.74:4020',
+        relay: { relayUrl: 'wss://relay.example', serverId: 'sid' },
+      },
+      {
+        isCurrent: false,
+        isDefault: false,
+        isLocal: false,
+        probe: { status: 'ok', latencyMs: 210, via: 'relay' },
+        probing: false,
+        redactUrl,
+      },
+    );
+    const markup = renderToStaticMarkup(<ServerRow item={mixed} onSelectRoute={noop} />);
+    // Chrome-less text trigger with the active route label and chevron.
+    expect(markup).toContain('aria-label="Connection route for Studio: PiChamber Relay"');
+    expect(markup).toContain('PiChamber Relay');
+    expect(markup).toContain('arrow-down-s');
+    // No chip radiogroup remains; the closed dropdown menu items are not
+    // part of the server-rendered markup.
+    expect(markup).not.toContain('role="radiogroup"');
+    expect(markup).not.toContain('aria-checked');
+  });
+
+  test('mixed transports without a picker show the active route as plain text', () => {
     const mixed = desktopHostToServerListItem(
       {
         id: 'm',
@@ -156,11 +196,72 @@ describe('ServerRow', () => {
       },
     );
     const markup = renderToStaticMarkup(<ServerRow item={mixed} />);
-    expect(markup).toContain('role="radiogroup"');
-    expect(markup).toContain('aria-label="Connection routes for Studio"');
-    expect(markup).toContain('Local network');
     expect(markup).toContain('PiChamber Relay');
-    expect(markup).toContain('aria-checked="true"');
+    expect(markup).not.toContain('aria-haspopup');
+  });
+
+  test('displayed route prefers the active route and falls back to the first', () => {
+    const mixed = desktopHostToServerListItem(
+      {
+        id: 'm',
+        label: 'Studio',
+        url: 'http://192.168.1.74:4020',
+        apiUrl: 'http://192.168.1.74:4020',
+        relay: { relayUrl: 'wss://relay.example', serverId: 'sid' },
+      },
+      {
+        isCurrent: false,
+        isDefault: false,
+        isLocal: false,
+        probe: { status: 'ok', latencyMs: 210, via: 'relay' },
+        probing: false,
+        redactUrl,
+      },
+    );
+    expect(resolveDisplayedRoute(mixed)?.kind).toBe('relay');
+    // No active route yet: show the first route's label rather than nothing.
+    expect(resolveDisplayedRoute({ routes: mixed.routes, activeRoute: null })?.kind).toBe(
+      mixed.routes[0]!.kind,
+    );
+    // Stale active route (not among the routes): same first-route fallback.
+    expect(
+      resolveDisplayedRoute({
+        routes: mixed.routes,
+        activeRoute: { kind: 'tunnel', label: 'Tunnel', address: null },
+      })?.kind,
+    ).toBe(mixed.routes[0]!.kind);
+    expect(resolveDisplayedRoute({ routes: [], activeRoute: null })).toBeNull();
+  });
+
+  test('selecting a dropdown value resolves the matching route', () => {
+    const mixed = desktopHostToServerListItem(
+      {
+        id: 'm',
+        label: 'Studio',
+        url: 'http://192.168.1.74:4020',
+        apiUrl: 'http://192.168.1.74:4020',
+        relay: { relayUrl: 'wss://relay.example', serverId: 'sid' },
+      },
+      {
+        isCurrent: false,
+        isDefault: false,
+        isLocal: false,
+        probe: { status: 'ok', latencyMs: 210, via: 'relay' },
+        probing: false,
+        redactUrl,
+      },
+    );
+    const direct = mixed.routes.find((route) => route.kind !== 'relay')!;
+    const calls: Array<{ itemId: string; kind: string }> = [];
+    const onSelectRoute = (item: ServerListItem, route: { kind: string }) => {
+      calls.push({ itemId: item.id, kind: route.kind });
+    };
+    // Same value→route→callback path the dropdown RadioGroup uses.
+    const next = selectServerRouteByValue(mixed, serverRouteOptionValue(direct));
+    expect(next?.kind).toBe(direct.kind);
+    if (next) onSelectRoute(mixed, next);
+    expect(calls).toEqual([{ itemId: 'm', kind: direct.kind }]);
+    expect(selectServerRouteByValue(mixed, 'tunnel::')).toBeNull();
   });
 
   test('blocked statuses disable defaulting when guarded', () => {

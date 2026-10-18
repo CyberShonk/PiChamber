@@ -2,6 +2,7 @@ import { describe, expect, mock, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { TailscaleStatus } from '@/lib/tailscale';
 import { AddDeviceDialogBody } from './AddDeviceDialog';
+import { RouteAddress } from './RouteRow';
 import { TailscaleRouteRow } from './TailscaleRouteRow';
 import type { TailscaleAccessApi } from './useTailscaleAccessState';
 import { DesktopPasswordFields } from './DesktopLanAccessSettings';
@@ -265,6 +266,48 @@ describe('TailscaleRouteRow check-again availability', () => {
     const markup = renderToStaticMarkup(<TailscaleRouteRow />);
     expect(markup).toContain('Not signed in');
     expect(markup).toContain('Check again');
+  });
+});
+
+describe('RouteAddress', () => {
+  test('renders a single click-to-copy field with the copy label and full URL title', () => {
+    const markup = renderToStaticMarkup(
+      <RouteAddress url="http://192.168.1.74:3000" copyLabel="Copy local network address" />,
+    );
+    expect(markup).toContain('aria-label="Copy local network address"');
+    expect(markup).toContain('title="http://192.168.1.74:3000"');
+    expect(markup).toContain('http://192.168.1.74:3000');
+    expect(markup).toContain('#oc-file-copy');
+    expect(markup).not.toContain('#oc-external-link');
+  });
+
+  test('with onOpen renders an in-field open button beside the copy field', () => {
+    const markup = renderToStaticMarkup(
+      <RouteAddress
+        url="https://pichamber-foo.ts.net"
+        copyLabel="Copy Tailscale address"
+        onOpen={noop}
+        openLabel="Open Tailscale address"
+      />,
+    );
+    expect(markup).toContain('aria-label="Copy Tailscale address"');
+    expect(markup).toContain('aria-label="Open Tailscale address"');
+    expect(markup).toContain('#oc-file-copy');
+    expect(markup).toContain('#oc-external-link');
+  });
+});
+
+describe('TailscaleRouteRow address field', () => {
+  test('active private shows the click-to-copy field with copy and open actions', () => {
+    activeTailscaleApi = tailscaleApiFor(tailscaleStatus({
+      state: 'active',
+      config: { enabled: true, mode: 'private', httpsPort: 443 },
+      url: 'https://pichamber-foo.ts.net',
+    }));
+    const markup = renderToStaticMarkup(<TailscaleRouteRow />);
+    expect(markup).toContain('https://pichamber-foo.ts.net');
+    expect(markup).toContain('aria-label="Copy Tailscale address"');
+    expect(markup).toContain('aria-label="Open Tailscale address"');
   });
 });
 

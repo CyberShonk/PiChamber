@@ -45,13 +45,15 @@ the Electron IPC bridge, in-place runtime switching, new windows) lives in
 
 ## Components (presentational, no data fetching)
 
-- `ServerRow`: status dot, label, "Current" badge, "Default" star toggle
-  (`aria-pressed`, accessible names), route chips (active highlighted;
-  multi-route servers render a `radiogroup` with `role="radio"` chips driven
-  by `aria-checked`, read-only until a caller passes `onSelectRoute`),
-  redacted address, latency, and an actions menu (Switch/Connect, Open in new
+- `ServerRow`: status dot, label with the route shown as muted dot-separated
+  text (`ServerRouteText`: active route, first-route fallback when the active
+  route is missing or stale; multi-route servers render the active label as
+  a chrome-less dropdown trigger — `DropdownMenuRadioGroup`/
+  `DropdownMenuRadioItem` — when a caller passes `onSelectRoute`, plain text
+  otherwise), "Current" badge, "Default" star toggle
+  (`aria-pressed`, accessible names), redacted address, latency, and an actions menu (Switch/Connect, Open in new
   window when allowed, Edit, Remove with inline confirmation). Icon-only
-  buttons carry accessible names; `layout="touch"` stacks chips/address with
+  buttons carry accessible names; `layout="touch"` wraps the name line and uses
   larger targets for narrow/mobile surfaces.
 - `ServerList`: rows plus empty state.
 - `AddServerDialog` (+ `AddServerDialogBody` for SSR tests): one entry point

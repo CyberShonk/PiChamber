@@ -4,6 +4,8 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
@@ -12,12 +14,16 @@ import { cn } from '@/lib/utils';
 import {
   SERVER_STATUS_META,
   isServerStatusBlocked,
-  sameServerRoute,
   serverDisplayAddress,
   type ServerListItem,
   type ServerRoute,
   type ServerStatus,
 } from '@/lib/servers/serverViewModel';
+import {
+  resolveDisplayedRoute,
+  selectServerRouteByValue,
+  serverRouteOptionValue,
+} from './serverRouteDisplay';
 
 export type ServerRowHandlers = {
   onSwitch?: (item: ServerListItem) => void;
@@ -69,55 +75,57 @@ const statusTextClass = (status: ServerStatus): string => {
   );
 };
 
-const chipSpanClass = (active: boolean): string =>
-  cn(
-    'inline-flex items-center rounded-full border px-2 py-0.5 typography-micro whitespace-nowrap',
-    active
-      ? 'border-[color-mix(in_srgb,var(--primary-base)_12%,transparent)] bg-[color-mix(in_srgb,var(--primary-base)_10%,var(--background))] text-[var(--primary-base)]'
-      : 'border-border/60 text-muted-foreground',
-  );
+const routeTextClass = 'typography-micro truncate text-muted-foreground';
 
-export function ServerRouteChips({
+function ServerRouteText({
   item,
   onSelectRoute,
 }: Pick<ServerRowProps, 'item' | 'onSelectRoute'>) {
-  const { routes, activeRoute } = item;
-  const interactive = typeof onSelectRoute === 'function';
-  if (routes.length <= 1) {
-    const only = routes[0];
-    if (!only) return null;
+  const displayed = resolveDisplayedRoute(item);
+  if (!displayed) return null;
+  const interactive = typeof onSelectRoute === 'function' && item.routes.length > 1;
+  if (!interactive) {
     return (
-      <span className="flex min-w-0 flex-wrap gap-1">
-        <span className={chipSpanClass(true)}>{only.label}</span>
+      <span className="flex min-w-0 items-center gap-1.5">
+        <span aria-hidden="true" className="shrink-0 text-muted-foreground/60">{'·'}</span>
+        <span className={routeTextClass}>{displayed.label}</span>
       </span>
     );
   }
   return (
-    <span className="flex min-w-0 flex-wrap gap-1" role="radiogroup" aria-label={`Connection routes for ${item.label}`}>
-      {routes.map((route) => {
-        const active = activeRoute ? sameServerRoute(activeRoute, route) : false;
-        if (!interactive) {
-          return (
-            <span key={route.kind} className={chipSpanClass(active)} role="radio" aria-checked={active} aria-readonly="true">
-              {route.label}
-            </span>
-          );
-        }
-        return (
-          <Button
-            key={route.kind}
+    <span className="flex min-w-0 items-center gap-1.5">
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <button
             type="button"
-            variant="chip"
-            size="xs"
-            role="radio"
-            aria-checked={active}
-            aria-label={`${route.label} for ${item.label}`}
-            onClick={() => onSelectRoute?.(item, route)}
+            data-route-picker=""
+            className="inline-flex min-w-0 max-w-full items-center gap-0.5 rounded typography-micro text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+            aria-label={`Connection route for ${item.label}: ${displayed.label}`}
           >
-            {route.label}
-          </Button>
-        );
-      })}
+            <span aria-hidden="true" className="shrink-0 text-muted-foreground/60">{'·'}</span>
+            <span className="truncate">{displayed.label}</span>
+            <Icon name="arrow-down-s" className="size-3 shrink-0 opacity-70" aria-hidden="true" />
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start" portalToBody>
+          <DropdownMenuRadioGroup
+            value={serverRouteOptionValue(displayed)}
+            onValueChange={(value) => {
+              const next = selectServerRouteByValue(item, value);
+              if (next) onSelectRoute?.(item, next);
+            }}
+          >
+            {item.routes.map((route) => (
+              <DropdownMenuRadioItem
+                key={serverRouteOptionValue(route)}
+                value={serverRouteOptionValue(route)}
+              >
+                {route.label}
+              </DropdownMenuRadioItem>
+            ))}
+          </DropdownMenuRadioGroup>
+        </DropdownMenuContent>
+      </DropdownMenu>
     </span>
   );
 }
@@ -162,8 +170,9 @@ export const ServerRow: React.FC<ServerRowProps> = ({
     <>
       <span className={statusDotClass(item.status, refreshing || item.status === 'checking')} aria-hidden="true" />
       <span className="flex-1 min-w-0 space-y-0.5">
-        <span className="flex min-w-0 items-center gap-1.5">
-          <span className="typography-ui-label font-medium truncate text-foreground">{item.label}</span>
+        <span className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0">
+          <span className="typography-ui-label font-medium truncate text-foreground min-w-0">{item.label}</span>
+          <ServerRouteText item={item} onSelectRoute={onSelectRoute} />
           {item.isCurrent && (
             <span className="typography-micro flex-shrink-0 text-muted-foreground bg-muted px-1 rounded leading-none pb-px border border-border/50">
               {'Current'}
@@ -177,12 +186,9 @@ export const ServerRow: React.FC<ServerRowProps> = ({
             : ''}
           {refreshing && item.status !== 'checking' ? ' · checking' : ''}
         </span>
-        <span className={cn('flex min-w-0 gap-1.5', touch ? 'flex-col items-start' : 'flex-wrap items-center')}>
-          <ServerRouteChips item={item} onSelectRoute={onSelectRoute} />
-          {address ? (
-            <span className="typography-micro text-muted-foreground/70 truncate font-mono">{address}</span>
-          ) : null}
-        </span>
+        {address ? (
+          <span className="typography-micro block truncate font-mono text-muted-foreground/70">{address}</span>
+        ) : null}
       </span>
     </>
   );
@@ -197,16 +203,21 @@ export const ServerRow: React.FC<ServerRowProps> = ({
     >
       <div className={cn('flex min-w-0 flex-1 gap-2', touch ? 'items-start' : 'items-center')}>
         {showSwitch && !item.isCurrent ? (
-          <button
-            type="button"
-            className="flex items-center gap-2 flex-1 min-w-0 text-left rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-70"
-            onClick={() => onSwitch?.(item)}
-            disabled={switchDisabled}
-            aria-label={`${switchLabel} to ${item.label}`}
-          >
+          // The switch button is a full-size overlay so the route picker in
+          // mainBody stays a sibling (no nested buttons) and sits above it.
+          <div className={cn('relative flex items-center gap-2 flex-1 min-w-0', switchDisabled && 'opacity-70')}>
+            <button
+              type="button"
+              className="absolute inset-0 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+              onClick={() => onSwitch?.(item)}
+              disabled={switchDisabled}
+              aria-label={`${switchLabel} to ${item.label}`}
+            />
             {pending ? <Icon name="loader-4" className="h-4 w-4 animate-spin text-muted-foreground" aria-hidden="true" /> : null}
-            {mainBody}
-          </button>
+            <span className="pointer-events-none flex items-center gap-2 flex-1 min-w-0 [&_[data-route-picker]]:pointer-events-auto [&_[data-route-picker]]:relative">
+              {mainBody}
+            </span>
+          </div>
         ) : (
           <div className="flex items-center gap-2 flex-1 min-w-0" aria-label={item.isCurrent ? `Current server ${item.label}` : undefined}>
             {mainBody}

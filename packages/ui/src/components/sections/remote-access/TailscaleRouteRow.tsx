@@ -257,7 +257,7 @@ export const TailscaleRouteRow: React.FC = () => {
             </div>
           ) : null}
 
-          {presentation?.headline && presentation.showUrl !== true ? (
+          {presentation?.headline && presentation.showUrl !== true && !presentation.showAuthCallout && !authBlocked ? (
             <p className="typography-ui-label text-foreground">{presentation.headline}</p>
           ) : null}
 
@@ -266,18 +266,8 @@ export const TailscaleRouteRow: React.FC = () => {
               <RouteAddress
                 url={status.url}
                 copyLabel="Copy Tailscale address"
-                action={(
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="xs"
-                    className="!font-normal shrink-0"
-                    onClick={() => void openExternalUrl(status.url as string)}
-                    aria-label="Open Tailscale address"
-                  >
-                    <Icon name="external-link" className="h-3.5 w-3.5" aria-hidden />
-                  </Button>
-                )}
+                onOpen={() => void openExternalUrl(status.url as string)}
+                openLabel="Open Tailscale address"
               />
               {presentation?.publicDnsNote === 'pending' ? (
                 <p className="flex items-center gap-2 typography-meta text-muted-foreground" role="status">
@@ -341,7 +331,9 @@ export const TailscaleRouteRow: React.FC = () => {
             </div>
           ) : null}
 
-          {presentation?.showAuthCallout ? (
+          {/* Fallback when the server reports no per-mode authGate; otherwise the
+              per-mode callout above already explains the password requirement. */}
+          {presentation?.showAuthCallout && !authBlocked ? (
             <div className="rounded-md border border-[var(--status-warning-border)] bg-[var(--status-warning-background)] p-3">
               <p className="typography-ui-label font-medium text-foreground">{'Set a password first'}</p>
               {isDesktop ? (
