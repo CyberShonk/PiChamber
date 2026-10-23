@@ -1,0 +1,99 @@
+name: Build unsigned iOS IPA
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-26
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show build authority
+        run: |
+          git rev-parse HEAD
+          git status --short
+          xcodebuild -version
+
+      - name: Install Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build and sync mobile assets
+        run: bun run mobile:sync
+
+      - name: Build unsigned iPhone app
+        shell: bash
+        run: |
+          DERIVED="$RUNNER_TEMP/PiChamberDerivedData"
+
+          xcodebuild \
+            -workspace packages/mobile/ios/App/App.xcworkspace \
+            -scheme App \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$DERIVED" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build
+
+          APP="$(find "$DERIVED/Build/Products/Release-iphoneos" \
+            -maxdepth 1 -type d -name '*.app' -print -quit)"
+
+          if [ -z "$APP" ]; then
+            echo "ERROR: Release iPhone .app was not produced"
+            exit 1
+          fi
+
+          echo "APP=$APP" >> "$GITHUB_ENV"
+          echo "Built app: $APP"
+
+      - name: Verify unsigned state
+        shell: bash
+        run: |
+          if [ -f "$APP/embedded.mobileprovision" ]; then
+            echo "ERROR: embedded provisioning profile found"
+            exit 1
+          fi
+
+          if codesign --verify "$APP" >/dev/null 2>&1; then
+            echo "ERROR: app unexpectedly has a valid signature"
+            exit 1
+          fi
+
+          echo "Unsigned app confirmed"
+
+      - name: Package IPA
+        shell: bash
+        run: |
+          OUT="$RUNNER_TEMP/PiChamberIPA"
+
+          mkdir -p "$OUT/Payload"
+          cp -R "$APP" "$OUT/Payload/"
+
+          cd "$OUT"
+          /usr/bin/zip -qry \
+            "$GITHUB_WORKSPACE/PiChamber-unsigned.ipa" \
+            Payload
+
+          cd "$GITHUB_WORKSPACE"
+          shasum -a 256 PiChamber-unsigned.ipa
+          ls -lh PiChamber-unsigned.ipa
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: PiChamber-unsigned
+          path: PiChamber-unsigned.ipa
+          if-no-files-found: error
